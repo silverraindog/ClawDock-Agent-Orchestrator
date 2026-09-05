@@ -1,3 +1,4 @@
+
 # ==============================================================================
 # ClawDock Agent Orchestrator - Full Docker Compose Stack
 # (Docker Compose Specification v2 - obsolete 'version' key omitted)
@@ -32,6 +33,10 @@ services:
       - ./data/clawdock:/data/clawdock
       # Shared workspace for agents to read/write files and execute code
       - ./workspace:/workspace
+      - /home/zeroclaw/config.toml:/data/clawdock/zeroclaw.toml
+      - /home/openclaw/openclaw.json:/data/clawdock/openclaw.json
+      - /home/sargus/.hermes-data/config.yaml:/data/clawdock/hermes.yaml
+      - /opt/bots/picaclaw/data/config.json:/data/clawdock/picoclaw.json
     environment:
       - PORT=3000
       - PYTHONUNBUFFERED=1
