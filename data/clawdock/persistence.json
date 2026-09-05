@@ -1,0 +1,374 @@
+{
+  "configs": {
+    "hermes-agent": {
+      "agentId": "hermes-agent",
+      "version": "1.0.0",
+      "model": {
+        "provider": "anthropic",
+        "model": "claude-3-7-sonnet",
+        "apiKey": "",
+        "temperature": 0.2,
+        "reasoningEffort": "high",
+        "maxTokens": 4096,
+        "contextWindow": 128000,
+        "topP": 0.95
+      },
+      "channels": {
+        "telegram": {
+          "enabled": true,
+          "botToken": "env:TELEGRAM_BOT_TOKEN",
+          "allowedUsers": "@developer",
+          "mode": "polling"
+        },
+        "discord": {
+          "enabled": false,
+          "botToken": "",
+          "clientId": "",
+          "guildIds": ""
+        },
+        "slack": {
+          "enabled": false,
+          "botToken": "",
+          "appToken": "",
+          "signingSecret": "",
+          "socketMode": true
+        },
+        "whatsapp": {
+          "enabled": false,
+          "sessionId": "",
+          "webhookUrl": ""
+        },
+        "matrix": {
+          "enabled": false,
+          "homeserver": "",
+          "accessToken": "",
+          "roomIds": ""
+        },
+        "webhook": {
+          "enabled": true,
+          "port": 8080,
+          "authToken": "secure_bearer_token",
+          "corsOrigin": "*"
+        }
+      },
+      "system": {
+        "preset": "engineer",
+        "systemPrompt": "You are hermes-agent, an advanced autonomous AI agent orchestrator running in container volume mount.",
+        "agentName": "hermes-agent",
+        "personaName": "Autonomous Agent",
+        "language": "en",
+        "autoFormatCode": true
+      },
+      "security": {
+        "sandboxMode": "docker_isolated",
+        "allowedDirectories": [
+          "/workspace",
+          "/data"
+        ],
+        "blockNetworkAccess": false,
+        "maxExecutionTimeSec": 300,
+        "requireApprovalForCommands": false,
+        "securityProfileFile": "default.yaml"
+      },
+      "storage": {
+        "memoryBackend": "everos",
+        "dbPath": "./data/sqlite/hermes-agent_memory.db",
+        "autoSummarizeInterval": 30,
+        "maxHistoryTurns": 100,
+        "vectorDbUrl": "http://everos:8080"
+      },
+      "moa": {
+        "enabled": true,
+        "proposerModels": [
+          "claude-3-7-sonnet",
+          "deepseek-r1",
+          "gpt-4o"
+        ],
+        "aggregatorModel": "claude-3-7-sonnet",
+        "rounds": 2,
+        "temperatureSpread": 0.3,
+        "consensusThreshold": 0.85
+      },
+      "customEnv": {
+        "CONTAINER_MOUNT_DIR": "/workspace/hermes-agent",
+        "LOG_LEVEL": "info"
+      }
+    },
+    "zeroclaw": {
+      "agentId": "zeroclaw",
+      "version": "1.0.0",
+      "model": {
+        "provider": "deepseek",
+        "model": "deepseek-r1",
+        "apiKey": "",
+        "temperature": 0.2,
+        "reasoningEffort": "medium",
+        "maxTokens": 4096,
+        "contextWindow": 64000,
+        "topP": 0.9
+      },
+      "channels": {
+        "telegram": {
+          "enabled": true,
+          "botToken": "",
+          "allowedUsers": "@edge_admin",
+          "mode": "polling"
+        },
+        "discord": {
+          "enabled": false,
+          "botToken": "",
+          "clientId": "",
+          "guildIds": ""
+        },
+        "slack": {
+          "enabled": false,
+          "botToken": "",
+          "appToken": "",
+          "signingSecret": "",
+          "socketMode": false
+        },
+        "whatsapp": {
+          "enabled": false,
+          "sessionId": "",
+          "webhookUrl": ""
+        },
+        "matrix": {
+          "enabled": false,
+          "homeserver": "https://matrix.org",
+          "accessToken": "",
+          "roomIds": ""
+        },
+        "webhook": {
+          "enabled": true,
+          "port": 8081,
+          "authToken": "zeroclaw_auth_key",
+          "corsOrigin": "*"
+        }
+      },
+      "system": {
+        "preset": "edge_assistant",
+        "systemPrompt": "You are ZeroClaw, an ultra-fast, minimal AI assistant running natively in Rust. Keep responses concise, direct, and actionable. Conserve tokens and prioritize efficiency.",
+        "agentName": "ZeroClaw Edge",
+        "personaName": "Zero",
+        "language": "en-US",
+        "autoFormatCode": true
+      },
+      "security": {
+        "sandboxMode": "docker_isolated",
+        "allowedDirectories": [
+          "/var/zeroclaw/workspace"
+        ],
+        "blockNetworkAccess": false,
+        "maxExecutionTimeSec": 60,
+        "requireApprovalForCommands": true,
+        "securityProfileFile": ".security.yml"
+      },
+      "storage": {
+        "memoryBackend": "everos",
+        "dbPath": "/data/everos/memories/zeroclaw",
+        "autoSummarizeInterval": 50,
+        "maxHistoryTurns": 40,
+        "vectorDbUrl": "http://everos:8080"
+      },
+      "customEnv": {
+        "RUST_LOG": "info",
+        "ZEROCLAW_MAX_RAM_MB": "16"
+      },
+      "moa": {
+        "enabled": false,
+        "proposerModels": [
+          "deepseek-r1"
+        ],
+        "aggregatorModel": "deepseek-r1",
+        "rounds": 1,
+        "temperatureSpread": 0.2,
+        "consensusThreshold": 0.8
+      }
+    },
+    "openclaw": {
+      "agentId": "openclaw",
+      "version": "1.0.0",
+      "model": {
+        "provider": "openai",
+        "model": "gpt-4o",
+        "apiKey": "",
+        "temperature": 0.5,
+        "reasoningEffort": "medium",
+        "maxTokens": 4096,
+        "contextWindow": 128000,
+        "topP": 1
+      },
+      "channels": {
+        "telegram": {
+          "enabled": true,
+          "botToken": "",
+          "allowedUsers": "*",
+          "mode": "polling"
+        },
+        "discord": {
+          "enabled": true,
+          "botToken": "",
+          "clientId": "1234567890",
+          "guildIds": "9876543210"
+        },
+        "slack": {
+          "enabled": false,
+          "botToken": "",
+          "appToken": "",
+          "signingSecret": "",
+          "socketMode": true
+        },
+        "whatsapp": {
+          "enabled": false,
+          "sessionId": "",
+          "webhookUrl": ""
+        },
+        "matrix": {
+          "enabled": false,
+          "homeserver": "",
+          "accessToken": "",
+          "roomIds": ""
+        },
+        "webhook": {
+          "enabled": true,
+          "port": 8082,
+          "authToken": "openclaw_hub_token",
+          "corsOrigin": "*"
+        }
+      },
+      "system": {
+        "preset": "researcher",
+        "systemPrompt": "You are OpenClaw, a multi-channel cooperative assistant gateway. You bridge communication between humans across multiple platforms and coordinate autonomous tools and agents.",
+        "agentName": "OpenClaw Gateway",
+        "personaName": "Claw Hub",
+        "language": "en-US",
+        "autoFormatCode": true
+      },
+      "security": {
+        "sandboxMode": "docker_isolated",
+        "allowedDirectories": [
+          "/workspace"
+        ],
+        "blockNetworkAccess": false,
+        "maxExecutionTimeSec": 90,
+        "requireApprovalForCommands": false,
+        "securityProfileFile": ".security.yml"
+      },
+      "storage": {
+        "memoryBackend": "everos",
+        "dbPath": "/data/everos/memories/openclaw",
+        "autoSummarizeInterval": 30,
+        "maxHistoryTurns": 80,
+        "vectorDbUrl": "http://everos:8080"
+      },
+      "customEnv": {
+        "NODE_ENV": "production",
+        "OPENCLAW_ENABLE_PLUGINS": "true",
+        "OPENCLAW_PLUGIN_EVEROS": "true",
+        "EVEROS_ENDPOINT": "http://everos:8080"
+      },
+      "moa": {
+        "enabled": false,
+        "proposerModels": [
+          "gpt-4o"
+        ],
+        "aggregatorModel": "gpt-4o",
+        "rounds": 1,
+        "temperatureSpread": 0.2,
+        "consensusThreshold": 0.8
+      }
+    },
+    "picoclaw": {
+      "agentId": "picoclaw",
+      "version": "1.0.0",
+      "model": {
+        "provider": "ollama",
+        "model": "qwen2.5-coder:7b",
+        "apiKey": "",
+        "baseUrl": "http://localhost:11434",
+        "temperature": 0.4,
+        "reasoningEffort": "none",
+        "maxTokens": 2048,
+        "contextWindow": 32000,
+        "topP": 0.9
+      },
+      "channels": {
+        "telegram": {
+          "enabled": true,
+          "botToken": "",
+          "allowedUsers": "@sipeed_user",
+          "mode": "polling"
+        },
+        "discord": {
+          "enabled": false,
+          "botToken": "",
+          "clientId": "",
+          "guildIds": ""
+        },
+        "slack": {
+          "enabled": false,
+          "botToken": "",
+          "appToken": "",
+          "signingSecret": "",
+          "socketMode": false
+        },
+        "whatsapp": {
+          "enabled": false,
+          "sessionId": "",
+          "webhookUrl": ""
+        },
+        "matrix": {
+          "enabled": false,
+          "homeserver": "",
+          "accessToken": "",
+          "roomIds": ""
+        },
+        "webhook": {
+          "enabled": true,
+          "port": 8083,
+          "authToken": "picoclaw_token",
+          "corsOrigin": "*"
+        }
+      },
+      "system": {
+        "preset": "edge_assistant",
+        "systemPrompt": "You are PicoClaw by Sipeed. You run on lightweight edge hardware like RISC-V and ARM boards. Be smart, snappy, and hardware-friendly.",
+        "agentName": "PicoClaw Go",
+        "personaName": "Pico",
+        "language": "en-US",
+        "autoFormatCode": true
+      },
+      "security": {
+        "sandboxMode": "host_restricted",
+        "allowedDirectories": [
+          "/home/sipeed/.picoclaw"
+        ],
+        "blockNetworkAccess": false,
+        "maxExecutionTimeSec": 45,
+        "requireApprovalForCommands": true,
+        "securityProfileFile": ".security.yml"
+      },
+      "storage": {
+        "memoryBackend": "everos",
+        "dbPath": "/data/everos/memories/picoclaw",
+        "autoSummarizeInterval": 20,
+        "maxHistoryTurns": 30,
+        "vectorDbUrl": "http://everos:8080"
+      },
+      "customEnv": {
+        "PICOCLAW_MODE": "gateway",
+        "PICOCLAW_LOG": "info"
+      },
+      "moa": {
+        "enabled": false,
+        "proposerModels": [
+          "qwen2.5-coder:7b"
+        ],
+        "aggregatorModel": "qwen2.5-coder:7b",
+        "rounds": 1,
+        "temperatureSpread": 0.2,
+        "consensusThreshold": 0.8
+      }
+    }
+  }
+}
