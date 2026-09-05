@@ -86,7 +86,7 @@ export default function App() {
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
 
-  // Fetch initial telemetry and persistent state from backend
+  // Fetch initial telemetry, persistent state, and live configuration files from backend
   useEffect(() => {
     fetch('/api/docker/status')
       .then(res => res.ok ? res.json() : null)
@@ -114,6 +114,24 @@ export default function App() {
       })
       .catch(() => {});
 
+    // Fetch live configuration details directly from the native files
+    fetch('/api/agents/all/configs')
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (data && data.success && data.configs) {
+          const loadedConfigs: Record<string, AgentFullConfig> = {};
+          for (const [id, cfgObj] of Object.entries(data.configs as Record<string, any>)) {
+            if (cfgObj && cfgObj.configSchema) {
+              loadedConfigs[id] = cfgObj.configSchema;
+            }
+          }
+          if (Object.keys(loadedConfigs).length > 0) {
+            setConfigs(prev => ({ ...prev, ...loadedConfigs }));
+          }
+        }
+      })
+      .catch(() => {});
+
     // Fetch from persistence API
     fetch('/api/persistence')
       .then(res => res.ok ? res.json() : null)
@@ -130,7 +148,7 @@ export default function App() {
     try {
       const savedConfigs = localStorage.getItem('clawdock_agent_configs');
       if (savedConfigs) {
-        setConfigs(JSON.parse(savedConfigs));
+        setConfigs(prev => ({ ...prev, ...JSON.parse(savedConfigs) }));
       }
     } catch {}
   }, []);

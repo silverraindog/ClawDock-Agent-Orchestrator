@@ -73,6 +73,7 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
     setIsFetchingLive(true);
     try {
       const res = await fetch(`/api/agents/${agentId}/config`);
+      if (!res.ok) return;
       const data = await res.json();
       if (data && data.success) {
         if (data.nativeFileName && data.nativeContent) {

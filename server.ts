@@ -126,10 +126,273 @@ loadPersistentState();
 
 const PERSISTENCE_FILE_PATH = path.join(process.cwd(), 'data', 'clawdock', 'persistence.json');
 
+const DEFAULT_NATIVE_FILES: Record<string, { fileName: string; format: string; content: string }> = {
+  'hermes-agent': {
+    fileName: 'hermes.yaml',
+    format: 'yaml',
+    content: `version: "1.0.0"
+agent_id: "hermes-agent"
+agent_name: "Hermes Code Assistant"
+persona: "Hermes Prime"
+system_preset: "engineer"
+system_prompt: "You are Hermes Agent, a premier autonomous software engineering and problem-solving AI agent. You have direct access to workspace tools, shell execution, and persistent memory. Always structure complex tasks into clear execution steps, verify your code with tests or linters, and document non-trivial architecture decisions."
+
+model:
+  provider: "anthropic"
+  model: "claude-3-7-sonnet"
+  temperature: 0.3
+  reasoning_effort: "high"
+  max_tokens: 8192
+  context_window: 200000
+  top_p: 0.95
+
+channels:
+  telegram:
+    enabled: true
+    bot_token: "env:TELEGRAM_BOT_TOKEN"
+    allowed_users: ["@developer", "@admin"]
+    mode: "polling"
+  discord:
+    enabled: false
+  slack:
+    enabled: false
+    socket_mode: true
+  webhook:
+    enabled: true
+    port: 8080
+    auth_token: "hermes_secret_token_99"
+
+security:
+  sandbox_mode: "docker_isolated"
+  allowed_directories:
+    - "/workspace"
+    - "/tmp/agent-scratch"
+    - "/var/log/hermes"
+  max_execution_time_sec: 120
+  block_network_access: false
+  require_approval_for_commands: false
+
+storage:
+  memory_backend: "everos"
+  db_path: "/data/everos/memories"
+  auto_summarize_interval: 25
+  max_history_turns: 100
+  vector_db_url: "http://everos:8080"
+
+moa:
+  enabled: true
+  proposer_models:
+    - "claude-3-7-sonnet"
+    - "deepseek-r1"
+    - "gpt-4o"
+  aggregator_model: "claude-3-7-sonnet"
+  rounds: 2
+  temperature_spread: 0.3
+  consensus_threshold: 0.85
+
+env:
+  HERMES_LOG_LEVEL: "INFO"
+  PYTHONUNBUFFERED: "1"
+  WORKSPACE_ROOT: "/workspace"`
+  },
+  'openclaw': {
+    fileName: 'openclaw.json',
+    format: 'json',
+    content: JSON.stringify({
+      agentId: "openclaw",
+      version: "1.0.0",
+      name: "OpenClaw Gateway",
+      persona: "Claw Hub",
+      model: {
+        provider: "openai",
+        model: "gpt-4o",
+        temperature: 0.5,
+        maxTokens: 4096,
+        contextWindow: 128000
+      },
+      channels: {
+        telegram: {
+          enabled: true,
+          botToken: "env:OPENCLAW_TELEGRAM_TOKEN",
+          allowedUsers: ["*"],
+          mode: "polling"
+        },
+        discord: {
+          enabled: true,
+          botToken: "env:OPENCLAW_DISCORD_TOKEN",
+          clientId: "1234567890",
+          guildIds: "9876543210"
+        },
+        webhook: {
+          enabled: true,
+          port: 8082,
+          authToken: "openclaw_hub_token"
+        }
+      },
+      system: {
+        preset: "researcher",
+        systemPrompt: "You are OpenClaw, a multi-channel cooperative assistant gateway. You bridge communication between humans across multiple platforms and coordinate autonomous tools and agents."
+      },
+      security: {
+        sandboxMode: "docker_isolated",
+        allowedDirectories: ["/workspace"],
+        maxExecutionTimeSec: 90
+      },
+      storage: {
+        memoryBackend: "everos",
+        dbPath: "/data/everos/memories/openclaw",
+        autoSummarizeInterval: 30,
+        maxHistoryTurns: 80,
+        vectorDbUrl: "http://everos:8080"
+      },
+      customEnv: {
+        NODE_ENV: "production",
+        OPENCLAW_ENABLE_PLUGINS: "true",
+        OPENCLAW_PLUGIN_EVEROS: "true",
+        EVEROS_ENDPOINT: "http://everos:8080"
+      }
+    }, null, 2)
+  },
+  'zeroclaw': {
+    fileName: 'zeroclaw.toml',
+    format: 'toml',
+    content: `[agent]
+id = "zeroclaw"
+version = "1.0.0"
+name = "ZeroClaw Edge"
+persona = "Zero"
+
+[daemon]
+port = 8081
+rust_log = "info"
+max_ram_mb = 16
+unix_socket = "/var/run/zeroclaw.sock"
+
+[model]
+provider = "deepseek"
+model = "deepseek-r1"
+temperature = 0.2
+max_tokens = 4096
+context_window = 64000
+
+[system]
+preset = "edge_assistant"
+system_prompt = "You are ZeroClaw, an ultra-fast, minimal AI assistant running natively in Rust. Keep responses concise, direct, and actionable. Conserve tokens and prioritize efficiency."
+
+[channels.telegram]
+enabled = true
+bot_token = "env:ZEROCLAW_TELEGRAM_TOKEN"
+allowed_users = ["@edge_admin"]
+mode = "polling"
+
+[channels.webhook]
+enabled = true
+port = 8081
+auth_token = "zeroclaw_auth_key"
+
+[security]
+sandbox_mode = "docker_isolated"
+allowed_directories = ["/var/zeroclaw/workspace"]
+max_execution_time_sec = 60
+require_approval_for_commands = true
+
+[storage]
+memory_backend = "everos"
+db_path = "/data/everos/memories/zeroclaw"
+auto_summarize_interval = 50
+max_history_turns = 40
+vector_db_url = "http://everos:8080"`
+  },
+  'picoclaw': {
+    fileName: 'picoclaw.json',
+    format: 'json',
+    content: JSON.stringify({
+      agentId: "picoclaw",
+      version: "1.0.0",
+      name: "PicoClaw Go",
+      persona: "Pico",
+      mode: "gateway",
+      logLevel: "info",
+      port: 8083,
+      model: {
+        provider: "ollama",
+        model: "qwen2.5-coder:7b",
+        baseUrl: "http://localhost:11434",
+        temperature: 0.4,
+        maxTokens: 2048,
+        contextWindow: 32000
+      },
+      channels: {
+        telegram: {
+          enabled: true,
+          botToken: "env:PICOCLAW_TELEGRAM_TOKEN",
+          allowedUsers: ["@sipeed_user"],
+          mode: "polling"
+        },
+        webhook: {
+          enabled: true,
+          port: 8083,
+          authToken: "picoclaw_token"
+        }
+      },
+      system: {
+        preset: "edge_assistant",
+        systemPrompt: "You are PicoClaw by Sipeed. You run on lightweight edge hardware like RISC-V and ARM boards. Be smart, snappy, and hardware-friendly."
+      },
+      security: {
+        sandboxMode: "host_restricted",
+        allowedDirectories: ["/home/sipeed/.picoclaw"],
+        maxExecutionTimeSec: 45,
+        requireApprovalForCommands: true
+      },
+      storage: {
+        memoryBackend: "everos",
+        dbPath: "/data/everos/memories/picoclaw",
+        autoSummarizeInterval: 20,
+        maxHistoryTurns: 30,
+        vectorDbUrl: "http://everos:8080"
+      }
+    }, null, 2)
+  }
+};
+
+function ensureNativeConfigFiles() {
+  const baseDir = path.join(process.cwd(), 'data', 'clawdock');
+  try { fs.mkdirSync(baseDir, { recursive: true }); } catch {}
+  try { fs.mkdirSync('/data/clawdock', { recursive: true }); } catch {}
+
+  for (const [id, def] of Object.entries(DEFAULT_NATIVE_FILES)) {
+    const relFile = path.join(baseDir, def.fileName);
+    const absFile = `/data/clawdock/${def.fileName}`;
+
+    let shouldWriteRel = true;
+    try {
+      if (fs.existsSync(relFile)) {
+        const stats = fs.statSync(relFile);
+        if (stats.size > 10) shouldWriteRel = false;
+      }
+    } catch {}
+
+    if (shouldWriteRel) {
+      try { fs.writeFileSync(relFile, def.content, 'utf8'); } catch (e) { console.error('Write relFile error:', e); }
+    }
+
+    try {
+      if (!fs.existsSync(absFile) || fs.statSync(absFile).size <= 10) {
+        fs.writeFileSync(absFile, def.content, 'utf8');
+      }
+    } catch {}
+  }
+}
+
+// Run initial file creation
+ensureNativeConfigFiles();
+
 function loadClawdockPersistence(): Record<string, any> {
   try {
     if (fs.existsSync(PERSISTENCE_FILE_PATH)) {
-      return JSON.parse(fs.readFileSync(PERSISTENCE_FILE_PATH, 'utf8')) || {};
+      const parsed = JSON.parse(fs.readFileSync(PERSISTENCE_FILE_PATH, 'utf8'));
+      if (parsed && typeof parsed === 'object') return parsed;
     }
   } catch (e) {
     console.error('Failed to load persistence data:', e);
@@ -146,46 +409,49 @@ function saveClawdockPersistence(data: Record<string, any>) {
   }
 }
 
-// JSON Persistence Endpoints
-app.get('/api/persistence', (req, res) => {
-  try {
-    const data = loadClawdockPersistence();
-    res.json({ success: true, data });
-  } catch (e: any) {
-    res.json({ success: true, data: {} });
+// JSON Persistence Endpoints with support for GET, POST, PUT, OPTIONS
+app.all('/api/persistence', (req, res, next) => {
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
   }
-});
-
-app.post('/api/persistence', (req, res) => {
-  try {
-    const { key, value, data } = req.body || {};
-    const current = loadClawdockPersistence();
-
-    if (data && typeof data === 'object') {
-      Object.assign(current, data);
-      saveClawdockPersistence(current);
-      return res.json({ success: true, data: current });
+  if (req.method === 'GET') {
+    try {
+      const data = loadClawdockPersistence();
+      return res.json({ success: true, data });
+    } catch (e: any) {
+      return res.json({ success: true, data: {} });
     }
-
-    if (key) {
-      current[key] = value;
-      saveClawdockPersistence(current);
-      return res.json({ success: true, key, value, data: current });
-    }
-
-    if (req.body && typeof req.body === 'object' && Object.keys(req.body).length > 0) {
-      Object.assign(current, req.body);
-      saveClawdockPersistence(current);
-      return res.json({ success: true, data: current });
-    }
-
-    return res.status(400).json({ success: false, error: 'Payload must contain key or data' });
-  } catch (e: any) {
-    res.status(500).json({ success: false, error: e.message });
   }
+  if (req.method === 'POST' || req.method === 'PUT') {
+    try {
+      const { key, value, data } = req.body || {};
+      const current = loadClawdockPersistence();
+
+      if (data && typeof data === 'object') {
+        Object.assign(current, data);
+        saveClawdockPersistence(current);
+        return res.json({ success: true, data: current });
+      }
+
+      if (key) {
+        current[key] = value;
+        saveClawdockPersistence(current);
+        return res.json({ success: true, key, value, data: current });
+      }
+
+      if (req.body && typeof req.body === 'object' && Object.keys(req.body).length > 0) {
+        Object.assign(current, req.body);
+        saveClawdockPersistence(current);
+        return res.json({ success: true, data: current });
+      }
+
+      return res.json({ success: true, data: current });
+    } catch (e: any) {
+      return res.status(500).json({ success: false, error: e.message });
+    }
+  }
+  next();
 });
-
-
 
 // Docker System Telemetry
 app.get('/api/docker/status', (req, res) => {
@@ -201,209 +467,117 @@ app.get('/api/docker/status', (req, res) => {
   });
 });
 
-// Fetch live configuration and native config file from agent container volume/filesystem
-app.get('/api/agents/:id/config', (req, res) => {
-  const agentId = req.params.id;
+// Helper to fetch live agent configuration from file or container
+function getAgentConfigData(agentId: string) {
+  ensureNativeConfigFiles();
 
-  let nativeFileName = 'hermes.yaml';
-  let nativeFormat = 'yaml';
-  let defaultContent = '';
+  const def = DEFAULT_NATIVE_FILES[agentId] || DEFAULT_NATIVE_FILES['hermes-agent'];
+  const nativeFileName = def.fileName;
+  const nativeFormat = def.format;
+  const defaultContent = def.content;
+
   let containerNames = [agentId];
-
-  if (agentId === 'openclaw') {
-    nativeFileName = 'openclaw.json';
-    nativeFormat = 'json';
-    containerNames = ['openclaw-hub', 'openclaw'];
-    defaultContent = JSON.stringify({
-      "hub": {
-        "port": 8082,
-        "plugin_everos": true,
-        "endpoint": "http://everos:8080"
-      },
-      "model": {
-        "provider": "openai",
-        "model": "gpt-4o",
-        "temperature": 0.2
-      },
-      "security": {
-        "sandbox_mode": "strict"
-      }
-    }, null, 2);
-  } else if (agentId === 'zeroclaw') {
-    nativeFileName = 'zeroclaw.toml';
-    nativeFormat = 'toml';
-    containerNames = ['zeroclaw-daemon', 'zeroclaw'];
-    defaultContent = `[daemon]
-port = 8081
-rust_log = "info"
-max_ram_mb = 16
-
-[model]
-provider = "deepseek"
-model = "deepseek-reasoner"
-temperature = 0.1
-
-[storage]
-backend = "sqlite"
-db_path = "/var/zeroclaw/memory.db"`;
-  } else if (agentId === 'picoclaw') {
-    nativeFileName = 'picoclaw.json';
-    nativeFormat = 'json';
-    containerNames = ['picoclaw-edge', 'picoclaw'];
-    defaultContent = JSON.stringify({
-      "mode": "gateway",
-      "log_level": "info",
-      "port": 8083,
-      "model": {
-        "provider": "ollama",
-        "model": "qwen2.5-coder:7b",
-        "base_url": "http://localhost:11434"
-      }
-    }, null, 2);
-  } else {
-    // hermes-agent
-    nativeFileName = 'hermes.yaml';
-    nativeFormat = 'yaml';
-    containerNames = ['hermes-agent-core', 'hermes-agent', agentId];
-    defaultContent = `version: "1.0.0"
-agent_id: "hermes-agent"
-model:
-  provider: "anthropic"
-  model: "claude-3-7-sonnet"
-  temperature: 0.2
-  reasoning_effort: "high"
-moa:
-  enabled: true
-  proposer_models:
-    - "claude-3-7-sonnet"
-    - "deepseek-r1"
-    - "gpt-4o"
-  aggregator_model: "claude-3-7-sonnet"
-  rounds: 2
-  temperature_spread: 0.3
-  consensus_threshold: 0.85
-security:
-  sandbox_mode: "container"
-  allow_shell: true`;
-  }
+  if (agentId === 'openclaw') containerNames = ['openclaw-hub', 'openclaw'];
+  else if (agentId === 'zeroclaw') containerNames = ['zeroclaw-daemon', 'zeroclaw'];
+  else if (agentId === 'picoclaw') containerNames = ['picoclaw-edge', 'picoclaw'];
+  else containerNames = ['hermes-agent-core', 'hermes-agent', agentId];
 
   const absPath = `/data/clawdock/${nativeFileName}`;
   const relPath = path.join(process.cwd(), 'data', 'clawdock', nativeFileName);
   let filePath = relPath;
-  if (fs.existsSync(absPath)) {
-    filePath = absPath;
-  } else if (fs.existsSync(relPath)) {
-    filePath = relPath;
-  } else {
-    filePath = fs.existsSync('/data/clawdock') ? absPath : relPath;
-  }
-  const clawdockDir = path.dirname(filePath);
   let nativeContent = defaultContent;
   let source = 'clawdock_mount_file';
 
-  try {
+  // 1. Check if container is running and supports config show
+  for (const cName of containerNames) {
     try {
-      fs.mkdirSync(clawdockDir, { recursive: true });
+      const binName = agentId.replace('-agent', '');
+      const cmd = `docker exec ${cName} ${binName} config show`;
+      const output = execSync(cmd, { encoding: 'utf8', timeout: 1500 });
+      if (output && output.trim().length > 10) {
+        nativeContent = output.trim();
+        source = `docker_exec_${cName}_config_show`;
+        try { fs.writeFileSync(relPath, nativeContent, 'utf8'); } catch {}
+        try { fs.writeFileSync(absPath, nativeContent, 'utf8'); } catch {}
+        break;
+      }
     } catch {}
-
-    // Attempt docker exec config export if container is running
-    let exported = false;
-    for (const cName of containerNames) {
-      try {
-        const binName = agentId.replace('-agent', '');
-        const cmd = `docker exec ${cName} ${binName} config show`;
-        const output = execSync(cmd, { encoding: 'utf8', timeout: 1500 });
-        if (output && output.trim().length > 5) {
-          nativeContent = output.trim();
-          source = `docker_exec_${cName}_config_show`;
-          exported = true;
-          // Cache to both paths if possible
-          try { fs.writeFileSync(filePath, nativeContent, 'utf8'); } catch {}
-          try { fs.writeFileSync(absPath, nativeContent, 'utf8'); } catch {}
-          try { fs.writeFileSync(relPath, nativeContent, 'utf8'); } catch {}
-          break;
-        }
-      } catch {
-        // container not running or binary does not support config show
-      }
-    }
-
-    if (!exported) {
-      if (fs.existsSync(absPath)) {
-        nativeContent = fs.readFileSync(absPath, 'utf8');
-        filePath = absPath;
-      } else if (fs.existsSync(relPath)) {
-        nativeContent = fs.readFileSync(relPath, 'utf8');
-        filePath = relPath;
-      } else {
-        try {
-          fs.writeFileSync(filePath, defaultContent, 'utf8');
-        } catch {
-          fs.writeFileSync(relPath, defaultContent, 'utf8');
-          filePath = relPath;
-        }
-        nativeContent = defaultContent;
-      }
-    }
-  } catch (err) {
-    console.error(`Error reading config for ${agentId}:`, err);
   }
 
-  // Parse native content into structured configSchema for frontend tabs
+  // 2. Read from local file if not fetched from docker exec
+  if (source === 'clawdock_mount_file') {
+    if (fs.existsSync(absPath) && fs.statSync(absPath).size > 10) {
+      nativeContent = fs.readFileSync(absPath, 'utf8');
+      filePath = absPath;
+    } else if (fs.existsSync(relPath) && fs.statSync(relPath).size > 10) {
+      nativeContent = fs.readFileSync(relPath, 'utf8');
+      filePath = relPath;
+    } else {
+      nativeContent = defaultContent;
+      try { fs.writeFileSync(relPath, defaultContent, 'utf8'); } catch {}
+    }
+  }
+
+  // 3. Parse native content into structured configSchema for UI
   let parsedModelProvider = 'anthropic';
   let parsedModelName = 'claude-3-7-sonnet';
   let parsedTemperature = 0.2;
   let parsedSandboxMode = 'docker_isolated';
   let parsedMemoryBackend = 'everos';
+  let parsedAgentName = agentId;
+  let parsedSystemPrompt = `You are ${agentId}, an autonomous AI assistant.`;
   let moaEnabled = agentId === 'hermes-agent';
 
   try {
     if (nativeFormat === 'json') {
       const parsedJson = JSON.parse(nativeContent);
+      if (parsedJson.name) parsedAgentName = parsedJson.name;
       if (parsedJson.model?.provider) parsedModelProvider = parsedJson.model.provider;
       if (parsedJson.model?.model) parsedModelName = parsedJson.model.model;
       if (parsedJson.model?.temperature !== undefined) parsedTemperature = Number(parsedJson.model.temperature);
-      if (parsedJson.security?.sandbox_mode) parsedSandboxMode = parsedJson.security.sandbox_mode;
+      if (parsedJson.security?.sandboxMode || parsedJson.security?.sandbox_mode) {
+        parsedSandboxMode = parsedJson.security.sandboxMode || parsedJson.security.sandbox_mode;
+      }
+      if (parsedJson.storage?.memoryBackend || parsedJson.storage?.memory_backend) {
+        parsedMemoryBackend = parsedJson.storage.memoryBackend || parsedJson.storage.memory_backend;
+      }
+      if (parsedJson.system?.systemPrompt) parsedSystemPrompt = parsedJson.system.systemPrompt;
     } else if (nativeFormat === 'toml') {
-      if (nativeContent.includes('provider =')) {
-        const match = nativeContent.match(/provider\s*=\s*"([^"]+)"/);
-        if (match) parsedModelProvider = match[1];
-      }
-      if (nativeContent.includes('model =')) {
-        const match = nativeContent.match(/model\s*=\s*"([^"]+)"/);
-        if (match) parsedModelName = match[1];
-      }
-      if (nativeContent.includes('temperature =')) {
-        const match = nativeContent.match(/temperature\s*=\s*([0-9.]+)/);
-        if (match) parsedTemperature = Number(match[1]);
-      }
+      const matchName = nativeContent.match(/name\s*=\s*"([^"]+)"/);
+      if (matchName) parsedAgentName = matchName[1];
+      const matchProv = nativeContent.match(/provider\s*=\s*"([^"]+)"/);
+      if (matchProv) parsedModelProvider = matchProv[1];
+      const matchModel = nativeContent.match(/model\s*=\s*"([^"]+)"/);
+      if (matchModel) parsedModelName = matchModel[1];
+      const matchTemp = nativeContent.match(/temperature\s*=\s*([0-9.]+)/);
+      if (matchTemp) parsedTemperature = Number(matchTemp[1]);
+      const matchPrompt = nativeContent.match(/system_prompt\s*=\s*"([^"]+)"/);
+      if (matchPrompt) parsedSystemPrompt = matchPrompt[1];
     } else {
       // yaml
-      if (nativeContent.includes('provider:')) {
-        const match = nativeContent.match(/provider:\s*"([^"]+)"|provider:\s*([^\s]+)/);
-        if (match) parsedModelProvider = match[1] || match[2];
-      }
-      if (nativeContent.includes('model:')) {
-        const match = nativeContent.match(/model:\s*"([^"]+)"|model:\s*([^\s]+)/);
-        if (match) parsedModelName = match[1] || match[2];
-      }
-      if (nativeContent.includes('temperature:')) {
-        const match = nativeContent.match(/temperature:\s*([0-9.]+)/);
-        if (match) parsedTemperature = Number(match[1]);
-      }
+      const matchName = nativeContent.match(/agent_name:\s*"([^"]+)"|agent_name:\s*([^\n]+)/);
+      if (matchName) parsedAgentName = matchName[1] || matchName[2];
+      const matchProv = nativeContent.match(/provider:\s*"([^"]+)"|provider:\s*([^\s\n]+)/);
+      if (matchProv) parsedModelProvider = matchProv[1] || matchProv[2];
+      const matchModel = nativeContent.match(/model:\s*"([^"]+)"|model:\s*([^\s\n]+)/);
+      if (matchModel) parsedModelName = matchModel[1] || matchModel[2];
+      const matchTemp = nativeContent.match(/temperature:\s*([0-9.]+)/);
+      if (matchTemp) parsedTemperature = Number(matchTemp[1]);
+      const matchPrompt = nativeContent.match(/system_prompt:\s*"([^"]+)"/);
+      if (matchPrompt) parsedSystemPrompt = matchPrompt[1];
     }
   } catch (e) {
-    console.error('Error parsing native content for configSchema:', e);
+    console.error('Error parsing config details from file:', e);
   }
 
-  res.json({
+  return {
     success: true,
     agentId,
     nativeFileName,
     nativeFormat,
     nativeContent,
     filePath: `data/clawdock/${nativeFileName}`,
-    source: 'container_volume_mount_file',
+    source,
     fetchedAt: new Date().toISOString(),
     configSchema: {
       agentId,
@@ -427,25 +601,25 @@ security:
         webhook: { enabled: true, port: 8080, authToken: 'secure_bearer_token', corsOrigin: '*' }
       },
       system: {
-        preset: 'engineer',
-        systemPrompt: `You are ${agentId}, an advanced autonomous AI agent orchestrator running in container volume mount.`,
-        agentName: agentId,
-        personaName: 'Autonomous Agent',
-        language: 'en',
+        preset: (agentId === 'openclaw' ? 'researcher' : (agentId === 'zeroclaw' || agentId === 'picoclaw' ? 'edge_assistant' : 'engineer')) as any,
+        systemPrompt: parsedSystemPrompt,
+        agentName: parsedAgentName,
+        personaName: parsedAgentName,
+        language: 'en-US',
         autoFormatCode: true
       },
       security: {
         sandboxMode: parsedSandboxMode as any,
         allowedDirectories: ['/workspace', '/data'],
         blockNetworkAccess: false,
-        maxExecutionTimeSec: 300,
+        maxExecutionTimeSec: 120,
         requireApprovalForCommands: false,
-        securityProfileFile: 'default.yaml'
+        securityProfileFile: '.security.yml'
       },
       storage: {
         memoryBackend: parsedMemoryBackend as any,
-        dbPath: `./data/sqlite/${agentId}_memory.db`,
-        autoSummarizeInterval: 30,
+        dbPath: `/data/everos/memories/${agentId}`,
+        autoSummarizeInterval: 25,
         maxHistoryTurns: 100,
         vectorDbUrl: 'http://everos:8080'
       },
@@ -462,9 +636,30 @@ security:
         LOG_LEVEL: 'info'
       }
     }
-  });
+  };
+}
+
+// Fetch live configuration and native config file from agent container volume/filesystem
+app.get('/api/agents/:id/config', (req, res) => {
+  try {
+    const result = getAgentConfigData(req.params.id);
+    res.json(result);
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e.message });
+  }
 });
 
+// Bulk fetch all configs
+app.get('/api/agents/all/configs', (req, res) => {
+  const ids = ['hermes-agent', 'zeroclaw', 'openclaw', 'picoclaw'];
+  const allConfigs: Record<string, any> = {};
+  for (const id of ids) {
+    try {
+      allConfigs[id] = getAgentConfigData(id);
+    } catch {}
+  }
+  res.json({ success: true, configs: allConfigs });
+});
 
 // Save / update native config file for agent container and restart container
 app.put('/api/agents/:id/config', (req, res) => {
@@ -475,23 +670,28 @@ app.put('/api/agents/:id/config', (req, res) => {
     return res.status(400).json({ success: false, error: 'nativeContent string is required' });
   }
 
-  let nativeFileName = 'hermes.yaml';
-  if (agentId === 'openclaw') {
-    nativeFileName = 'openclaw.json';
-  } else if (agentId === 'zeroclaw') {
-    nativeFileName = 'zeroclaw.toml';
-  } else if (agentId === 'picoclaw') {
-    nativeFileName = 'picoclaw.json';
-  }
-
+  const def = DEFAULT_NATIVE_FILES[agentId] || DEFAULT_NATIVE_FILES['hermes-agent'];
+  const nativeFileName = def.fileName;
   const absPath = `/data/clawdock/${nativeFileName}`;
   const relPath = path.join(process.cwd(), 'data', 'clawdock', nativeFileName);
+
   try {
     try { fs.mkdirSync('/data/clawdock', { recursive: true }); } catch {}
     try { fs.mkdirSync(path.dirname(relPath), { recursive: true }); } catch {}
     
-    try { fs.writeFileSync(absPath, nativeContent, 'utf8'); } catch (e) { console.error('Failed writing to absPath:', e); }
-    try { fs.writeFileSync(relPath, nativeContent, 'utf8'); } catch (e) { console.error('Failed writing to relPath:', e); }
+    try { fs.writeFileSync(absPath, nativeContent, 'utf8'); } catch {}
+    try { fs.writeFileSync(relPath, nativeContent, 'utf8'); } catch {}
+
+    // Also update persistence store
+    try {
+      const parsedConfig = getAgentConfigData(agentId);
+      if (parsedConfig && parsedConfig.configSchema) {
+        const persist = loadClawdockPersistence();
+        if (!persist.configs) persist.configs = {};
+        persist.configs[agentId] = parsedConfig.configSchema;
+        saveClawdockPersistence(persist);
+      }
+    } catch {}
 
     // Perform container restart if requested via restartContainer toggle
     const shouldRestart = restartContainer !== false;
@@ -514,7 +714,7 @@ app.put('/api/agents/:id/config', (req, res) => {
       filePath: `data/clawdock/${nativeFileName}`,
       restarted: shouldRestart,
       message: shouldRestart 
-        ? `Configuration saved and container ${agentId} successfully restarted via Docker daemon.` 
+        ? `Configuration saved to ${nativeFileName} and container ${agentId} successfully restarted.` 
         : `Configuration saved to ${nativeFileName} without container restart.`
     });
   } catch (err: any) {
@@ -524,16 +724,12 @@ app.put('/api/agents/:id/config', (req, res) => {
 
 // Docker exec helper endpoint to read native config file and inject into configs state
 app.post('/api/agents/:id/docker-exec-config', (req, res) => {
-  const agentId = req.params.id;
-  // Redirect to GET config logic which reads from container mount path
-  // We can just invoke the config fetch logic or forward
-  req.params.id = agentId;
-  // Trigger internal fetch
-  const getHandler = app._router.stack.find((layer: any) => layer.route && layer.route.path === '/api/agents/:id/config' && layer.route.methods.get);
-  if (getHandler) {
-    return getHandler.handle(req, res);
+  try {
+    const result = getAgentConfigData(req.params.id);
+    res.json(result);
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e.message });
   }
-  res.json({ success: false, error: 'Config reader route not found' });
 });
 
 
@@ -747,21 +943,26 @@ app.post('/api/agents/:id/stop', (req, res) => {
 });
 
 // Persistent state sync endpoints
-app.get('/api/state', (req, res) => {
-  res.json({
-    success: true,
-    agentStates,
-    timestamp: new Date().toISOString()
-  });
-});
-
-app.post('/api/state', (req, res) => {
-  const { agentStates: newStates } = req.body || {};
-  if (newStates) {
-    agentStates = { ...agentStates, ...newStates };
-    savePersistentState();
+app.all('/api/state', (req, res, next) => {
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
   }
-  res.json({ success: true, agentStates });
+  if (req.method === 'GET') {
+    return res.json({
+      success: true,
+      agentStates,
+      timestamp: new Date().toISOString()
+    });
+  }
+  if (req.method === 'POST' || req.method === 'PUT') {
+    const { agentStates: newStates } = req.body || {};
+    if (newStates) {
+      agentStates = { ...agentStates, ...newStates };
+      savePersistentState();
+    }
+    return res.json({ success: true, agentStates });
+  }
+  next();
 });
 
 
