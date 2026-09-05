@@ -76,46 +76,33 @@ function savePersistentState() {
 
 loadPersistentState();
 
-function initSqliteDb() {
+const PERSISTENCE_FILE_PATH = path.join(process.cwd(), 'data', 'clawdock', 'persistence.json');
+
+function loadClawdockPersistence(): Record<string, any> {
   try {
-    fs.mkdirSync(path.dirname(SQLITE_DB_PATH), { recursive: true });
-    const pyScript = `
-import sqlite3
-conn = sqlite3.connect('${SQLITE_DB_PATH}')
-cursor = conn.cursor()
-cursor.execute('''
-CREATE TABLE IF NOT EXISTS clawdock_state (
-    key TEXT PRIMARY KEY,
-    value TEXT,
-    updated_at TEXT
-)
-''')
-conn.commit()
-conn.close()
-`;
-    execSync(`python3 -c "${pyScript.replace(/\n/g, ' ')}"`);
+    if (fs.existsSync(PERSISTENCE_FILE_PATH)) {
+      return JSON.parse(fs.readFileSync(PERSISTENCE_FILE_PATH, 'utf8')) || {};
+    }
   } catch (e) {
-    console.error('Failed to initialize SQLite db:', e);
+    console.error('Failed to load persistence data:', e);
+  }
+  return {};
+}
+
+function saveClawdockPersistence(data: Record<string, any>) {
+  try {
+    fs.mkdirSync(path.dirname(PERSISTENCE_FILE_PATH), { recursive: true });
+    fs.writeFileSync(PERSISTENCE_FILE_PATH, JSON.stringify(data, null, 2), 'utf8');
+  } catch (e) {
+    console.error('Failed to save persistence data:', e);
   }
 }
 
-initSqliteDb();
-
-// SQLite Persistence Endpoints
+// JSON Persistence Endpoints
 app.get('/api/persistence', (req, res) => {
   try {
-    const pyScript = `
-import sqlite3, json
-conn = sqlite3.connect('${SQLITE_DB_PATH}')
-cursor = conn.cursor()
-cursor.execute("SELECT key, value FROM clawdock_state")
-rows = cursor.fetchall()
-data = {r[0]: json.loads(r[1]) for r in rows}
-conn.close()
-print(json.dumps(data))
-`;
-    const output = execSync(`python3 -c "${pyScript.replace(/\n/g, ' ')}"`, { encoding: 'utf8' });
-    res.json({ success: true, data: JSON.parse(output.trim() || '{}') });
+    const data = loadClawdockPersistence();
+    res.json({ success: true, data });
   } catch (e: any) {
     res.json({ success: true, data: {} });
   }
@@ -127,16 +114,9 @@ app.post('/api/persistence', (req, res) => {
     if (!key) {
       return res.status(400).json({ success: false, error: 'key is required' });
     }
-    const valStr = JSON.stringify(value || {});
-    const pyScript = `
-import sqlite3, datetime
-conn = sqlite3.connect('${SQLITE_DB_PATH}')
-cursor = conn.cursor()
-cursor.execute("INSERT OR REPLACE INTO clawdock_state (key, value, updated_at) VALUES (?, ?, ?)", ('${key}', '''${valStr}''', datetime.datetime.now().isoformat()))
-conn.commit()
-conn.close()
-`;
-    execSync(`python3 -c "${pyScript.replace(/\n/g, ' ')}"`);
+    const current = loadClawdockPersistence();
+    current[key] = value;
+    saveClawdockPersistence(current);
     res.json({ success: true, key, value });
   } catch (e: any) {
     res.status(500).json({ success: false, error: e.message });
@@ -166,12 +146,12 @@ app.get('/api/agents/:id/config', (req, res) => {
   let nativeFileName = 'hermes.yaml';
   let nativeFormat = 'yaml';
   let defaultContent = '';
-  let subDir = 'hermes';
+  let containerNames = [agentId];
 
   if (agentId === 'openclaw') {
     nativeFileName = 'openclaw.json';
     nativeFormat = 'json';
-    subDir = 'openclaw';
+    containerNames = ['openclaw-hub', 'openclaw'];
     defaultContent = JSON.stringify({
       "hub": {
         "port": 8082,
@@ -188,9 +168,9 @@ app.get('/api/agents/:id/config', (req, res) => {
       }
     }, null, 2);
   } else if (agentId === 'zeroclaw') {
-    nativeFileName = 'config.toml';
+    nativeFileName = 'zeroclaw.toml';
     nativeFormat = 'toml';
-    subDir = 'zeroclaw';
+    containerNames = ['zeroclaw-daemon', 'zeroclaw'];
     defaultContent = `[daemon]
 port = 8081
 rust_log = "info"
@@ -205,9 +185,9 @@ temperature = 0.1
 backend = "sqlite"
 db_path = "/var/zeroclaw/memory.db"`;
   } else if (agentId === 'picoclaw') {
-    nativeFileName = 'config.json';
+    nativeFileName = 'picoclaw.json';
     nativeFormat = 'json';
-    subDir = 'picoclaw';
+    containerNames = ['picoclaw-edge', 'picoclaw'];
     defaultContent = JSON.stringify({
       "mode": "gateway",
       "log_level": "info",
@@ -220,9 +200,9 @@ db_path = "/var/zeroclaw/memory.db"`;
     }, null, 2);
   } else {
     // hermes-agent
-    nativeFileName = 'config.yaml';
+    nativeFileName = 'hermes.yaml';
     nativeFormat = 'yaml';
-    subDir = 'hermes';
+    containerNames = ['hermes-agent-core', 'hermes-agent', agentId];
     defaultContent = `version: "1.0.0"
 agent_id: "hermes-agent"
 model:
@@ -245,19 +225,43 @@ security:
   allow_shell: true`;
   }
 
-  const filePath = path.join(process.cwd(), 'data', subDir, nativeFileName);
+  const clawdockDir = path.join(process.cwd(), 'data', 'clawdock');
+  const filePath = path.join(clawdockDir, nativeFileName);
   let nativeContent = defaultContent;
+  let source = 'clawdock_mount_file';
 
   try {
-    fs.mkdirSync(path.join(process.cwd(), 'data', 'sqlite'), { recursive: true });
-    if (fs.existsSync(filePath)) {
-      nativeContent = fs.readFileSync(filePath, 'utf8');
-    } else {
-      fs.mkdirSync(path.dirname(filePath), { recursive: true });
-      fs.writeFileSync(filePath, defaultContent, 'utf8');
+    fs.mkdirSync(clawdockDir, { recursive: true });
+
+    // Attempt docker exec config export if container is running
+    let exported = false;
+    for (const cName of containerNames) {
+      try {
+        const binName = agentId.replace('-agent', '');
+        const cmd = `docker exec ${cName} ${binName} config show`;
+        const output = execSync(cmd, { encoding: 'utf8', timeout: 1500 });
+        if (output && output.trim().length > 5) {
+          nativeContent = output.trim();
+          source = `docker_exec_${cName}_config_show`;
+          exported = true;
+          // Cache to clawdock mount file
+          fs.writeFileSync(filePath, nativeContent, 'utf8');
+          break;
+        }
+      } catch {
+        // container not running or binary does not support config show
+      }
+    }
+
+    if (!exported) {
+      if (fs.existsSync(filePath)) {
+        nativeContent = fs.readFileSync(filePath, 'utf8');
+      } else {
+        fs.writeFileSync(filePath, defaultContent, 'utf8');
+      }
     }
   } catch (err) {
-    console.error(`Error reading config file for ${agentId}:`, err);
+    console.error(`Error reading config for ${agentId}:`, err);
   }
 
   // Parse native content into structured configSchema for frontend tabs
@@ -313,7 +317,7 @@ security:
     nativeFileName,
     nativeFormat,
     nativeContent,
-    filePath: `data/${subDir}/${nativeFileName}`,
+    filePath: `data/clawdock/${nativeFileName}`,
     source: 'container_volume_mount_file',
     fetchedAt: new Date().toISOString(),
     configSchema: {
@@ -386,22 +390,19 @@ app.put('/api/agents/:id/config', (req, res) => {
     return res.status(400).json({ success: false, error: 'nativeContent string is required' });
   }
 
-  let nativeFileName = 'config.yaml';
-  let subDir = 'hermes';
+  let nativeFileName = 'hermes.yaml';
   if (agentId === 'openclaw') {
     nativeFileName = 'openclaw.json';
-    subDir = 'openclaw';
   } else if (agentId === 'zeroclaw') {
-    nativeFileName = 'config.toml';
-    subDir = 'zeroclaw';
+    nativeFileName = 'zeroclaw.toml';
   } else if (agentId === 'picoclaw') {
-    nativeFileName = 'config.json';
-    subDir = 'picoclaw';
+    nativeFileName = 'picoclaw.json';
   }
 
-  const filePath = path.join(process.cwd(), 'data', subDir, nativeFileName);
+  const clawdockDir = path.join(process.cwd(), 'data', 'clawdock');
+  const filePath = path.join(clawdockDir, nativeFileName);
   try {
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.mkdirSync(clawdockDir, { recursive: true });
     fs.writeFileSync(filePath, nativeContent, 'utf8');
 
     // Perform container restart if requested via restartContainer toggle
@@ -422,7 +423,7 @@ app.put('/api/agents/:id/config', (req, res) => {
     res.json({
       success: true,
       agentId,
-      filePath: `data/${subDir}/${nativeFileName}`,
+      filePath: `data/clawdock/${nativeFileName}`,
       restarted: shouldRestart,
       message: shouldRestart 
         ? `Configuration saved and container ${agentId} successfully restarted via Docker daemon.` 

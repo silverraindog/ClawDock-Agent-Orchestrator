@@ -87,7 +87,7 @@ services:
   #    - "8080:8080"
   #  volumes:
   #    - ./workspace:/workspace
-  #    - ./data/hermes:/data
+  #    - ./data/clawdock/hermes.yaml:/etc/hermes/config.yaml
   #    - ./data/everos:/data/everos
   #  environment:
   #    - HERMES_PORT=8080
@@ -112,7 +112,7 @@ services:
   #    - "8081:8081"
   #  volumes:
   #    - ./workspace:/var/zeroclaw/workspace
-  #    - ./data/zeroclaw:/var/zeroclaw/data
+  #    - ./data/clawdock/zeroclaw.toml:/var/zeroclaw/config.toml
   #    - ./data/everos:/data/everos:ro
   #  environment:
   #    - RUST_LOG=info
@@ -136,7 +136,7 @@ services:
   #    - "8082:8082"
   #  volumes:
   #    - ./workspace:/workspace
-  #    - ./data/openclaw:/root/.openclaw
+  #    - ./data/clawdock/openclaw.json:/root/.openclaw/openclaw.json
   #  environment:
   #    - NODE_ENV=production
   #    - PORT=8082
@@ -159,7 +159,7 @@ services:
   #    - "8083:8083"
   #  volumes:
   #    - ./workspace:/home/sipeed/.picoclaw/workspace
-  #    - ./data/picoclaw:/home/sipeed/.picoclaw/data
+  #    - ./data/clawdock/picoclaw.json:/home/sipeed/.picoclaw/config.json
   #  environment:
   #    - PICOCLAW_PORT=8083
   #    - PICOCLAW_MODE=gateway
