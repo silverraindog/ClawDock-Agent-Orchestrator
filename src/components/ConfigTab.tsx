@@ -58,6 +58,11 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
   const [isRestartModalOpen, setIsRestartModalOpen] = useState(false);
 
 
+  // Fetch live config automatically on mount and agentId change
+  React.useEffect(() => {
+    fetchLiveConfig();
+  }, [agentId]);
+
   // Sync raw text when config changes externally
   React.useEffect(() => {
     setRawText(JSON.stringify(config, null, 2));

@@ -29,8 +29,11 @@ services:
       - ./data/configs:/data/configs
       # Persist SQLite database and agent state files
       - ./data/sqlite:/data/sqlite
-      # Persist ClawDock configs, preferences, and container links
-      - ./data/clawdock:/data/clawdock
+      # External host config mounts into ClawDock container directory
+      - /home/zeroclaw/config.toml:/data/clawdock/zeroclaw.toml
+      - /home/openclaw/openclaw.json:/data/clawdock/openclaw.json
+      - /home/sargus/.hermes-data/config.yaml:/data/clawdock/hermes.yaml
+      - /opt/bots/picaclaw/data/config.json:/data/clawdock/picoclaw.json
       # Shared workspace for agents to read/write files and execute code
       - ./workspace:/workspace
       - /home/zeroclaw/config.toml:/data/clawdock/zeroclaw.toml
