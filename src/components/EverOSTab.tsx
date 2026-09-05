@@ -27,7 +27,8 @@ import {
   Clock, 
   Lock,
   Download,
-  AlertCircle
+  AlertCircle,
+  BarChart3
 } from 'lucide-react';
 import { 
   AgentId, 
@@ -43,6 +44,7 @@ import {
   INITIAL_EVEROS_SKILLS, 
   INITIAL_EVEROS_STATS 
 } from '../data/everosData';
+import { EverOSAnalytics } from './EverOSAnalytics';
 
 interface EverOSTabProps {
   onOpenAgentConfig?: (agentId: AgentId) => void;
@@ -50,7 +52,7 @@ interface EverOSTabProps {
 
 export const EverOSTab: React.FC<EverOSTabProps> = ({ onOpenAgentConfig }) => {
   // State
-  const [activeSubTab, setActiveSubTab] = useState<'matrix' | 'mrag' | 'bank' | 'skills' | 'config'>('matrix');
+  const [activeSubTab, setActiveSubTab] = useState<'matrix' | 'mrag' | 'bank' | 'skills' | 'analytics' | 'config'>('matrix');
   const [config, setConfig] = useState<EverOSConfig>(DEFAULT_EVEROS_CONFIG);
   const [stats, setStats] = useState<EverOSStats>(INITIAL_EVEROS_STATS);
   const [memories, setMemories] = useState<EverOSMemoryItem[]>(INITIAL_EVEROS_MEMORIES);
@@ -471,6 +473,19 @@ export const EverOSTab: React.FC<EverOSTabProps> = ({ onOpenAgentConfig }) => {
         >
           <Sparkles className="w-4 h-4 text-emerald-400" />
           Self-Evolving Skills ({skills.length})
+        </button>
+
+        <button
+          id="everos-tab-analytics"
+          onClick={() => setActiveSubTab('analytics')}
+          className={`px-3.5 py-2 rounded-xl text-xs font-semibold flex items-center gap-2 transition-all ${
+            activeSubTab === 'analytics'
+              ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20'
+              : 'bg-slate-900/80 text-slate-400 hover:text-slate-200 hover:bg-slate-800 border border-slate-800'
+          }`}
+        >
+          <BarChart3 className="w-4 h-4 text-indigo-400" />
+          Performance Analytics
         </button>
 
         <button
@@ -999,6 +1014,13 @@ export const EverOSTab: React.FC<EverOSTabProps> = ({ onOpenAgentConfig }) => {
             ))}
           </div>
         </div>
+      )}
+
+      {/* ==================================================================== */}
+      {/* PERFORMANCE ANALYTICS VIEW (Recharts)                                */}
+      {/* ==================================================================== */}
+      {activeSubTab === 'analytics' && (
+        <EverOSAnalytics />
       )}
 
       {/* ==================================================================== */}

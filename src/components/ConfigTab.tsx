@@ -38,7 +38,7 @@ interface ConfigTabProps {
   isSaving: boolean;
 }
 
-type ConfigSection = 'model' | 'channels' | 'system' | 'security' | 'storage' | 'raw';
+type ConfigSection = 'model' | 'moa' | 'channels' | 'system' | 'security' | 'storage' | 'raw';
 
 export const ConfigTab: React.FC<ConfigTabProps> = ({
   agentId,
@@ -52,11 +52,35 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
   const [copiedRaw, setCopiedRaw] = useState(false);
   const [rawText, setRawText] = useState(JSON.stringify(config, null, 2));
   const [rawError, setRawError] = useState<string | null>(null);
+  const [isFetchingLive, setIsFetchingLive] = useState(false);
 
   // Sync raw text when config changes externally
   React.useEffect(() => {
     setRawText(JSON.stringify(config, null, 2));
   }, [config]);
+
+  const fetchLiveConfig = async () => {
+    setIsFetchingLive(true);
+    try {
+      const res = await fetch(`/api/agents/${agentId}/config`);
+      const data = await res.json();
+      if (data && data.success && data.configSchema) {
+        if (data.configSchema.moa) {
+          onChangeConfig({
+            ...config,
+            moa: {
+              ...(config.moa || { enabled: true, proposerModels: [], aggregatorModel: 'claude-3-7-sonnet', rounds: 2, temperatureSpread: 0.3, consensusThreshold: 0.85 }),
+              ...data.configSchema.moa
+            }
+          });
+        }
+      }
+    } catch (e) {
+      console.error("Failed to fetch live config:", e);
+    } finally {
+      setIsFetchingLive(false);
+    }
+  };
 
   const handleProviderChange = (provider: LLMProvider) => {
     const available = MODEL_OPTIONS[provider] || [];
@@ -135,6 +159,16 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
 
         <div className="flex flex-wrap items-center gap-2">
           <button
+            id="fetch-live-config-btn"
+            onClick={fetchLiveConfig}
+            disabled={isFetchingLive}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-indigo-300 hover:text-white bg-indigo-950/60 hover:bg-indigo-900/60 border border-indigo-500/30 transition-colors disabled:opacity-50"
+          >
+            <Terminal className="w-3.5 h-3.5 text-indigo-400" />
+            {isFetchingLive ? 'Fetching...' : 'Fetch Live Container Config'}
+          </button>
+
+          <button
             id="reset-config-btn"
             onClick={onResetDefaults}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 border border-slate-700 transition-colors"
@@ -168,6 +202,7 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
       <div className="flex overflow-x-auto gap-2 pb-1 border-b border-slate-800/80">
         {[
           { id: 'model', label: 'Model & Reasoning', icon: Zap },
+          { id: 'moa', label: 'Mixture-of-Agents (MoA)', icon: Cpu },
           { id: 'channels', label: 'Communication Channels', icon: Radio },
           { id: 'system', label: 'Prompt & Persona', icon: MessageSquare },
           { id: 'security', label: 'Security & Sandbox', icon: Shield },
@@ -415,6 +450,108 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
                   })}
                   className="w-full px-3.5 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-slate-100 text-xs focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-colors font-mono"
                 />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ================= MIXTURE-OF-AGENTS (MoA) ================= */}
+        {activeSection === 'moa' && (
+          <div className="space-y-6">
+            <div className="border-b border-slate-800 pb-4 flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+                  <Cpu className="w-4 h-4 text-indigo-400" />
+                  Mixture-of-Agents (MoA) Cooperative Reasoning
+                </h3>
+                <p className="text-xs text-slate-400 mt-1">
+                  Multi-model collaborative proposal and aggregation pipeline (specifically optimized for Hermes Agent).
+                </p>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={config.moa?.enabled ?? true}
+                  onChange={(e) => onChangeConfig({
+                    ...config,
+                    moa: {
+                      ...(config.moa || { proposerModels: [], aggregatorModel: 'claude-3-7-sonnet', rounds: 2, temperatureSpread: 0.3, consensusThreshold: 0.85 }),
+                      enabled: e.target.checked
+                    }
+                  })}
+                  className="sr-only peer"
+                />
+                <div className="w-9 h-5 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
+              </label>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="space-y-2">
+                <label className="block text-xs font-semibold text-slate-200">
+                  Aggregator Model (Final Synthesis)
+                </label>
+                <select
+                  value={config.moa?.aggregatorModel || 'claude-3-7-sonnet'}
+                  onChange={(e) => onChangeConfig({
+                    ...config,
+                    moa: {
+                      ...(config.moa || { enabled: true, proposerModels: [], rounds: 2, temperatureSpread: 0.3, consensusThreshold: 0.85 }),
+                      aggregatorModel: e.target.value
+                    }
+                  })}
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-slate-100 text-xs focus:outline-none focus:border-indigo-500 font-mono"
+                >
+                  <option value="claude-3-7-sonnet">Claude 3.7 Sonnet (Recommended)</option>
+                  <option value="gpt-4o">GPT-4o (OpenAI)</option>
+                  <option value="deepseek-r1">DeepSeek-R1</option>
+                  <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
+                </select>
+                <p className="text-[11px] text-slate-400">Model that aggregates and synthesizes proposals from proposer agents.</p>
+              </div>
+
+              <div className="space-y-2">
+                <label className="block text-xs font-semibold text-slate-200">
+                  Collaboration Rounds ({config.moa?.rounds || 2} rounds)
+                </label>
+                <input
+                  type="range"
+                  min="1"
+                  max="5"
+                  step="1"
+                  value={config.moa?.rounds || 2}
+                  onChange={(e) => onChangeConfig({
+                    ...config,
+                    moa: {
+                      ...(config.moa || { enabled: true, proposerModels: [], aggregatorModel: 'claude-3-7-sonnet', temperatureSpread: 0.3, consensusThreshold: 0.85 }),
+                      rounds: parseInt(e.target.value, 10)
+                    }
+                  })}
+                  className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-500 mt-3"
+                />
+                <div className="flex justify-between text-[10px] text-slate-500 font-mono">
+                  <span>1 Round</span>
+                  <span>2 Rounds</span>
+                  <span>5 Rounds</span>
+                </div>
+              </div>
+
+              <div className="space-y-2 md:col-span-2">
+                <label className="block text-xs font-semibold text-slate-200">
+                  Proposer Models (Comma separated)
+                </label>
+                <input
+                  type="text"
+                  value={(config.moa?.proposerModels || ['claude-3-7-sonnet', 'deepseek-r1', 'gpt-4o']).join(', ')}
+                  onChange={(e) => onChangeConfig({
+                    ...config,
+                    moa: {
+                      ...(config.moa || { enabled: true, aggregatorModel: 'claude-3-7-sonnet', rounds: 2, temperatureSpread: 0.3, consensusThreshold: 0.85 }),
+                      proposerModels: e.target.value.split(',').map(s => s.trim()).filter(Boolean)
+                    }
+                  })}
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-slate-100 text-xs font-mono"
+                />
+                <p className="text-[11px] text-slate-400">Models participating in parallel first-pass proposal generation.</p>
               </div>
             </div>
           </div>

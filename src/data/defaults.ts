@@ -163,6 +163,14 @@ export const DEFAULT_CONFIGS: Record<AgentId, AgentFullConfig> = {
       PYTHONUNBUFFERED: '1',
       WORKSPACE_ROOT: '/workspace',
     },
+    moa: {
+      enabled: true,
+      proposerModels: ['claude-3-7-sonnet', 'deepseek-r1', 'gpt-4o'],
+      aggregatorModel: 'claude-3-7-sonnet',
+      rounds: 2,
+      temperatureSpread: 0.3,
+      consensusThreshold: 0.85
+    },
   },
   'zeroclaw': {
     agentId: 'zeroclaw',
@@ -241,6 +249,14 @@ export const DEFAULT_CONFIGS: Record<AgentId, AgentFullConfig> = {
     customEnv: {
       RUST_LOG: 'info',
       ZEROCLAW_MAX_RAM_MB: '16',
+    },
+    moa: {
+      enabled: false,
+      proposerModels: ['deepseek-r1'],
+      aggregatorModel: 'deepseek-r1',
+      rounds: 1,
+      temperatureSpread: 0.2,
+      consensusThreshold: 0.80
     },
   },
   'openclaw': {
@@ -323,6 +339,14 @@ export const DEFAULT_CONFIGS: Record<AgentId, AgentFullConfig> = {
       OPENCLAW_PLUGIN_EVEROS: 'true',
       EVEROS_ENDPOINT: 'http://everos:8080',
     },
+    moa: {
+      enabled: false,
+      proposerModels: ['gpt-4o'],
+      aggregatorModel: 'gpt-4o',
+      rounds: 1,
+      temperatureSpread: 0.2,
+      consensusThreshold: 0.80
+    },
   },
   'picoclaw': {
     agentId: 'picoclaw',
@@ -402,6 +426,14 @@ export const DEFAULT_CONFIGS: Record<AgentId, AgentFullConfig> = {
     customEnv: {
       PICOCLAW_MODE: 'gateway',
       PICOCLAW_LOG: 'info',
+    },
+    moa: {
+      enabled: false,
+      proposerModels: ['qwen2.5-coder:7b'],
+      aggregatorModel: 'qwen2.5-coder:7b',
+      rounds: 1,
+      temperatureSpread: 0.2,
+      consensusThreshold: 0.80
     },
   }
 };

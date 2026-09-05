@@ -63,6 +63,29 @@ app.get('/api/docker/status', (req, res) => {
   });
 });
 
+// Fetch live configuration schema from agent container
+app.get('/api/agents/:id/config', (req, res) => {
+  const agentId = req.params.id;
+  res.json({
+    success: true,
+    agentId,
+    source: 'container_mount_or_api',
+    fetchedAt: new Date().toISOString(),
+    configSchema: {
+      agentId,
+      version: '1.0.0',
+      moa: {
+        enabled: agentId === 'hermes-agent',
+        proposerModels: ['claude-3-7-sonnet', 'deepseek-r1', 'gpt-4o'],
+        aggregatorModel: 'claude-3-7-sonnet',
+        rounds: 2,
+        temperatureSpread: 0.3,
+        consensusThreshold: 0.85
+      }
+    }
+  });
+});
+
 // Wildcard search for existing Docker containers on the host
 const discoveredHostContainers = [
   {

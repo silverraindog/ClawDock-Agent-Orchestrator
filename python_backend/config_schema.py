@@ -91,6 +91,14 @@ class StorageConfigSchema(BaseModel):
     max_history_turns: int = 100
     vector_db_url: Optional[str] = 'http://everos:8080'
 
+class MoAConfigSchema(BaseModel):
+    enabled: bool = True
+    proposer_models: List[str] = Field(default_factory=lambda: ['claude-3-7-sonnet', 'deepseek-r1', 'gpt-4o'])
+    aggregator_model: str = 'claude-3-7-sonnet'
+    rounds: int = 2
+    temperature_spread: float = 0.3
+    consensus_threshold: float = 0.85
+
 class AgentFullConfigSchema(BaseModel):
     agent_id: Literal['hermes-agent', 'zeroclaw', 'openclaw', 'picoclaw']
     version: str = '1.0.0'
@@ -99,4 +107,5 @@ class AgentFullConfigSchema(BaseModel):
     system: SystemPromptSchema = Field(default_factory=SystemPromptSchema)
     security: SecurityConfigSchema = Field(default_factory=SecurityConfigSchema)
     storage: StorageConfigSchema = Field(default_factory=StorageConfigSchema)
+    moa: MoAConfigSchema = Field(default_factory=MoAConfigSchema)
     custom_env: Dict[str, str] = Field(default_factory=dict)

@@ -118,6 +118,15 @@ export interface StorageConfig {
   vectorDbUrl?: string;
 }
 
+export interface MoAConfig {
+  enabled: boolean;
+  proposerModels: string[];
+  aggregatorModel: string;
+  rounds: number;
+  temperatureSpread: number;
+  consensusThreshold: number;
+}
+
 export interface AgentFullConfig {
   agentId: AgentId;
   version: string;
@@ -126,6 +135,7 @@ export interface AgentFullConfig {
   system: SystemPromptConfig;
   security: SecurityConfig;
   storage: StorageConfig;
+  moa: MoAConfig;
   customEnv: Record<string, string>;
 }
 
