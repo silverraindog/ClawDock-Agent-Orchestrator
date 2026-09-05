@@ -49,6 +49,33 @@ let agentStates: Record<string, { status: string; containerId: string; logs: str
   }
 };
 
+const STATE_FILE_PATH = path.join(process.cwd(), 'data', 'app_persistent_state.json');
+
+function loadPersistentState() {
+  try {
+    if (fs.existsSync(STATE_FILE_PATH)) {
+      const data = JSON.parse(fs.readFileSync(STATE_FILE_PATH, 'utf8'));
+      if (data && data.agentStates) {
+        agentStates = { ...agentStates, ...data.agentStates };
+      }
+    }
+  } catch (e) {
+    console.error('Failed to load persistent state:', e);
+  }
+}
+
+function savePersistentState() {
+  try {
+    fs.mkdirSync(path.dirname(STATE_FILE_PATH), { recursive: true });
+    fs.writeFileSync(STATE_FILE_PATH, JSON.stringify({ agentStates, updatedAt: new Date().toISOString() }, null, 2), 'utf8');
+  } catch (e) {
+    console.error('Failed to save persistent state:', e);
+  }
+}
+
+loadPersistentState();
+
+
 // Docker System Telemetry
 app.get('/api/docker/status', (req, res) => {
   const socketExists = fs.existsSync('/var/run/docker.sock');
@@ -347,6 +374,7 @@ app.post('/api/docker/containers/bind', (req, res) => {
       `[${agentId}] Synced telemetry and attached orchestrator proxy.`
     ]
   };
+  savePersistentState();
 
   res.json({
     success: true,
@@ -364,6 +392,7 @@ app.post('/api/docker/containers/unbind', (req, res) => {
     agentStates[agentId].containerId = '';
     agentStates[agentId].status = 'stopped';
     agentStates[agentId].logs.push(`[ClawDock Linker] Disassociated container from ${agentId}`);
+    savePersistentState();
   }
   res.json({ success: true, message: `Unbound container from ${agentId}` });
 });
@@ -398,6 +427,7 @@ app.post('/api/agents/:id/install', (req, res) => {
       `[${agentId}] Daemon initialized and listening for incoming RPC connections.`
     ]
   };
+  savePersistentState();
 
   res.json({
     success: true,
@@ -415,6 +445,7 @@ app.post('/api/agents/:id/start', (req, res) => {
   }
   agentStates[agentId].status = 'running';
   agentStates[agentId].logs.push(`[${new Date().toLocaleTimeString()}] Docker container started successfully.`);
+  savePersistentState();
   res.json({ success: true, status: 'running' });
 });
 
@@ -424,9 +455,29 @@ app.post('/api/agents/:id/stop', (req, res) => {
   if (agentStates[agentId]) {
     agentStates[agentId].status = 'stopped';
     agentStates[agentId].logs.push(`[${new Date().toLocaleTimeString()}] Received SIGTERM. Container stopped gracefully.`);
+    savePersistentState();
   }
   res.json({ success: true, status: 'stopped' });
 });
+
+// Persistent state sync endpoints
+app.get('/api/state', (req, res) => {
+  res.json({
+    success: true,
+    agentStates,
+    timestamp: new Date().toISOString()
+  });
+});
+
+app.post('/api/state', (req, res) => {
+  const { agentStates: newStates } = req.body || {};
+  if (newStates) {
+    agentStates = { ...agentStates, ...newStates };
+    savePersistentState();
+  }
+  res.json({ success: true, agentStates });
+});
+
 
 // Agent container logs
 app.get('/api/agents/:id/logs', (req, res) => {

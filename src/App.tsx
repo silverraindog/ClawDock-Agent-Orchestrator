@@ -85,7 +85,7 @@ export default function App() {
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
 
-  // Fetch initial telemetry from backend if available
+  // Fetch initial telemetry and persistent state from backend
   useEffect(() => {
     fetch('/api/docker/status')
       .then(res => res.json())
@@ -93,7 +93,42 @@ export default function App() {
         if (data) setDockerInfo(data);
       })
       .catch(() => {});
+
+    fetch('/api/state')
+      .then(res => res.json())
+      .then(data => {
+        if (data && data.success && data.agentStates) {
+          setAgents(prev => prev.map(a => {
+            const st = data.agentStates[a.id];
+            if (st) {
+              return {
+                ...a,
+                status: st.status as any,
+                containerId: st.containerId || a.containerId
+              };
+            }
+            return a;
+          }));
+        }
+      })
+      .catch(() => {});
+
+    // Also load local config preferences if any
+    try {
+      const savedConfigs = localStorage.getItem('clawdock_agent_configs');
+      if (savedConfigs) {
+        setConfigs(JSON.parse(savedConfigs));
+      }
+    } catch {}
   }, []);
+
+  // Save configs to localStorage on change
+  useEffect(() => {
+    try {
+      localStorage.setItem('clawdock_agent_configs', JSON.stringify(configs));
+    } catch {}
+  }, [configs]);
+
 
   const addToast = (type: 'success' | 'error' | 'info', title: string, description?: string) => {
     const id = 'toast_' + Date.now() + Math.random().toString(36).substring(2, 6);
