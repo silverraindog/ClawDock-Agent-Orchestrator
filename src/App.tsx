@@ -89,14 +89,14 @@ export default function App() {
   // Fetch initial telemetry and persistent state from backend
   useEffect(() => {
     fetch('/api/docker/status')
-      .then(res => res.json())
+      .then(res => res.ok ? res.json() : null)
       .then(data => {
         if (data) setDockerInfo(data);
       })
       .catch(() => {});
 
     fetch('/api/state')
-      .then(res => res.json())
+      .then(res => res.ok ? res.json() : null)
       .then(data => {
         if (data && data.success && data.agentStates) {
           setAgents(prev => prev.map(a => {
@@ -114,9 +114,9 @@ export default function App() {
       })
       .catch(() => {});
 
-    // Fetch from SQLite persistence API
+    // Fetch from persistence API
     fetch('/api/persistence')
-      .then(res => res.json())
+      .then(res => res.ok ? res.json() : null)
       .then(data => {
         if (data && data.success && data.data) {
           if (data.data.configs) {
@@ -135,7 +135,7 @@ export default function App() {
     } catch {}
   }, []);
 
-  // Save configs to localStorage and SQLite persistence on change
+  // Save configs to localStorage and persistence on change
   useEffect(() => {
     try {
       localStorage.setItem('clawdock_agent_configs', JSON.stringify(configs));

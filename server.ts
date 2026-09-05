@@ -1,4 +1,5 @@
 import express from 'express';
+import cors from 'cors';
 import path from 'path';
 import fs from 'fs';
 import { spawn, execSync } from 'child_process';
@@ -7,7 +8,54 @@ import { createServer as createViteServer } from 'vite';
 const app = express();
 const PORT = 3000;
 
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept']
+}));
+app.options('*', cors());
+
 app.use(express.json({ limit: '10mb' }));
+
+// Ring buffer for diagnostics log tracking
+const apiLogsBuffer: Array<{ method: string; url: string; status: number; timestamp: string }> = [];
+
+app.use((req, res, next) => {
+  if (req.path.startsWith('/api/')) {
+    const origEnd = res.end;
+    res.end = function (...args: any[]) {
+      if (req.path !== '/api/diagnostics/logs') {
+        apiLogsBuffer.unshift({
+          method: req.method,
+          url: req.originalUrl || req.url,
+          status: res.statusCode,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+        });
+        if (apiLogsBuffer.length > 100) apiLogsBuffer.pop();
+      }
+      return origEnd.apply(res, args as any);
+    };
+  }
+  next();
+});
+
+// System Health Endpoint
+app.get('/api/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Diagnostics Logs
+app.get('/api/diagnostics/logs', (req, res) => {
+  res.json({
+    success: true,
+    logs: apiLogsBuffer,
+    count: apiLogsBuffer.length
+  });
+});
 
 // In-memory runtime state for live preview interactivity
 let agentStates: Record<string, { status: string; containerId: string; logs: string[] }> = {
@@ -110,14 +158,28 @@ app.get('/api/persistence', (req, res) => {
 
 app.post('/api/persistence', (req, res) => {
   try {
-    const { key, value } = req.body || {};
-    if (!key) {
-      return res.status(400).json({ success: false, error: 'key is required' });
-    }
+    const { key, value, data } = req.body || {};
     const current = loadClawdockPersistence();
-    current[key] = value;
-    saveClawdockPersistence(current);
-    res.json({ success: true, key, value });
+
+    if (data && typeof data === 'object') {
+      Object.assign(current, data);
+      saveClawdockPersistence(current);
+      return res.json({ success: true, data: current });
+    }
+
+    if (key) {
+      current[key] = value;
+      saveClawdockPersistence(current);
+      return res.json({ success: true, key, value, data: current });
+    }
+
+    if (req.body && typeof req.body === 'object' && Object.keys(req.body).length > 0) {
+      Object.assign(current, req.body);
+      saveClawdockPersistence(current);
+      return res.json({ success: true, data: current });
+    }
+
+    return res.status(400).json({ success: false, error: 'Payload must contain key or data' });
   } catch (e: any) {
     res.status(500).json({ success: false, error: e.message });
   }

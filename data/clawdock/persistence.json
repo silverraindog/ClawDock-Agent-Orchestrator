@@ -7,17 +7,17 @@
         "provider": "anthropic",
         "model": "claude-3-7-sonnet",
         "apiKey": "",
-        "temperature": 0.2,
+        "temperature": 0.3,
         "reasoningEffort": "high",
-        "maxTokens": 4096,
-        "contextWindow": 128000,
+        "maxTokens": 8192,
+        "contextWindow": 200000,
         "topP": 0.95
       },
       "channels": {
         "telegram": {
           "enabled": true,
-          "botToken": "env:TELEGRAM_BOT_TOKEN",
-          "allowedUsers": "@developer",
+          "botToken": "",
+          "allowedUsers": "@developer, @admin",
           "mode": "polling"
         },
         "discord": {
@@ -35,47 +35,53 @@
         },
         "whatsapp": {
           "enabled": false,
-          "sessionId": "",
-          "webhookUrl": ""
+          "sessionId": "hermes_wa_session",
+          "webhookUrl": "http://localhost:8080/webhook/whatsapp"
         },
         "matrix": {
           "enabled": false,
-          "homeserver": "",
+          "homeserver": "https://matrix.org",
           "accessToken": "",
-          "roomIds": ""
+          "roomIds": "#hermes-agent:matrix.org"
         },
         "webhook": {
           "enabled": true,
           "port": 8080,
-          "authToken": "secure_bearer_token",
+          "authToken": "hermes_secret_token_99",
           "corsOrigin": "*"
         }
       },
       "system": {
         "preset": "engineer",
-        "systemPrompt": "You are hermes-agent, an advanced autonomous AI agent orchestrator running in container volume mount.",
-        "agentName": "hermes-agent",
-        "personaName": "Autonomous Agent",
-        "language": "en",
+        "systemPrompt": "You are Hermes Agent, a premier autonomous software engineering and problem-solving AI agent. You have direct access to workspace tools, shell execution, and persistent memory. Always structure complex tasks into clear execution steps, verify your code with tests or linters, and document non-trivial architecture decisions.",
+        "agentName": "Hermes Code Assistant",
+        "personaName": "Hermes Prime",
+        "language": "en-US",
         "autoFormatCode": true
       },
       "security": {
         "sandboxMode": "docker_isolated",
         "allowedDirectories": [
           "/workspace",
-          "/data"
+          "/tmp/agent-scratch",
+          "/var/log/hermes"
         ],
         "blockNetworkAccess": false,
-        "maxExecutionTimeSec": 300,
+        "maxExecutionTimeSec": 120,
         "requireApprovalForCommands": false,
-        "securityProfileFile": "default.yaml"
+        "securityProfileFile": ".security.yml"
       },
       "storage": {
         "memoryBackend": "everos",
-        "dbPath": "./data/sqlite/hermes-agent_memory.db",
-        "autoSummarizeInterval": 30,
+        "dbPath": "/data/everos/memories",
+        "autoSummarizeInterval": 25,
         "maxHistoryTurns": 100,
         "vectorDbUrl": "http://everos:8080"
+      },
+      "customEnv": {
+        "HERMES_LOG_LEVEL": "INFO",
+        "PYTHONUNBUFFERED": "1",
+        "WORKSPACE_ROOT": "/workspace"
       },
       "moa": {
         "enabled": true,
@@ -88,10 +94,6 @@
         "rounds": 2,
         "temperatureSpread": 0.3,
         "consensusThreshold": 0.85
-      },
-      "customEnv": {
-        "CONTAINER_MOUNT_DIR": "/workspace/hermes-agent",
-        "LOG_LEVEL": "info"
       }
     },
     "zeroclaw": {
@@ -370,5 +372,6 @@
         "consensusThreshold": 0.8
       }
     }
-  }
+  },
+  "test": "123"
 }
