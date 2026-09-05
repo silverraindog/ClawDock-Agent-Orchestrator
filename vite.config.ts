@@ -482,6 +482,7 @@ vector_db_url = "http://everos:8080"
         // 2. State endpoint (GET, POST, PUT) - Full agent states object
         case '/api/state': {
           res.setHeader('Content-Type', 'application/json');
+          console.log(`[Vite API Server] [${timestamp}] [TRACE /api/state] Direct Router Match: method=${method}, url="${req.url}", exact pathname="${pathname}", matchedSwitchCase="/api/state", clientIP=${req.socket?.remoteAddress || 'unknown'}`);
           if (method === 'GET') {
             console.log(`[Vite API Server] [${timestamp}] 200 OK: GET /api/state - Full Agent States:`, Object.keys(agentStates));
             return res.end(JSON.stringify({
@@ -617,6 +618,15 @@ vector_db_url = "http://everos:8080"
             console.log(`[Vite API Server] [${timestamp}] Regex matched agentConfigMatch on exact pathname: "${pathname}" -> agentId="${agentId}"`);
 
             res.setHeader('Content-Type', 'application/json');
+
+            if (agentId === 'all') {
+              const agentIds = ['hermes-agent', 'zeroclaw', 'openclaw', 'picoclaw'];
+              const configs: Record<string, any> = {};
+              for (const id of agentIds) {
+                configs[id] = getAgentConfig(id);
+              }
+              return res.end(JSON.stringify({ success: true, configs }));
+            }
 
             if (method === 'GET') {
               console.log(`[Vite API Server] [${timestamp}] 200 OK: GET /api/agents/${agentId}/config`);

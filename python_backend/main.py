@@ -127,13 +127,29 @@ def stop_agent(agent_id: str):
 
 @app.get("/api/agents/{agent_id}/config")
 def get_config(agent_id: str):
+    valid_agents = ["hermes-agent", "zeroclaw", "openclaw", "picoclaw"]
+    if agent_id == "all":
+        configs = {}
+        for aid in valid_agents:
+            config_file = os.path.join(CONFIG_STORE_DIR, f"{aid}_config.json")
+            if os.path.exists(config_file):
+                with open(config_file, "r") as f:
+                    configs[aid] = json.load(f)
+            else:
+                configs[aid] = AgentFullConfigSchema(agent_id=aid).model_dump()
+        return {"success": True, "configs": configs}
+
     config_file = os.path.join(CONFIG_STORE_DIR, f"{agent_id}_config.json")
     if os.path.exists(config_file):
         with open(config_file, "r") as f:
             return json.load(f)
+
     # Default schema fallback
-    default_config = AgentFullConfigSchema(agent_id=agent_id).model_dump()
-    return default_config
+    if agent_id in valid_agents:
+        default_config = AgentFullConfigSchema(agent_id=agent_id).model_dump()
+        return default_config
+    
+    raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found. Valid agents: {valid_agents}")
 
 @app.post("/api/agents/{agent_id}/config")
 def save_config(agent_id: str, config: Dict[str, Any] = Body(...)):

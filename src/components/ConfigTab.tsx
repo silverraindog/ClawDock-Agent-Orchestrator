@@ -30,6 +30,8 @@ import {
 } from '../types';
 import { MODEL_OPTIONS, DEFAULT_CONFIGS, DEFAULT_NATIVE_FILES } from '../data/defaults';
 import { fetchAgentLiveConfig, saveAgentConfigToBackend } from '../utils/apiBridge';
+import { ConfigInjectionAlert, InjectionStatusInfo } from './ConfigInjectionAlert';
+import { validateAgentConfig } from '../utils/configValidator';
 
 interface ConfigTabProps {
   agentId: AgentId;
@@ -38,6 +40,9 @@ interface ConfigTabProps {
   onSaveConfig: (restartContainer: boolean) => void;
   onResetDefaults: () => void;
   isSaving: boolean;
+  onInjectConfig?: (agentId: AgentId) => Promise<void>;
+  injectionStatus?: InjectionStatusInfo | null;
+  onDismissInjectionStatus?: () => void;
 }
 
 type ConfigSection = 'model' | 'moa' | 'channels' | 'system' | 'security' | 'storage' | 'raw';
@@ -48,7 +53,10 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
   onChangeConfig,
   onSaveConfig,
   onResetDefaults,
-  isSaving
+  isSaving,
+  onInjectConfig,
+  injectionStatus,
+  onDismissInjectionStatus
 }) => {
   const [activeSection, setActiveSection] = useState<ConfigSection>('model');
   const [copiedRaw, setCopiedRaw] = useState(false);
@@ -189,6 +197,17 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          {onInjectConfig && (
+            <button
+              id="inject-exec-config-btn"
+              onClick={() => onInjectConfig(agentId)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-emerald-300 hover:text-white bg-emerald-950/60 hover:bg-emerald-900/60 border border-emerald-500/30 transition-colors"
+            >
+              <Zap className="w-3.5 h-3.5 text-emerald-400" />
+              Inject from Container Exec
+            </button>
+          )}
+
           <button
             id="fetch-live-config-btn"
             onClick={fetchLiveConfig}
@@ -247,6 +266,13 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Configuration Injection Status Alert Banner */}
+      <ConfigInjectionAlert 
+        info={injectionStatus || null} 
+        onDismiss={onDismissInjectionStatus || (() => {})} 
+        onRetry={onInjectConfig} 
+      />
 
       {/* Loading Skeleton during live config fetch */}
       {isFetchingLive && (

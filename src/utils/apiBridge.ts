@@ -124,22 +124,26 @@ export async function fetchAllAgentConfigs(): Promise<Record<AgentId, AgentFullC
     }
   } catch {}
 
-  // 3. Try live backend API (standardized /config suffix)
-  try {
-    const res = await fetch('/api/agents/all/config');
-    if (res.ok) {
-      const data = await res.json();
-      if (data && data.success && data.configs) {
-        for (const [id, cfgObj] of Object.entries(data.configs as Record<string, any>)) {
-          if (cfgObj && cfgObj.configSchema) {
-            merged[id as AgentId] = mergeWithDefaultConfig(id as AgentId, cfgObj.configSchema);
+  // 3. Fetch each agent's config individually in parallel using valid agent IDs
+  // (Prevents passing 'all' to FastAPI's /api/agents/{agent_id}/config which expects a Literal['hermes-agent', 'zeroclaw', 'openclaw', 'picoclaw'])
+  const AGENT_IDS: AgentId[] = ['hermes-agent', 'zeroclaw', 'openclaw', 'picoclaw'];
+  
+  await Promise.allSettled(
+    AGENT_IDS.map(async (id) => {
+      try {
+        const res = await fetch(`/api/agents/${id}/config`);
+        if (res.ok) {
+          const data = await res.json();
+          const schema = data?.configSchema || data?.config || (data?.model ? data : null);
+          if (schema) {
+            merged[id] = mergeWithDefaultConfig(id, schema);
           }
         }
+      } catch (e) {
+        // Fallback to merged defaults
       }
-    }
-  } catch (e) {
-    // Graceful fallback to merged defaults
-  }
+    })
+  );
 
   return merged;
 }

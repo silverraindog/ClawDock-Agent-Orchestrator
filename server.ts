@@ -453,6 +453,29 @@ app.all('/api/persistence', (req, res, next) => {
   next();
 });
 
+// Runtime Agent States Sync Endpoints (/api/state)
+app.all('/api/state', (req, res, next) => {
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  if (req.method === 'GET') {
+    return res.json({
+      success: true,
+      agentStates,
+      timestamp: new Date().toISOString()
+    });
+  }
+  if (req.method === 'POST' || req.method === 'PUT') {
+    const { agentStates: newStates } = req.body || {};
+    if (newStates) {
+      agentStates = { ...agentStates, ...newStates };
+      savePersistentState();
+    }
+    return res.json({ success: true, agentStates });
+  }
+  next();
+});
+
 // Docker System Telemetry
 app.get('/api/docker/status', (req, res) => {
   const socketExists = fs.existsSync('/var/run/docker.sock');
@@ -472,51 +495,55 @@ function getAgentConfigData(agentId: string) {
   ensureNativeConfigFiles();
 
   const def = DEFAULT_NATIVE_FILES[agentId] || DEFAULT_NATIVE_FILES['hermes-agent'];
-  const nativeFileName = def.fileName;
-  const nativeFormat = def.format;
-  const defaultContent = def.content;
+    const nativeFileName = def.fileName;
+    const nativeFormat = def.format;
+    const defaultContent = def.content;
 
-  let containerNames = [agentId];
-  if (agentId === 'openclaw') containerNames = ['openclaw-hub', 'openclaw'];
-  else if (agentId === 'zeroclaw') containerNames = ['zeroclaw-daemon', 'zeroclaw'];
-  else if (agentId === 'picoclaw') containerNames = ['picoclaw-edge', 'picoclaw'];
-  else containerNames = ['hermes-agent-core', 'hermes-agent', agentId];
+    const absPath = `/data/clawdock/${nativeFileName}`;
+    const relPath = path.join(process.cwd(), 'data', 'clawdock', nativeFileName);
+    let filePath = relPath;
+    let nativeContent = defaultContent;
+    let source = 'clawdock_mount_file';
 
-  const absPath = `/data/clawdock/${nativeFileName}`;
-  const relPath = path.join(process.cwd(), 'data', 'clawdock', nativeFileName);
-  let filePath = relPath;
-  let nativeContent = defaultContent;
-  let source = 'clawdock_mount_file';
+    const hasDockerSocket = fs.existsSync('/var/run/docker.sock');
 
-  // 1. Check if container is running and supports config show
-  for (const cName of containerNames) {
-    try {
-      const binName = agentId.replace('-agent', '');
-      const cmd = `docker exec ${cName} ${binName} config show`;
-      const output = execSync(cmd, { encoding: 'utf8', timeout: 1500 });
-      if (output && output.trim().length > 10) {
-        nativeContent = output.trim();
-        source = `docker_exec_${cName}_config_show`;
-        try { fs.writeFileSync(relPath, nativeContent, 'utf8'); } catch {}
-        try { fs.writeFileSync(absPath, nativeContent, 'utf8'); } catch {}
-        break;
+    // 1. Check if container is running and supports config show (only if socket exists)
+    if (hasDockerSocket) {
+      let containerNames = [agentId];
+      if (agentId === 'openclaw') containerNames = ['openclaw-hub', 'openclaw'];
+      else if (agentId === 'zeroclaw') containerNames = ['zeroclaw-daemon', 'zeroclaw'];
+      else if (agentId === 'picoclaw') containerNames = ['picoclaw-edge', 'picoclaw'];
+      else containerNames = ['hermes-agent-core', 'hermes-agent', agentId];
+
+      for (const cName of containerNames) {
+        try {
+          const binName = agentId.replace('-agent', '');
+          const cmd = `docker exec ${cName} ${binName} config show`;
+          const output = execSync(cmd, { encoding: 'utf8', timeout: 800, stdio: ['ignore', 'pipe', 'ignore'] });
+          if (output && output.trim().length > 10) {
+            nativeContent = output.trim();
+            source = `docker_exec_${cName}_config_show`;
+            try { fs.writeFileSync(relPath, nativeContent, 'utf8'); } catch {}
+            try { fs.writeFileSync(absPath, nativeContent, 'utf8'); } catch {}
+            break;
+          }
+        } catch {}
       }
-    } catch {}
-  }
-
-  // 2. Read from local file if not fetched from docker exec
-  if (source === 'clawdock_mount_file') {
-    if (fs.existsSync(absPath) && fs.statSync(absPath).size > 10) {
-      nativeContent = fs.readFileSync(absPath, 'utf8');
-      filePath = absPath;
-    } else if (fs.existsSync(relPath) && fs.statSync(relPath).size > 10) {
-      nativeContent = fs.readFileSync(relPath, 'utf8');
-      filePath = relPath;
-    } else {
-      nativeContent = defaultContent;
-      try { fs.writeFileSync(relPath, defaultContent, 'utf8'); } catch {}
     }
-  }
+
+    // 2. Read from local file if not fetched from docker exec
+    if (source === 'clawdock_mount_file') {
+      if (fs.existsSync(absPath) && fs.statSync(absPath).size > 10) {
+        nativeContent = fs.readFileSync(absPath, 'utf8');
+        filePath = absPath;
+      } else if (fs.existsSync(relPath) && fs.statSync(relPath).size > 10) {
+        nativeContent = fs.readFileSync(relPath, 'utf8');
+        filePath = relPath;
+      } else {
+        nativeContent = defaultContent;
+        try { fs.writeFileSync(relPath, defaultContent, 'utf8'); } catch {}
+      }
+    }
 
   // 3. Parse native content into structured configSchema for UI
   let parsedModelProvider = 'anthropic';
@@ -680,7 +707,18 @@ app.get('/api/agents/all/config', (req, res) => {
 // Fetch live configuration and native config file from agent container volume/filesystem
 app.get('/api/agents/:id/config', (req, res) => {
   try {
-    const result = getAgentConfigData(req.params.id);
+    const agentId = req.params.id;
+    if (agentId === 'all') {
+      const ids = ['hermes-agent', 'zeroclaw', 'openclaw', 'picoclaw'];
+      const allConfigs: Record<string, any> = {};
+      for (const id of ids) {
+        try {
+          allConfigs[id] = getAgentConfigData(id);
+        } catch {}
+      }
+      return res.json({ success: true, configs: allConfigs });
+    }
+    const result = getAgentConfigData(agentId);
     res.json(result);
   } catch (e: any) {
     res.status(500).json({ success: false, error: e.message });
@@ -967,30 +1005,6 @@ app.post('/api/agents/:id/stop', (req, res) => {
   }
   res.json({ success: true, status: 'stopped' });
 });
-
-// Persistent state sync endpoints
-app.all('/api/state', (req, res, next) => {
-  if (req.method === 'OPTIONS') {
-    return res.sendStatus(200);
-  }
-  if (req.method === 'GET') {
-    return res.json({
-      success: true,
-      agentStates,
-      timestamp: new Date().toISOString()
-    });
-  }
-  if (req.method === 'POST' || req.method === 'PUT') {
-    const { agentStates: newStates } = req.body || {};
-    if (newStates) {
-      agentStates = { ...agentStates, ...newStates };
-      savePersistentState();
-    }
-    return res.json({ success: true, agentStates });
-  }
-  next();
-});
-
 
 // Agent container logs
 app.get('/api/agents/:id/logs', (req, res) => {

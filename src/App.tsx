@@ -52,6 +52,12 @@ import { EverOSTab } from './components/EverOSTab';
 import { DiagnosticsTab } from './components/DiagnosticsTab';
 import { ToastContainer, ToastMessage } from './components/Toast';
 import { ContainerDiscoveryModal } from './components/ContainerDiscoveryModal';
+import { ConfigInjectionAlert, InjectionStatusInfo } from './components/ConfigInjectionAlert';
+import { 
+  validateAgentConfig, 
+  SchemaValidationError, 
+  NetworkTransportError 
+} from './utils/configValidator';
 
 type MainTab = 'dashboard' | 'config' | 'everos' | 'skills' | 'mcp' | 'docker' | 'console' | 'export' | 'updates' | 'diagnostics';
 
@@ -64,6 +70,7 @@ export default function App() {
   const [updates, setUpdates] = useState<SystemUpdateItem[]>(INITIAL_UPDATES);
   const [isCheckingUpdates, setIsCheckingUpdates] = useState(false);
   const [lastCheckedUpdatesTime, setLastCheckedUpdatesTime] = useState('5 mins ago');
+  const [injectionAlertInfo, setInjectionAlertInfo] = useState<InjectionStatusInfo | null>(null);
   
   const [currentTab, setCurrentTab] = useState<MainTab>('dashboard');
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
@@ -159,34 +166,185 @@ export default function App() {
 
   // Helper function: triggers docker exec command via backend to read specific config file path and inject into configs state
   const fetchAndInjectConfig = async (agentId: AgentId) => {
+    setInjectionAlertInfo({
+      status: 'validating',
+      agentId,
+      title: 'Validating & Injecting Configuration...',
+      message: `Establishing connection with ${agentId} container and verifying configuration schema integrity.`,
+      timestamp: new Date().toLocaleTimeString()
+    });
+
     try {
       addToast('info', 'Verifying Connectivity', `Pinging backend health & checking container connectivity for ${agentId}...`);
-      const healthRes = await fetch('/api/health');
-      const healthData = await healthRes.json();
-      if (!healthRes.ok || healthData.status !== 'ok') {
-        throw new Error('Backend health check returned non-OK status');
+      
+      let healthRes: Response;
+      try {
+        healthRes = await fetch('/api/health');
+      } catch (netErr: any) {
+        throw new NetworkTransportError(
+          `Could not establish connection to backend API: ${netErr.message || 'Server offline or unreachable'}`,
+          0,
+          '/api/health',
+          agentId
+        );
       }
 
-      const detectRes = await fetch(`/api/agents/${agentId}/detect`);
-      const detectData = await detectRes.json();
-      if (detectData.status !== 'running' && detectData.status !== 'detected_local') {
-        addToast('info', 'Container Offline', `Container for ${agentId} is offline or stopped. Using mounted configuration file.`);
+      if (!healthRes.ok) {
+        throw new NetworkTransportError(
+          `Backend health check failed with HTTP status ${healthRes.status}`,
+          healthRes.status,
+          '/api/health',
+          agentId
+        );
       }
 
-      const res = await fetch(`/api/agents/${agentId}/docker-exec-config`, { method: 'POST' });
-      const data = await res.json();
-      if (data && data.success && data.configSchema) {
-        setConfigs(prev => ({
-          ...prev,
-          [agentId]: data.configSchema
-        }));
-        addToast('success', 'Docker Exec Config Injected', `Read and injected container native config for ${agentId}, replacing default values.`);
-      } else {
-        throw new Error(data.error || 'Config injection returned unsuccessful');
+      const healthData = await healthRes.json().catch(() => ({}));
+      if (healthData.status !== 'ok') {
+        throw new NetworkTransportError(
+          'Backend health check returned non-OK status payload',
+          healthRes.status,
+          '/api/health',
+          agentId
+        );
       }
+
+      try {
+        const detectRes = await fetch(`/api/agents/${agentId}/detect`);
+        if (detectRes.ok) {
+          const detectData = await detectRes.json();
+          if (detectData.status !== 'running' && detectData.status !== 'detected_local') {
+            addToast('info', 'Container Offline', `Container for ${agentId} is offline or stopped. Reading mounted configuration file.`);
+          }
+        }
+      } catch {}
+
+      const endpoint = `/api/agents/${agentId}/docker-exec-config`;
+      let res: Response;
+      try {
+        res = await fetch(endpoint, { method: 'POST' });
+      } catch (netErr: any) {
+        throw new NetworkTransportError(
+          `Failed network POST to ${endpoint}: ${netErr.message || 'Host network error'}`,
+          0,
+          endpoint,
+          agentId
+        );
+      }
+
+      if (!res.ok) {
+        throw new NetworkTransportError(
+          `HTTP error ${res.status} returned by ${endpoint}`,
+          res.status,
+          endpoint,
+          agentId
+        );
+      }
+
+      let data: any;
+      try {
+        data = await res.json();
+      } catch (jsonErr: any) {
+        throw new SchemaValidationError(
+          'Failed to parse JSON response from container config injection.',
+          ['Invalid JSON structure received from docker-exec-config API endpoint.'],
+          agentId
+        );
+      }
+
+      if (!data || !data.success) {
+        throw new NetworkTransportError(
+          data?.error || `Container exec returned unsuccessful status for ${agentId}.`,
+          res.status,
+          endpoint,
+          agentId
+        );
+      }
+
+      const candidateConfig = data.configSchema || data.config || (data.model ? data : null);
+      if (!candidateConfig) {
+        throw new SchemaValidationError(
+          'No valid configuration schema object found in response payload.',
+          ['Payload is missing "configSchema", "config", and root schema object.'],
+          agentId
+        );
+      }
+
+      // Specific validation layer
+      const validation = validateAgentConfig(candidateConfig, agentId);
+      if (!validation.isValid) {
+        throw new SchemaValidationError(
+          `Configuration schema validation failed for ${agentId}. State was NOT modified.`,
+          validation.errors,
+          agentId
+        );
+      }
+
+      // Valid configuration passed all checks -> update state
+      setConfigs(prev => ({
+        ...prev,
+        [agentId]: validation.normalizedConfig || candidateConfig
+      }));
+
+      setInjectionAlertInfo({
+        status: 'success',
+        agentId,
+        title: 'Configuration Validated & Injected',
+        message: `Successfully read and injected valid container configuration for ${agentId}.`,
+        warnings: validation.warnings,
+        timestamp: new Date().toLocaleTimeString()
+      });
+
+      addToast(
+        'success', 
+        'Docker Exec Config Injected', 
+        `Read and validated container native config for ${agentId}, replacing default values.`
+      );
     } catch (e: any) {
-      console.error("Failed to fetch and inject config via docker exec:", e);
-      addToast('error', 'Injection Failed', `Could not read container config for ${agentId}: ${e.message || 'Network error'}`);
+      console.error('[ClawDock Config Injection Error]', e);
+
+      if (e instanceof SchemaValidationError) {
+        setInjectionAlertInfo({
+          status: 'schema_error',
+          agentId,
+          title: 'Validation Schema Error',
+          message: e.message,
+          schemaErrors: e.schemaErrors,
+          timestamp: new Date().toLocaleTimeString()
+        });
+        addToast(
+          'error',
+          'Validation Schema Error',
+          `Schema validation failed for ${agentId}: ${e.schemaErrors.slice(0, 2).join('; ')}`
+        );
+      } else if (e instanceof NetworkTransportError) {
+        setInjectionAlertInfo({
+          status: 'network_error',
+          agentId,
+          title: 'Network Transport Error',
+          message: e.message,
+          statusCode: e.statusCode,
+          endpoint: e.endpoint,
+          timestamp: new Date().toLocaleTimeString()
+        });
+        addToast(
+          'error',
+          'Network Connection Error',
+          `Could not read container config for ${agentId}: ${e.message}`
+        );
+      } else {
+        setInjectionAlertInfo({
+          status: 'network_error',
+          agentId,
+          title: 'Injection Failure',
+          message: e.message || 'An unexpected error occurred during config injection.',
+          timestamp: new Date().toLocaleTimeString()
+        });
+        addToast(
+          'error', 
+          'Injection Failed', 
+          `Could not read container config for ${agentId}: ${e.message || 'Network error'}`
+        );
+      }
     }
   };
 
@@ -761,6 +919,15 @@ export default function App() {
 
         {/* Viewport container */}
         <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto">
+          {/* Show top alert banner if on non-config tab so error is always visible */}
+          {currentTab !== 'config' && (
+            <ConfigInjectionAlert
+              info={injectionAlertInfo}
+              onDismiss={() => setInjectionAlertInfo(null)}
+              onRetry={fetchAndInjectConfig}
+            />
+          )}
+
           {currentTab === 'dashboard' && (
             <DashboardTab
               agent={currentAgent}
@@ -783,6 +950,9 @@ export default function App() {
               onSaveConfig={handleSaveConfig}
               onResetDefaults={handleResetDefaults}
               isSaving={isSavingConfig}
+              onInjectConfig={fetchAndInjectConfig}
+              injectionStatus={injectionAlertInfo}
+              onDismissInjectionStatus={() => setInjectionAlertInfo(null)}
             />
           )}
 
