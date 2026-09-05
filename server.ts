@@ -63,13 +63,91 @@ app.get('/api/docker/status', (req, res) => {
   });
 });
 
-// Fetch live configuration schema from agent container
+// Fetch live configuration and native config file from agent container
 app.get('/api/agents/:id/config', (req, res) => {
   const agentId = req.params.id;
+
+  let nativeFileName = 'hermes.yaml';
+  let nativeFormat = 'yaml';
+  let nativeContent = '';
+
+  if (agentId === 'openclaw') {
+    nativeFileName = 'openclaw.json';
+    nativeFormat = 'json';
+    nativeContent = JSON.stringify({
+      "hub": {
+        "port": 8082,
+        "plugin_everos": true,
+        "endpoint": "http://everos:8080"
+      },
+      "model": {
+        "provider": "openai",
+        "model": "gpt-4o",
+        "temperature": 0.2
+      },
+      "security": {
+        "sandbox_mode": "strict"
+      }
+    }, null, 2);
+  } else if (agentId === 'zeroclaw') {
+    nativeFileName = 'config.toml';
+    nativeFormat = 'toml';
+    nativeContent = `[daemon]
+port = 8081
+rust_log = "info"
+max_ram_mb = 16
+
+[model]
+provider = "deepseek"
+model = "deepseek-reasoner"
+temperature = 0.1
+
+[storage]
+backend = "sqlite"
+db_path = "/var/zeroclaw/memory.db"`;
+  } else if (agentId === 'picoclaw') {
+    nativeFileName = 'picoclaw.yaml';
+    nativeFormat = 'yaml';
+    nativeContent = `mode: gateway
+log_level: info
+port: 8083
+model:
+  provider: ollama
+  model: qwen2.5-coder:7b
+  base_url: http://localhost:11434`;
+  } else {
+    // hermes-agent
+    nativeFileName = 'hermes.yaml';
+    nativeFormat = 'yaml';
+    nativeContent = `version: "1.0.0"
+agent_id: "hermes-agent"
+model:
+  provider: "anthropic"
+  model: "claude-3-7-sonnet"
+  temperature: 0.2
+  reasoning_effort: "high"
+moa:
+  enabled: true
+  proposer_models:
+    - "claude-3-7-sonnet"
+    - "deepseek-r1"
+    - "gpt-4o"
+  aggregator_model: "claude-3-7-sonnet"
+  rounds: 2
+  temperature_spread: 0.3
+  consensus_threshold: 0.85
+security:
+  sandbox_mode: "container"
+  allow_shell: true`;
+  }
+
   res.json({
     success: true,
     agentId,
-    source: 'container_mount_or_api',
+    nativeFileName,
+    nativeFormat,
+    nativeContent,
+    source: 'container_volume_mount',
     fetchedAt: new Date().toISOString(),
     configSchema: {
       agentId,

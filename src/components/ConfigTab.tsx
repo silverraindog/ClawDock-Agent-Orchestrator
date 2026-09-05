@@ -53,6 +53,7 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
   const [rawText, setRawText] = useState(JSON.stringify(config, null, 2));
   const [rawError, setRawError] = useState<string | null>(null);
   const [isFetchingLive, setIsFetchingLive] = useState(false);
+  const [nativeConfigInfo, setNativeConfigInfo] = useState<{ fileName: string; format: string; content: string } | null>(null);
 
   // Sync raw text when config changes externally
   React.useEffect(() => {
@@ -64,8 +65,15 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
     try {
       const res = await fetch(`/api/agents/${agentId}/config`);
       const data = await res.json();
-      if (data && data.success && data.configSchema) {
-        if (data.configSchema.moa) {
+      if (data && data.success) {
+        if (data.nativeFileName && data.nativeContent) {
+          setNativeConfigInfo({
+            fileName: data.nativeFileName,
+            format: data.nativeFormat,
+            content: data.nativeContent
+          });
+        }
+        if (data.configSchema && data.configSchema.moa) {
           onChangeConfig({
             ...config,
             moa: {
@@ -228,6 +236,26 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
           );
         })}
       </div>
+
+      {nativeConfigInfo && (
+        <div className="p-4 rounded-2xl bg-slate-950 border border-indigo-500/30 space-y-3 animate-fadeIn">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Terminal className="w-4 h-4 text-indigo-400" />
+              <span className="text-xs font-semibold text-white">Container Native Config File: <code className="text-indigo-300 font-mono">{nativeConfigInfo.fileName}</code></span>
+            </div>
+            <button
+              onClick={() => setNativeConfigInfo(null)}
+              className="text-xs text-slate-400 hover:text-white px-2 py-1 rounded bg-slate-900 border border-slate-800"
+            >
+              Close Inspector
+            </button>
+          </div>
+          <pre className="p-3 rounded-xl bg-slate-900 text-slate-300 font-mono text-xs overflow-x-auto max-h-48 border border-slate-800">
+            {nativeConfigInfo.content}
+          </pre>
+        </div>
+      )}
 
       {/* Section Content */}
       <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6">
