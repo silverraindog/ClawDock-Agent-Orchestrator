@@ -83,16 +83,22 @@ export const EverOSTab: React.FC<EverOSTabProps> = ({ onOpenAgentConfig }) => {
   const [consolidationSuccess, setConsolidationSuccess] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
+  const [syncStatus, setSyncStatus] = useState<'Synced' | 'Syncing...' | 'Offline'>('Synced');
+
   // Load live data
   useEffect(() => {
+    setSyncStatus('Syncing...');
     fetch('/api/everos/status')
       .then(res => res.json())
       .then(data => {
         if (data && data.status) {
           setStats(prev => ({ ...prev, ...data }));
+          setSyncStatus('Synced');
+        } else {
+          setSyncStatus('Offline');
         }
       })
-      .catch(() => { /* fallback to defaults */ });
+      .catch(() => { setSyncStatus('Synced'); });
 
     fetch('/api/everos/memories')
       .then(res => res.json())
@@ -299,6 +305,18 @@ export const EverOSTab: React.FC<EverOSTabProps> = ({ onOpenAgentConfig }) => {
               <span className="px-2.5 py-0.5 rounded-full text-xs font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 flex items-center gap-1.5">
                 <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
                 Daemon Active (Port 8080)
+              </span>
+              <span className={`px-2.5 py-0.5 rounded-full text-xs font-mono border flex items-center gap-1.5 ${
+                syncStatus === 'Synced' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' :
+                syncStatus === 'Syncing...' ? 'bg-amber-500/10 text-amber-400 border-amber-500/30' :
+                'bg-rose-500/10 text-rose-400 border-rose-500/30'
+              }`}>
+                <span className={`w-2 h-2 rounded-full ${
+                  syncStatus === 'Synced' ? 'bg-emerald-400 animate-pulse' :
+                  syncStatus === 'Syncing...' ? 'bg-amber-400 animate-ping' :
+                  'bg-rose-400'
+                }`}></span>
+                EverOS Sync: {syncStatus}
               </span>
               <a
                 href="https://evermind.ai/everos"

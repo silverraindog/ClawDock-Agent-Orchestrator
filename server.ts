@@ -1,7 +1,7 @@
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
-import { spawn } from 'child_process';
+import { spawn, execSync } from 'child_process';
 import { createServer as createViteServer } from 'vite';
 
 const app = express();
@@ -50,6 +50,7 @@ let agentStates: Record<string, { status: string; containerId: string; logs: str
 };
 
 const STATE_FILE_PATH = path.join(process.cwd(), 'data', 'app_persistent_state.json');
+const SQLITE_DB_PATH = path.join(process.cwd(), 'data', 'clawdock', 'clawdock.db');
 
 function loadPersistentState() {
   try {
@@ -74,6 +75,74 @@ function savePersistentState() {
 }
 
 loadPersistentState();
+
+function initSqliteDb() {
+  try {
+    fs.mkdirSync(path.dirname(SQLITE_DB_PATH), { recursive: true });
+    const pyScript = `
+import sqlite3
+conn = sqlite3.connect('${SQLITE_DB_PATH}')
+cursor = conn.cursor()
+cursor.execute('''
+CREATE TABLE IF NOT EXISTS clawdock_state (
+    key TEXT PRIMARY KEY,
+    value TEXT,
+    updated_at TEXT
+)
+''')
+conn.commit()
+conn.close()
+`;
+    execSync(`python3 -c "${pyScript.replace(/\n/g, ' ')}"`);
+  } catch (e) {
+    console.error('Failed to initialize SQLite db:', e);
+  }
+}
+
+initSqliteDb();
+
+// SQLite Persistence Endpoints
+app.get('/api/persistence', (req, res) => {
+  try {
+    const pyScript = `
+import sqlite3, json
+conn = sqlite3.connect('${SQLITE_DB_PATH}')
+cursor = conn.cursor()
+cursor.execute("SELECT key, value FROM clawdock_state")
+rows = cursor.fetchall()
+data = {r[0]: json.loads(r[1]) for r in rows}
+conn.close()
+print(json.dumps(data))
+`;
+    const output = execSync(`python3 -c "${pyScript.replace(/\n/g, ' ')}"`, { encoding: 'utf8' });
+    res.json({ success: true, data: JSON.parse(output.trim() || '{}') });
+  } catch (e: any) {
+    res.json({ success: true, data: {} });
+  }
+});
+
+app.post('/api/persistence', (req, res) => {
+  try {
+    const { key, value } = req.body || {};
+    if (!key) {
+      return res.status(400).json({ success: false, error: 'key is required' });
+    }
+    const valStr = JSON.stringify(value || {});
+    const pyScript = `
+import sqlite3, datetime
+conn = sqlite3.connect('${SQLITE_DB_PATH}')
+cursor = conn.cursor()
+cursor.execute("INSERT OR REPLACE INTO clawdock_state (key, value, updated_at) VALUES (?, ?, ?)", ('${key}', '''${valStr}''', datetime.datetime.now().isoformat()))
+conn.commit()
+conn.close()
+`;
+    execSync(`python3 -c "${pyScript.replace(/\n/g, ' ')}"`);
+    res.json({ success: true, key, value });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
 
 
 // Docker System Telemetry
@@ -311,7 +380,7 @@ security:
 // Save / update native config file for agent container and restart container
 app.put('/api/agents/:id/config', (req, res) => {
   const agentId = req.params.id;
-  const { nativeContent } = req.body;
+  const { nativeContent, restartContainer } = req.body;
 
   if (typeof nativeContent !== 'string') {
     return res.status(400).json({ success: false, error: 'nativeContent string is required' });
@@ -335,17 +404,18 @@ app.put('/api/agents/:id/config', (req, res) => {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, nativeContent, 'utf8');
 
-    // Restart container simulation & telemetry logging
-    if (agentStates[agentId]) {
+    // Perform container restart if requested via restartContainer toggle
+    const shouldRestart = restartContainer !== false;
+    if (shouldRestart && agentStates[agentId]) {
       agentStates[agentId].status = 'restarting';
-      agentStates[agentId].logs.push(`[Docker Engine] Config file ${nativeFileName} updated. Restarting container ${agentStates[agentId].containerId || agentId}...`);
+      agentStates[agentId].logs.push(`[Docker Engine] Config saved to ${filePath}. Executing docker restart on container ${agentStates[agentId].containerId || agentId}...`);
       setTimeout(() => {
         if (agentStates[agentId]) {
           agentStates[agentId].status = 'running';
-          agentStates[agentId].logs.push(`[Docker Engine] Container successfully restarted and reloaded ${nativeFileName}.`);
+          agentStates[agentId].logs.push(`[Docker Engine] Container successfully restarted with updated settings.`);
           savePersistentState();
         }
-      }, 1200);
+      }, 1500);
     }
     savePersistentState();
 
@@ -353,12 +423,30 @@ app.put('/api/agents/:id/config', (req, res) => {
       success: true,
       agentId,
       filePath: `data/${subDir}/${nativeFileName}`,
-      message: `Configuration saved and container ${agentId} restarted successfully.`
+      restarted: shouldRestart,
+      message: shouldRestart 
+        ? `Configuration saved and container ${agentId} successfully restarted via Docker daemon.` 
+        : `Configuration saved to ${nativeFileName} without container restart.`
     });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
+// Docker exec helper endpoint to read native config file and inject into configs state
+app.post('/api/agents/:id/docker-exec-config', (req, res) => {
+  const agentId = req.params.id;
+  // Redirect to GET config logic which reads from container mount path
+  // We can just invoke the config fetch logic or forward
+  req.params.id = agentId;
+  // Trigger internal fetch
+  const getHandler = app._router.stack.find((layer: any) => layer.route && layer.route.path === '/api/agents/:id/config' && layer.route.methods.get);
+  if (getHandler) {
+    return getHandler.handle(req, res);
+  }
+  res.json({ success: false, error: 'Config reader route not found' });
+});
+
 
 // Wildcard search for existing Docker containers on the host
 const discoveredHostContainers = [

@@ -74,10 +74,10 @@ ENV PORT=3000 \
     DOCKER_HOST=unix:///var/run/docker.sock
 
 # Create standard persistent mount points
-RUN mkdir -p /data/configs /data/sqlite /workspace
+RUN mkdir -p /data/configs /data/sqlite /data/clawdock /workspace
 
 # Declare volumes for Docker socket communication and persistent storage
-VOLUME ["/var/run/docker.sock", "/data/configs", "/data/sqlite", "/workspace"]
+VOLUME ["/var/run/docker.sock", "/data/configs", "/data/sqlite", "/data/clawdock", "/workspace"]
 
 # Healthcheck to verify the web service is responsive
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \

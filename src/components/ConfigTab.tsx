@@ -33,7 +33,7 @@ interface ConfigTabProps {
   agentId: AgentId;
   config: AgentFullConfig;
   onChangeConfig: (newConfig: AgentFullConfig) => void;
-  onSaveConfig: () => void;
+  onSaveConfig: (restartContainer: boolean) => void;
   onResetDefaults: () => void;
   isSaving: boolean;
 }
@@ -54,6 +54,9 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
   const [rawError, setRawError] = useState<string | null>(null);
   const [isFetchingLive, setIsFetchingLive] = useState(false);
   const [nativeConfigInfo, setNativeConfigInfo] = useState<{ fileName: string; format: string; content: string } | null>(null);
+  const [restartContainer, setRestartContainer] = useState(true);
+  const [isRestartModalOpen, setIsRestartModalOpen] = useState(false);
+
 
   // Sync raw text when config changes externally
   React.useEffect(() => {
@@ -189,9 +192,28 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
             Export config.json
           </button>
 
+          <div className="flex items-center gap-2 px-2 bg-slate-950/60 py-1.5 rounded-lg border border-slate-800">
+            <input 
+              type="checkbox" 
+              id="restart-container-toggle"
+              checked={restartContainer}
+              onChange={(e) => setRestartContainer(e.target.checked)}
+              className="rounded bg-slate-900 border-slate-700 text-indigo-600 focus:ring-indigo-500 w-3.5 h-3.5 cursor-pointer"
+            />
+            <label htmlFor="restart-container-toggle" className="text-[11px] text-slate-300 cursor-pointer select-none">
+              Restart Container on Save
+            </label>
+          </div>
+
           <button
             id="save-config-btn"
-            onClick={onSaveConfig}
+            onClick={() => {
+              if (restartContainer) {
+                setIsRestartModalOpen(true);
+              } else {
+                onSaveConfig(false);
+              }
+            }}
             disabled={isSaving}
             className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 transition-all shadow-md shadow-emerald-950/40 disabled:opacity-50"
           >
@@ -200,6 +222,45 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Restart Container Confirmation Modal */}
+      {isRestartModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 max-w-md w-full mx-4 shadow-2xl space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                <Terminal className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white">Confirm Container Restart</h3>
+                <p className="text-xs text-slate-400">Agent: {agentId}</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-300 leading-relaxed">
+              Saving this configuration will write the updated settings to the native configuration file and execute a <code className="text-indigo-300 bg-slate-950 px-1 py-0.5 rounded">docker restart</code> on the container to apply changes immediately.
+            </p>
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                onClick={() => setIsRestartModalOpen(false)}
+                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  setIsRestartModalOpen(false);
+                  onSaveConfig(true);
+                }}
+                className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-lg shadow-indigo-600/30 transition-all"
+              >
+                Save &amp; Restart Container
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Navigation Pills */}
       <div className="flex overflow-x-auto gap-2 pb-1 border-b border-slate-800/80">

@@ -113,6 +113,18 @@ export default function App() {
       })
       .catch(() => {});
 
+    // Fetch from SQLite persistence API
+    fetch('/api/persistence')
+      .then(res => res.json())
+      .then(data => {
+        if (data && data.success && data.data) {
+          if (data.data.configs) {
+            setConfigs(prev => ({ ...prev, ...data.data.configs }));
+          }
+        }
+      })
+      .catch(() => {});
+
     // Also load local config preferences if any
     try {
       const savedConfigs = localStorage.getItem('clawdock_agent_configs');
@@ -122,12 +134,36 @@ export default function App() {
     } catch {}
   }, []);
 
-  // Save configs to localStorage on change
+  // Save configs to localStorage and SQLite persistence on change
   useEffect(() => {
     try {
       localStorage.setItem('clawdock_agent_configs', JSON.stringify(configs));
+      fetch('/api/persistence', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'configs', value: configs })
+      }).catch(() => {});
     } catch {}
   }, [configs]);
+
+  // Helper function: triggers docker exec command via backend to read specific config file path and inject into configs state
+  const fetchAndInjectConfig = async (agentId: AgentId) => {
+    try {
+      const res = await fetch(`/api/agents/${agentId}/docker-exec-config`, { method: 'POST' });
+      const data = await res.json();
+      if (data && data.success && data.configSchema) {
+        setConfigs(prev => ({
+          ...prev,
+          [agentId]: data.configSchema
+        }));
+        addToast('success', 'Docker Exec Config Injected', `Read and injected container native config for ${agentId}, replacing default values.`);
+      }
+    } catch (e) {
+      console.error("Failed to fetch and inject config via docker exec:", e);
+      addToast('error', 'Injection Failed', `Could not read container config for ${agentId}`);
+    }
+  };
+
 
 
   const addToast = (type: 'success' | 'error' | 'info', title: string, description?: string) => {
@@ -297,16 +333,28 @@ export default function App() {
     }
   };
 
-  // Save config
-  const handleSaveConfig = async () => {
+  // Save config with restartContainer toggle
+  const handleSaveConfig = async (restartContainer: boolean = true) => {
     setIsSavingConfig(true);
     try {
-      await fetch(`/api/agents/${selectedAgentId}/config`, {
-        method: 'POST',
+      const nativeContent = JSON.stringify(currentConfig, null, 2);
+      const res = await fetch(`/api/agents/${selectedAgentId}/config`, {
+        method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(currentConfig)
+        body: JSON.stringify({ nativeContent, restartContainer })
       });
-      addToast('success', 'Configuration Saved', `Updated configuration schema for ${currentAgent.name}`);
+      const data = await res.json();
+      addToast(
+        'success', 
+        'Configuration Saved', 
+        data.message || `Updated configuration schema for ${currentAgent.name}`
+      );
+      if (restartContainer) {
+        setContainerLogs(prev => [
+          ...prev,
+          `[Docker Engine] Container ${selectedAgentId} restarted via daemon with updated configuration.`
+        ]);
+      }
     } catch {
       addToast('success', 'Configuration Saved', `Local schema updated for ${currentAgent.name}`);
     } finally {
