@@ -853,3 +853,233 @@ export const MODEL_OPTIONS = {
     { value: 'custom-model', label: 'Custom Model Name' }
   ]
 };
+
+export const DEFAULT_NATIVE_FILES: Record<string, { fileName: string; format: string; content: string }> = {
+  'hermes-agent': {
+    fileName: 'hermes.yaml',
+    format: 'yaml',
+    content: `version: "1.0.0"
+agent_id: "hermes-agent"
+agent_name: "Hermes Code Assistant"
+persona: "Hermes Prime"
+system_preset: "engineer"
+system_prompt: "You are Hermes Agent, a premier autonomous software engineering and problem-solving AI agent. You have direct access to workspace tools, shell execution, and persistent memory. Always structure complex tasks into clear execution steps, verify your code with tests or linters, and document non-trivial architecture decisions."
+
+model:
+  provider: "anthropic"
+  model: "claude-3-7-sonnet"
+  temperature: 0.3
+  reasoning_effort: "high"
+  max_tokens: 8192
+  context_window: 200000
+  top_p: 0.95
+
+channels:
+  telegram:
+    enabled: true
+    bot_token: "env:TELEGRAM_BOT_TOKEN"
+    allowed_users: ["@developer", "@admin"]
+    mode: "polling"
+  discord:
+    enabled: false
+  slack:
+    enabled: false
+    socket_mode: true
+  webhook:
+    enabled: true
+    port: 8080
+    auth_token: "hermes_secret_token_99"
+
+security:
+  sandbox_mode: "docker_isolated"
+  allowed_directories:
+    - "/workspace"
+    - "/tmp/agent-scratch"
+    - "/var/log/hermes"
+  max_execution_time_sec: 120
+  block_network_access: false
+  require_approval_for_commands: false
+
+storage:
+  memory_backend: "everos"
+  db_path: "/data/everos/memories"
+  auto_summarize_interval: 25
+  max_history_turns: 100
+  vector_db_url: "http://everos:8080"
+
+moa:
+  enabled: true
+  proposer_models:
+    - "claude-3-7-sonnet"
+    - "deepseek-r1"
+    - "gpt-4o"
+  aggregator_model: "claude-3-7-sonnet"
+  rounds: 2
+  temperature_spread: 0.3
+  consensus_threshold: 0.85
+
+env:
+  HERMES_LOG_LEVEL: "INFO"
+  PYTHONUNBUFFERED: "1"
+  WORKSPACE_ROOT: "/workspace"`
+  },
+  'openclaw': {
+    fileName: 'openclaw.json',
+    format: 'json',
+    content: JSON.stringify({
+      agentId: "openclaw",
+      version: "1.0.0",
+      name: "OpenClaw Gateway",
+      persona: "Claw Hub",
+      model: {
+        provider: "openai",
+        model: "gpt-4o",
+        temperature: 0.5,
+        maxTokens: 4096,
+        contextWindow: 128000
+      },
+      channels: {
+        telegram: {
+          enabled: true,
+          botToken: "env:OPENCLAW_TELEGRAM_TOKEN",
+          allowedUsers: ["*"],
+          mode: "polling"
+        },
+        discord: {
+          enabled: true,
+          botToken: "env:OPENCLAW_DISCORD_TOKEN",
+          clientId: "1234567890",
+          guildIds: "9876543210"
+        },
+        webhook: {
+          enabled: true,
+          port: 8082,
+          authToken: "openclaw_hub_token"
+        }
+      },
+      system: {
+        preset: "researcher",
+        systemPrompt: "You are OpenClaw, a multi-channel cooperative assistant gateway. You bridge communication between humans across multiple platforms and coordinate autonomous tools and agents."
+      },
+      security: {
+        sandboxMode: "docker_isolated",
+        allowedDirectories: ["/workspace"],
+        maxExecutionTimeSec: 90
+      },
+      storage: {
+        memoryBackend: "everos",
+        dbPath: "/data/everos/memories/openclaw",
+        autoSummarizeInterval: 30,
+        maxHistoryTurns: 80,
+        vectorDbUrl: "http://everos:8080"
+      },
+      customEnv: {
+        NODE_ENV: "production",
+        OPENCLAW_ENABLE_PLUGINS: "true",
+        OPENCLAW_PLUGIN_EVEROS: "true",
+        EVEROS_ENDPOINT: "http://everos:8080"
+      }
+    }, null, 2)
+  },
+  'zeroclaw': {
+    fileName: 'zeroclaw.toml',
+    format: 'toml',
+    content: `[agent]
+id = "zeroclaw"
+version = "1.0.0"
+name = "ZeroClaw Edge"
+persona = "Zero"
+
+[daemon]
+port = 8081
+rust_log = "info"
+max_ram_mb = 16
+unix_socket = "/var/run/zeroclaw.sock"
+
+[model]
+provider = "deepseek"
+model = "deepseek-r1"
+temperature = 0.2
+max_tokens = 4096
+context_window = 64000
+
+[system]
+preset = "edge_assistant"
+system_prompt = "You are ZeroClaw, an ultra-fast, minimal AI assistant running natively in Rust. Keep responses concise, direct, and actionable. Conserve tokens and prioritize efficiency."
+
+[channels.telegram]
+enabled = true
+bot_token = "env:ZEROCLAW_TELEGRAM_TOKEN"
+allowed_users = ["@edge_admin"]
+mode = "polling"
+
+[channels.webhook]
+enabled = true
+port = 8081
+auth_token = "zeroclaw_auth_key"
+
+[security]
+sandbox_mode = "docker_isolated"
+allowed_directories = ["/var/zeroclaw/workspace"]
+max_execution_time_sec = 60
+require_approval_for_commands = true
+
+[storage]
+memory_backend = "everos"
+db_path = "/data/everos/memories/zeroclaw"
+auto_summarize_interval = 50
+max_history_turns = 40
+vector_db_url = "http://everos:8080"`
+  },
+  'picoclaw': {
+    fileName: 'picoclaw.json',
+    format: 'json',
+    content: JSON.stringify({
+      agentId: "picoclaw",
+      version: "1.0.0",
+      name: "PicoClaw Go",
+      persona: "Pico",
+      mode: "gateway",
+      logLevel: "info",
+      port: 8083,
+      model: {
+        provider: "ollama",
+        model: "qwen2.5-coder:7b",
+        baseUrl: "http://localhost:11434",
+        temperature: 0.4,
+        maxTokens: 2048,
+        contextWindow: 32000
+      },
+      channels: {
+        telegram: {
+          enabled: true,
+          botToken: "env:PICOCLAW_TELEGRAM_TOKEN",
+          allowedUsers: ["@sipeed_user"],
+          mode: "polling"
+        },
+        webhook: {
+          enabled: true,
+          port: 8083,
+          authToken: "picoclaw_token"
+        }
+      },
+      system: {
+        preset: "edge_assistant",
+        systemPrompt: "You are PicoClaw by Sipeed. You run on lightweight edge hardware like RISC-V and ARM boards. Be smart, snappy, and hardware-friendly."
+      },
+      security: {
+        sandboxMode: "host_restricted",
+        allowedDirectories: ["/home/sipeed/.picoclaw"],
+        maxExecutionTimeSec: 45,
+        requireApprovalForCommands: true
+      },
+      storage: {
+        memoryBackend: "everos",
+        dbPath: "/data/everos/memories/picoclaw",
+        autoSummarizeInterval: 20,
+        maxHistoryTurns: 30,
+        vectorDbUrl: "http://everos:8080"
+      }
+    }, null, 2)
+  }
+};

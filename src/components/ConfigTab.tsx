@@ -28,7 +28,7 @@ import {
   SandboxMode, 
   MemoryBackend 
 } from '../types';
-import { MODEL_OPTIONS, DEFAULT_CONFIGS } from '../data/defaults';
+import { MODEL_OPTIONS, DEFAULT_CONFIGS, DEFAULT_NATIVE_FILES } from '../data/defaults';
 
 interface ConfigTabProps {
   agentId: AgentId;
@@ -52,44 +52,62 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
   const [activeSection, setActiveSection] = useState<ConfigSection>('model');
   const [copiedRaw, setCopiedRaw] = useState(false);
   const [rawText, setRawText] = useState(JSON.stringify(config, null, 2));
+  const [rawMode, setRawMode] = useState<'schema' | 'native'>('native');
   const [rawError, setRawError] = useState<string | null>(null);
   const [isFetchingLive, setIsFetchingLive] = useState(false);
-  const [nativeConfigInfo, setNativeConfigInfo] = useState<{ fileName: string; format: string; content: string } | null>(null);
+  
+  // Default native config info initialized from DEFAULT_NATIVE_FILES
+  const [nativeConfigInfo, setNativeConfigInfo] = useState<{ fileName: string; format: string; content: string }>(() => {
+    return DEFAULT_NATIVE_FILES[agentId] || DEFAULT_NATIVE_FILES['hermes-agent'];
+  });
+  
   const [restartContainer, setRestartContainer] = useState(true);
   const [isRestartModalOpen, setIsRestartModalOpen] = useState(false);
 
-
   // Fetch live config automatically on mount and agentId change
   React.useEffect(() => {
+    const fallback = DEFAULT_NATIVE_FILES[agentId] || DEFAULT_NATIVE_FILES['hermes-agent'];
+    setNativeConfigInfo(fallback);
     fetchLiveConfig();
   }, [agentId]);
 
-  // Sync raw text when config changes externally
+  // Sync raw text when config or mode changes
   React.useEffect(() => {
-    setRawText(JSON.stringify(config, null, 2));
-  }, [config]);
+    if (rawMode === 'schema') {
+      setRawText(JSON.stringify(config, null, 2));
+    } else {
+      setRawText(nativeConfigInfo?.content || DEFAULT_NATIVE_FILES[agentId]?.content || JSON.stringify(config, null, 2));
+    }
+  }, [config, rawMode, nativeConfigInfo, agentId]);
 
   const fetchLiveConfig = async () => {
     setIsFetchingLive(true);
     try {
       const res = await fetch(`/api/agents/${agentId}/config`);
-      if (!res.ok) return;
-      const data = await res.json();
-      if (data && data.success) {
-        if (data.nativeFileName && data.nativeContent) {
-          setNativeConfigInfo({
-            fileName: data.nativeFileName,
-            format: data.nativeFormat,
-            content: data.nativeContent
-          });
-          setRawText(data.nativeContent);
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.success) {
+          if (data.nativeFileName && data.nativeContent) {
+            const updatedInfo = {
+              fileName: data.nativeFileName,
+              format: data.nativeFormat || 'yaml',
+              content: data.nativeContent
+            };
+            setNativeConfigInfo(updatedInfo);
+          }
+          if (data.configSchema) {
+            onChangeConfig(data.configSchema);
+          }
         }
-        if (data.configSchema) {
-          onChangeConfig(data.configSchema);
-        }
+      } else {
+        // Fallback to local default files
+        const fallback = DEFAULT_NATIVE_FILES[agentId] || DEFAULT_NATIVE_FILES['hermes-agent'];
+        setNativeConfigInfo(fallback);
       }
     } catch (e) {
-      console.error("Failed to fetch live config:", e);
+      console.warn("Using local configuration details for agent:", agentId);
+      const fallback = DEFAULT_NATIVE_FILES[agentId] || DEFAULT_NATIVE_FILES['hermes-agent'];
+      setNativeConfigInfo(fallback);
     } finally {
       setIsFetchingLive(false);
     }
@@ -1343,25 +1361,59 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
           </div>
         )}
 
-        {/* ================= RAW JSON / YAML SCHEMA ================= */}
+        {/* ================= RAW JSON / YAML / TOML SCHEMA & NATIVE FILE ================= */}
         {activeSection === 'raw' && (
           <div className="space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-4">
               <div>
-                <h3 className="text-sm font-semibold text-white">Raw Configuration Schema</h3>
-                <p className="text-xs text-slate-400 mt-1">
-                  Direct live bidirectional JSON editor matching config schema.
+                <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+                  <FileCode className="w-4 h-4 text-indigo-400" />
+                  {rawMode === 'native' ? `Native Config File (${nativeConfigInfo?.fileName || 'config'})` : 'JSON Configuration Schema'}
+                </h3>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  {rawMode === 'native' 
+                    ? `Direct raw file content matching container mount: data/clawdock/${nativeConfigInfo?.fileName}`
+                    : 'Structured JSON schema representation used for multi-agent synchronization.'}
                 </p>
               </div>
 
-              <button
-                id="copy-raw-json-btn"
-                onClick={copyRawToClipboard}
-                className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
-              >
-                {copiedRaw ? <Check className="w-3.5 h-3.5 text-indigo-400" /> : <Copy className="w-3.5 h-3.5" />}
-                {copiedRaw ? 'Copied' : 'Copy JSON'}
-              </button>
+              <div className="flex items-center gap-2">
+                <div className="flex bg-slate-950 p-0.5 rounded-lg border border-slate-800 text-xs">
+                  <button
+                    onClick={() => setRawMode('native')}
+                    className={`px-3 py-1 rounded-md transition-all ${
+                      rawMode === 'native'
+                        ? 'bg-indigo-600 text-white font-medium'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    {nativeConfigInfo?.fileName || 'Native File'}
+                  </button>
+                  <button
+                    onClick={() => setRawMode('schema')}
+                    className={`px-3 py-1 rounded-md transition-all ${
+                      rawMode === 'schema'
+                        ? 'bg-indigo-600 text-white font-medium'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    JSON Schema
+                  </button>
+                </div>
+
+                <button
+                  id="copy-raw-json-btn"
+                  onClick={() => {
+                    navigator.clipboard.writeText(rawText);
+                    setCopiedRaw(true);
+                    setTimeout(() => setCopiedRaw(false), 2000);
+                  }}
+                  className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
+                >
+                  {copiedRaw ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                  {copiedRaw ? 'Copied' : 'Copy'}
+                </button>
+              </div>
             </div>
 
             {rawError && (
@@ -1372,10 +1424,24 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
 
             <textarea
               id="raw-json-editor"
-              rows={16}
+              rows={18}
               value={rawText}
-              onChange={(e) => handleRawChange(e.target.value)}
-              className="w-full p-4 rounded-xl bg-slate-950 border border-slate-800 text-indigo-400 font-mono text-xs leading-relaxed focus:outline-none focus:border-indigo-500"
+              onChange={(e) => {
+                const text = e.target.value;
+                setRawText(text);
+                if (rawMode === 'schema') {
+                  try {
+                    const parsed = JSON.parse(text);
+                    onChangeConfig(parsed);
+                    setRawError(null);
+                  } catch (err: any) {
+                    setRawError(err.message);
+                  }
+                } else {
+                  setNativeConfigInfo(prev => ({ ...prev, content: text }));
+                }
+              }}
+              className="w-full p-4 rounded-xl bg-slate-950 border border-slate-800 text-indigo-300 font-mono text-xs leading-relaxed focus:outline-none focus:border-indigo-500 selection:bg-indigo-900 selection:text-white"
             />
           </div>
         )}
