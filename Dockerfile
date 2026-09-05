@@ -35,13 +35,15 @@ LABEL version="1.4.2"
 
 WORKDIR /app
 
-# Install system dependencies, curl, ca-certificates, and Docker CLI
+# Install system dependencies, curl, ca-certificates, sqlite3, and Docker CLI
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ca-certificates \
     gnupg \
     git \
     procps \
+    sqlite3 \
+    libsqlite3-0 \
     && rm -rf /var/lib/apt/lists/*
 
 # Install official Docker CLI & Docker Compose plugin to manage containers via /var/run/docker.sock
@@ -72,10 +74,10 @@ ENV PORT=3000 \
     DOCKER_HOST=unix:///var/run/docker.sock
 
 # Create standard persistent mount points
-RUN mkdir -p /data/configs /workspace
+RUN mkdir -p /data/configs /data/sqlite /workspace
 
 # Declare volumes for Docker socket communication and persistent storage
-VOLUME ["/var/run/docker.sock", "/data/configs", "/workspace"]
+VOLUME ["/var/run/docker.sock", "/data/configs", "/data/sqlite", "/workspace"]
 
 # Healthcheck to verify the web service is responsive
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \

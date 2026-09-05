@@ -26,6 +26,8 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       # Persist configuration schema files and custom SKILL.md specs
       - ./data/configs:/data/configs
+      # Persist SQLite database and agent state files
+      - ./data/sqlite:/data/sqlite
       # Shared workspace for agents to read/write files and execute code
       - ./workspace:/workspace
     environment:
