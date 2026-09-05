@@ -29,6 +29,7 @@ import {
   MemoryBackend 
 } from '../types';
 import { MODEL_OPTIONS, DEFAULT_CONFIGS, DEFAULT_NATIVE_FILES } from '../data/defaults';
+import { fetchAgentLiveConfig, saveAgentConfigToBackend } from '../utils/apiBridge';
 
 interface ConfigTabProps {
   agentId: AgentId;
@@ -83,29 +84,18 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
   const fetchLiveConfig = async () => {
     setIsFetchingLive(true);
     try {
-      const res = await fetch(`/api/agents/${agentId}/config`);
-      if (res.ok) {
-        const data = await res.json();
-        if (data && data.success) {
-          if (data.nativeFileName && data.nativeContent) {
-            const updatedInfo = {
-              fileName: data.nativeFileName,
-              format: data.nativeFormat || 'yaml',
-              content: data.nativeContent
-            };
-            setNativeConfigInfo(updatedInfo);
-          }
-          if (data.configSchema) {
-            onChangeConfig(data.configSchema);
-          }
+      const data = await fetchAgentLiveConfig(agentId);
+      if (data) {
+        setNativeConfigInfo({
+          fileName: data.fileName,
+          format: data.format,
+          content: data.content
+        });
+        if (data.configSchema) {
+          onChangeConfig(data.configSchema);
         }
-      } else {
-        // Fallback to local default files
-        const fallback = DEFAULT_NATIVE_FILES[agentId] || DEFAULT_NATIVE_FILES['hermes-agent'];
-        setNativeConfigInfo(fallback);
       }
     } catch (e) {
-      console.warn("Using local configuration details for agent:", agentId);
       const fallback = DEFAULT_NATIVE_FILES[agentId] || DEFAULT_NATIVE_FILES['hermes-agent'];
       setNativeConfigInfo(fallback);
     } finally {

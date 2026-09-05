@@ -1,0 +1,3 @@
+version: "1.0.0"
+agent_id: "hermes-agent"
+agent_name: "Hermes Agent"

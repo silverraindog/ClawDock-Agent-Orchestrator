@@ -1,0 +1,42 @@
+{
+  "agentStates": {
+    "hermes-agent": {
+      "status": "restarting",
+      "containerId": "c108a94fd32b",
+      "logs": [
+        "[Hermes Core] Initializing Nous Hermes 3.11 Runtime...",
+        "[Hermes Core] Mounting workspace volume at /workspace",
+        "[Hermes Core] SKILL.md specification engine loaded (9 skills active)",
+        "[Hermes Core] Channel listener: Telegram polling active [@developer, @admin]",
+        "[Hermes Core] Ready for autonomous tasks on port 8080",
+        "[Docker Engine] Config saved to /data/clawdock/hermes.yaml. Executing docker restart on container c108a94fd32b..."
+      ]
+    },
+    "zeroclaw": {
+      "status": "stopped",
+      "containerId": "b94101e4aa22",
+      "logs": [
+        "[ZeroClaw Daemon] Rust tokio runtime exited with code 0",
+        "[ZeroClaw Daemon] Snapshot saved to /var/zeroclaw/memory.md"
+      ]
+    },
+    "openclaw": {
+      "status": "detected_local",
+      "containerId": "",
+      "logs": [
+        "[OpenClaw Hub] Detected local Node.js v20 runtime",
+        "[OpenClaw Hub] Gateway daemon ready to connect via Docker or Host port 8082"
+      ]
+    },
+    "picoclaw": {
+      "status": "running",
+      "containerId": "e4991ac89b10",
+      "logs": [
+        "[PicoClaw Edge] Sipeed Go engine initialized (Memory: 9.4MB)",
+        "[PicoClaw Edge] PicoLM Quantized GGUF inference ready",
+        "[PicoClaw Edge] WebUI Gateway listening on 0.0.0.0:8083"
+      ]
+    }
+  },
+  "updatedAt": "2026-09-05T17:59:44.699Z"
+}

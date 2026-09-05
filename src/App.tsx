@@ -32,6 +32,12 @@ import {
   INITIAL_MCP_SERVERS 
 } from './data/defaults';
 import { INITIAL_UPDATES } from './data/updatesData';
+import { 
+  fetchAllAgentConfigs, 
+  fetchRuntimeAgentStates, 
+  saveLocalPersistence, 
+  getLocalPersistence 
+} from './utils/apiBridge';
 
 import { Navbar } from './components/Navbar';
 import { DashboardTab } from './components/DashboardTab';
@@ -86,83 +92,44 @@ export default function App() {
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
 
-  // Fetch initial telemetry, persistent state, and live configuration files from backend
+  // Fetch initial telemetry, persistent state, and live configuration files via resilient bridge
   useEffect(() => {
+    // 1. Load agent states
+    fetchRuntimeAgentStates().then(agentStates => {
+      if (agentStates) {
+        setAgents(prev => prev.map(a => {
+          const st = agentStates[a.id];
+          if (st) {
+            return {
+              ...a,
+              status: st.status as any,
+              containerId: st.containerId || a.containerId
+            };
+          }
+          return a;
+        }));
+      }
+    });
+
+    // 2. Load all agent configs
+    fetchAllAgentConfigs().then(loaded => {
+      if (loaded && Object.keys(loaded).length > 0) {
+        setConfigs(prev => ({ ...prev, ...loaded }));
+      }
+    });
+
+    // 3. Docker status check
     fetch('/api/docker/status')
       .then(res => res.ok ? res.json() : null)
       .then(data => {
         if (data) setDockerInfo(data);
       })
       .catch(() => {});
-
-    fetch('/api/state')
-      .then(res => res.ok ? res.json() : null)
-      .then(data => {
-        if (data && data.success && data.agentStates) {
-          setAgents(prev => prev.map(a => {
-            const st = data.agentStates[a.id];
-            if (st) {
-              return {
-                ...a,
-                status: st.status as any,
-                containerId: st.containerId || a.containerId
-              };
-            }
-            return a;
-          }));
-        }
-      })
-      .catch(() => {});
-
-    // Fetch live configuration details directly from the native files
-    fetch('/api/agents/all/configs')
-      .then(res => res.ok ? res.json() : null)
-      .then(data => {
-        if (data && data.success && data.configs) {
-          const loadedConfigs: Record<string, AgentFullConfig> = {};
-          for (const [id, cfgObj] of Object.entries(data.configs as Record<string, any>)) {
-            if (cfgObj && cfgObj.configSchema) {
-              loadedConfigs[id] = cfgObj.configSchema;
-            }
-          }
-          if (Object.keys(loadedConfigs).length > 0) {
-            setConfigs(prev => ({ ...prev, ...loadedConfigs }));
-          }
-        }
-      })
-      .catch(() => {});
-
-    // Fetch from persistence API
-    fetch('/api/persistence')
-      .then(res => res.ok ? res.json() : null)
-      .then(data => {
-        if (data && data.success && data.data) {
-          if (data.data.configs) {
-            setConfigs(prev => ({ ...prev, ...data.data.configs }));
-          }
-        }
-      })
-      .catch(() => {});
-
-    // Also load local config preferences if any
-    try {
-      const savedConfigs = localStorage.getItem('clawdock_agent_configs');
-      if (savedConfigs) {
-        setConfigs(prev => ({ ...prev, ...JSON.parse(savedConfigs) }));
-      }
-    } catch {}
   }, []);
 
-  // Save configs to localStorage and persistence on change
+  // Save configs to local persistence & backend on change
   useEffect(() => {
-    try {
-      localStorage.setItem('clawdock_agent_configs', JSON.stringify(configs));
-      fetch('/api/persistence', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ key: 'configs', value: configs })
-      }).catch(() => {});
-    } catch {}
+    saveLocalPersistence('configs', configs);
   }, [configs]);
 
   // Helper function: triggers docker exec command via backend to read specific config file path and inject into configs state

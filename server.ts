@@ -556,15 +556,30 @@ function getAgentConfigData(agentId: string) {
     } else {
       // yaml
       const matchName = nativeContent.match(/agent_name:\s*"([^"]+)"|agent_name:\s*([^\n]+)/);
-      if (matchName) parsedAgentName = matchName[1] || matchName[2];
-      const matchProv = nativeContent.match(/provider:\s*"([^"]+)"|provider:\s*([^\s\n]+)/);
-      if (matchProv) parsedModelProvider = matchProv[1] || matchProv[2];
-      const matchModel = nativeContent.match(/model:\s*"([^"]+)"|model:\s*([^\s\n]+)/);
-      if (matchModel) parsedModelName = matchModel[1] || matchModel[2];
-      const matchTemp = nativeContent.match(/temperature:\s*([0-9.]+)/);
-      if (matchTemp) parsedTemperature = Number(matchTemp[1]);
+      if (matchName) parsedAgentName = (matchName[1] || matchName[2]).trim();
+
+      const modelBlockMatch = nativeContent.match(/model:\s*\n([\s\S]*?)(?=\n[a-z_]+:|$)/i);
+      if (modelBlockMatch) {
+        const block = modelBlockMatch[1];
+        const pMatch = block.match(/provider:\s*["']?([^"'\s\n]+)["']?/);
+        if (pMatch && pMatch[1]) parsedModelProvider = pMatch[1].trim();
+        const mMatch = block.match(/model:\s*["']?([^"'\s\n]+)["']?/);
+        if (mMatch && mMatch[1] && mMatch[1] !== 'provider:') parsedModelName = mMatch[1].trim();
+        const tMatch = block.match(/temperature:\s*([0-9.]+)/);
+        if (tMatch) parsedTemperature = Number(tMatch[1]);
+      } else {
+        const matchProv = nativeContent.match(/provider:\s*"([^"]+)"|provider:\s*([^\s\n]+)/);
+        if (matchProv) parsedModelProvider = (matchProv[1] || matchProv[2]).trim();
+        const matchModel = nativeContent.match(/model:\s*"([^"]+)"|model:\s*([^\s\n]+)/);
+        if (matchModel && matchModel[1] !== 'provider:') parsedModelName = (matchModel[1] || matchModel[2]).trim();
+      }
+
       const matchPrompt = nativeContent.match(/system_prompt:\s*"([^"]+)"/);
       if (matchPrompt) parsedSystemPrompt = matchPrompt[1];
+    }
+
+    if (parsedModelName === 'provider:' || !parsedModelName) {
+      parsedModelName = agentId === 'zeroclaw' ? 'deepseek-r1' : agentId === 'openclaw' ? 'gpt-4o' : agentId === 'picoclaw' ? 'qwen2.5-coder:7b' : 'claude-3-7-sonnet';
     }
   } catch (e) {
     console.error('Error parsing config details from file:', e);
