@@ -1,0 +1,134 @@
+# ==============================================================================
+# ClawDock Agent Orchestrator - Full Docker Compose Stack
+# (Docker Compose Specification v2 - obsolete 'version' key omitted)
+# Includes:
+#   1. ClawDock Python Web UI & Orchestrator (Port 3000)
+#   2. Hermes Agent (Nous Research Python Runtime, Port 8080)
+#   3. ZeroClaw (Rust Tokio Micro-Daemon, Port 8081)
+#   4. OpenClaw (TypeScript/Node.js Gateway Hub, Port 8082)
+#   5. PicoClaw (Sipeed Ultra-low RAM Go Engine, Port 8083)
+# ==============================================================================
+
+services:
+  # ----------------------------------------------------------------------------
+  # ClawDock Python Web Orchestrator
+  # ----------------------------------------------------------------------------
+  clawdock-orchestrator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: clawdock-web
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      # Mount host Docker socket for real-time container detection & lifecycle control
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Persist configuration schema files and custom SKILL.md specs
+      - ./data/configs:/data/configs
+      # Shared workspace for agents to read/write files and execute code
+      - ./workspace:/workspace
+    environment:
+      - PORT=3000
+      - PYTHONUNBUFFERED=1
+      - DOCKER_HOST=unix:///var/run/docker.sock
+      - CONFIG_STORE_DIR=/data/configs
+    networks:
+      - claw-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ----------------------------------------------------------------------------
+  # Nous Research Hermes-Agent (Python 3.11 Runtime)
+  # ----------------------------------------------------------------------------
+  hermes-agent:
+    image: ghcr.io/nousresearch/hermes-agent:latest
+    container_name: hermes-agent-core
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./workspace:/workspace
+      - ./data/hermes:/data
+    environment:
+      - HERMES_PORT=8080
+      - PYTHONUNBUFFERED=1
+      - WORKSPACE_DIR=/workspace
+    networks:
+      - claw-network
+
+  # ----------------------------------------------------------------------------
+  # ZeroClaw Daemon (Rust Tokio Ultra-Light Runtime, <15MB RAM)
+  # ----------------------------------------------------------------------------
+  zeroclaw:
+    image: zeroclaw/zeroclaw:latest
+    container_name: zeroclaw-daemon
+    restart: unless-stopped
+    ports:
+      - "8081:8081"
+    volumes:
+      - ./workspace:/var/zeroclaw/workspace
+      - ./data/zeroclaw:/var/zeroclaw/data
+    environment:
+      - RUST_LOG=info
+      - ZEROCLAW_PORT=8081
+      - ZEROCLAW_WORKSPACE=/var/zeroclaw/workspace
+    networks:
+      - claw-network
+
+  # ----------------------------------------------------------------------------
+  # OpenClaw Hub (TypeScript / Node.js Gateway)
+  # ----------------------------------------------------------------------------
+  openclaw:
+    image: openclaw/openclaw:latest
+    container_name: openclaw-hub
+    restart: unless-stopped
+    ports:
+      - "8082:8082"
+    volumes:
+      - ./workspace:/workspace
+      - ./data/openclaw:/root/.openclaw
+    environment:
+      - NODE_ENV=production
+      - PORT=8082
+      - OPENCLAW_WORKSPACE=/workspace
+    networks:
+      - claw-network
+
+  # ----------------------------------------------------------------------------
+  # Sipeed PicoClaw (Go Engine for Low-Power Edge & RISC-V)
+  # ----------------------------------------------------------------------------
+  picoclaw:
+    image: sipeed/picoclaw:latest
+    container_name: picoclaw-edge
+    restart: unless-stopped
+    ports:
+      - "8083:8083"
+    volumes:
+      - ./workspace:/home/sipeed/.picoclaw/workspace
+      - ./data/picoclaw:/home/sipeed/.picoclaw/data
+    environment:
+      - PICOCLAW_PORT=8083
+      - PICOCLAW_MODE=gateway
+    networks:
+      - claw-network
+
+# ------------------------------------------------------------------------------
+# Isolated Internal Bridge Network
+# ------------------------------------------------------------------------------
+networks:
+  claw-network:
+    name: claw-network
+    driver: bridge
+
+# ------------------------------------------------------------------------------
+# Named Persistent Storage Volumes
+# ------------------------------------------------------------------------------
+volumes:
+  claw-configs:
+    driver: local
+  claw-workspace:
+    driver: local

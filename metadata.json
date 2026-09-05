@@ -1,0 +1,6 @@
+{
+  "name": "ClawDock Agent Orchestrator",
+  "description": "Docker orchestration and configuration studio for Hermes, ZeroClaw, OpenClaw, and PicoClaw with full schema management, Skills Hub, MCP registry, and unified system update checker.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
