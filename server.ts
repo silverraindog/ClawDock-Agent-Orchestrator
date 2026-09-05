@@ -1080,6 +1080,104 @@ let everosConfigStore = {
   }
 };
 
+let everosTasksStore = [
+  {
+    id: 'task-hermes-01',
+    title: 'Container Stack Healthcheck & Safe Rollback',
+    description: 'Autonomous health verification polling and container stderr telemetry inspection across all docker containers.',
+    agentId: 'hermes-agent',
+    status: 'running',
+    category: 'devops',
+    startedAt: '15m ago',
+    priority: 'high'
+  },
+  {
+    id: 'task-hermes-02',
+    title: 'Docker Socket & GID 999 Permissions Auditor',
+    description: 'Enforces non-root container isolation, unix socket rw rights, and bridge network security isolation.',
+    agentId: 'hermes-agent',
+    status: 'active',
+    category: 'security',
+    startedAt: '32m ago',
+    priority: 'medium'
+  },
+  {
+    id: 'task-zeroclaw-01',
+    title: 'MQTT Sensor Stream Ingest & Sub-15MB RSS Pruner',
+    description: 'High-frequency telemetry buffering with zero-copy serde deserialization and dynamic memory compaction.',
+    agentId: 'zeroclaw',
+    status: 'running',
+    category: 'edge',
+    startedAt: '1h ago',
+    priority: 'high'
+  },
+  {
+    id: 'task-zeroclaw-02',
+    title: 'Zero-Copy UNIX Socket EverOS Memory Pipeline',
+    description: 'Streams binary trajectory snapshots over local domain sockets to bypass HTTP connection pool overhead.',
+    agentId: 'zeroclaw',
+    status: 'active',
+    category: 'memory',
+    startedAt: '45m ago',
+    priority: 'high'
+  },
+  {
+    id: 'task-openclaw-01',
+    title: 'Multi-Channel Telegram / Discord Rate Limit Jitter',
+    description: 'Token-bucket queue management, webhook backoff scheduling, and message payload deduplication.',
+    agentId: 'openclaw',
+    status: 'running',
+    category: 'messaging',
+    startedAt: '22m ago',
+    priority: 'high'
+  },
+  {
+    id: 'task-openclaw-02',
+    title: 'TypeScript Schema Validation & Pydantic v2 Bridge',
+    description: 'Type-safe contract enforcement and real-time JSON schema serialization for agent tool calling.',
+    agentId: 'openclaw',
+    status: 'active',
+    category: 'coding',
+    startedAt: '10m ago',
+    priority: 'medium'
+  },
+  {
+    id: 'task-picoclaw-01',
+    title: 'Sipeed RISC-V Edge Telemetry & PicoLM Inference',
+    description: 'Quantized on-device lightweight reasoning and low-power telemetry syncing over HTTP REST.',
+    agentId: 'picoclaw',
+    status: 'running',
+    category: 'edge',
+    startedAt: '2h ago',
+    priority: 'medium'
+  },
+  {
+    id: 'task-everos-01',
+    title: 'Cross-Agent Memory Matrix Consolidation & LanceDB Indexing',
+    description: 'Performs background BM25 keyword re-indexing and LanceDB 384-dim dense vector embedding updates.',
+    agentId: 'everos-daemon',
+    status: 'running',
+    category: 'memory',
+    startedAt: '5m ago',
+    priority: 'high'
+  }
+];
+
+let everosRelationshipsStore = [
+  { id: 'rel-01', memoryId: 'mem-001', taskId: 'task-hermes-02', weight: 0.98, reason: 'Direct topology & socket permission rules enforced during container permission audits', accessFrequency: 42, lastReinforced: '2m ago' },
+  { id: 'rel-02', memoryId: 'mem-001', taskId: 'task-hermes-01', weight: 0.89, reason: 'Bridge network port mapping referenced during healthcheck port probes', accessFrequency: 38, lastReinforced: '5m ago' },
+  { id: 'rel-03', memoryId: 'mem-006', taskId: 'task-hermes-01', weight: 0.96, reason: 'Execution blueprint for 3-strike unhealthy container rollback', accessFrequency: 54, lastReinforced: '1m ago' },
+  { id: 'rel-04', memoryId: 'mem-002', taskId: 'task-openclaw-02', weight: 0.94, reason: 'Pydantic v2 & TypeScript conventions strictly enforced on tool schemas', accessFrequency: 89, lastReinforced: '8m ago' },
+  { id: 'rel-05', memoryId: 'mem-003', taskId: 'task-zeroclaw-01', weight: 0.95, reason: 'Zero-copy serde memory recycling technique applied to MQTT payloads', accessFrequency: 31, lastReinforced: '4m ago' },
+  { id: 'rel-06', memoryId: 'mem-003', taskId: 'task-zeroclaw-02', weight: 0.91, reason: 'UNIX domain socket buffer allocation parameters and steady-state guidelines', accessFrequency: 27, lastReinforced: '12m ago' },
+  { id: 'rel-07', memoryId: 'mem-004', taskId: 'task-openclaw-01', weight: 0.93, reason: 'Token-bucket rate limit algorithm & Telegram 429 jitter backoff pattern', accessFrequency: 48, lastReinforced: '3m ago' },
+  { id: 'rel-08', memoryId: 'mem-005', taskId: 'task-picoclaw-01', weight: 0.92, reason: 'RISC-V build flags and EverOS REST transmission specification for Sipeed edge boards', accessFrequency: 19, lastReinforced: '15m ago' },
+  { id: 'rel-09', memoryId: 'mem-002', taskId: 'task-everos-01', weight: 0.78, reason: 'User preference guidelines referenced for markdown memory storage structure', accessFrequency: 22, lastReinforced: '25m ago' },
+  { id: 'rel-10', memoryId: 'mem-001', taskId: 'task-everos-01', weight: 0.85, reason: 'EverOS daemon port 8080 binding and volume mount mapping', accessFrequency: 35, lastReinforced: '18m ago' },
+  { id: 'rel-11', memoryId: 'mem-004', taskId: 'task-everos-01', weight: 0.74, reason: 'Offline batch consolidation queue used to buffer high-burst conversational traces', accessFrequency: 16, lastReinforced: '30m ago' },
+  { id: 'rel-12', memoryId: 'mem-005', taskId: 'task-zeroclaw-01', weight: 0.65, reason: 'Cross-edge memory sharing between Sipeed RISC-V and Rust Tokio runtimes', accessFrequency: 11, lastReinforced: '45m ago' }
+];
+
 // EverOS Health & Stats
 app.get('/api/everos/status', (req, res) => {
   res.json({
@@ -1240,6 +1338,84 @@ app.post('/api/everos/sync-bots', (req, res) => {
 // EverOS Skills List
 app.get('/api/everos/skills', (req, res) => {
   res.json({ skills: everosSkillsStore, count: everosSkillsStore.length });
+});
+
+// EverOS Active Agent Tasks List
+app.get('/api/everos/tasks', (req, res) => {
+  const { agentId } = req.query as Record<string, string>;
+  let tasks = [...everosTasksStore];
+  if (agentId && agentId !== 'all') {
+    tasks = tasks.filter(t => t.agentId === agentId);
+  }
+  res.json({ tasks, count: tasks.length });
+});
+
+// EverOS Memory-Task Relationships List
+app.get('/api/everos/relationships', (req, res) => {
+  const { minWeight, memoryId, taskId } = req.query as Record<string, string>;
+  let rels = [...everosRelationshipsStore];
+  if (minWeight) {
+    const minW = parseFloat(minWeight);
+    if (!isNaN(minW)) rels = rels.filter(r => r.weight >= minW);
+  }
+  if (memoryId) {
+    rels = rels.filter(r => r.memoryId === memoryId);
+  }
+  if (taskId) {
+    rels = rels.filter(r => r.taskId === taskId);
+  }
+  res.json({ 
+    relationships: rels, 
+    count: rels.length,
+    tasks: everosTasksStore,
+    memories: everosMemoriesStore
+  });
+});
+
+// Create/Update EverOS Relationship
+app.post('/api/everos/relationships', (req, res) => {
+  const { memoryId, taskId, weight = 0.85, reason = 'Linked via contextual mRAG trace' } = req.body || {};
+  if (!memoryId || !taskId) {
+    return res.status(400).json({ error: 'memoryId and taskId are required' });
+  }
+
+  const existingIdx = everosRelationshipsStore.findIndex(r => r.memoryId === memoryId && r.taskId === taskId);
+  if (existingIdx >= 0) {
+    everosRelationshipsStore[existingIdx].weight = parseFloat(weight);
+    everosRelationshipsStore[existingIdx].reason = reason;
+    everosRelationshipsStore[existingIdx].lastReinforced = 'Just now';
+    everosRelationshipsStore[existingIdx].accessFrequency += 1;
+    return res.json({ success: true, relationship: everosRelationshipsStore[existingIdx] });
+  }
+
+  const newRel = {
+    id: 'rel-' + Date.now().toString(36),
+    memoryId,
+    taskId,
+    weight: parseFloat(weight),
+    reason,
+    accessFrequency: 1,
+    lastReinforced: 'Just now'
+  };
+  everosRelationshipsStore.unshift(newRel);
+  res.json({ success: true, relationship: newRel });
+});
+
+// Reinforce relationship pulse
+app.post('/api/everos/relationships/reinforce', (req, res) => {
+  const { ids, delta = 0.05 } = req.body || {};
+  everosRelationshipsStore = everosRelationshipsStore.map(r => {
+    if (!ids || ids.includes(r.id)) {
+      return {
+        ...r,
+        weight: Math.min(0.99, parseFloat((r.weight + delta).toFixed(2))),
+        accessFrequency: r.accessFrequency + 1,
+        lastReinforced: 'Just now'
+      };
+    }
+    return r;
+  });
+  res.json({ success: true, relationships: everosRelationshipsStore });
 });
 
 

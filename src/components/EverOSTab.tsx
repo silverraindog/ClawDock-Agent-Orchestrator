@@ -28,7 +28,9 @@ import {
   Lock,
   Download,
   AlertCircle,
-  BarChart3
+  BarChart3,
+  Network,
+  LayoutGrid
 } from 'lucide-react';
 import { 
   AgentId, 
@@ -36,15 +38,20 @@ import {
   EverOSMemoryItem, 
   EverOSSkillItem, 
   EverOSStats, 
-  EverOSMemoryType 
+  EverOSMemoryType,
+  AgentTaskItem,
+  MemoryTaskRelationship
 } from '../types';
 import { 
   DEFAULT_EVEROS_CONFIG, 
   INITIAL_EVEROS_MEMORIES, 
   INITIAL_EVEROS_SKILLS, 
-  INITIAL_EVEROS_STATS 
+  INITIAL_EVEROS_STATS,
+  INITIAL_AGENT_TASKS,
+  INITIAL_MEMORY_TASK_RELATIONSHIPS
 } from '../data/everosData';
 import { EverOSAnalytics } from './EverOSAnalytics';
+import { EverOSRelationshipViz } from './EverOSRelationshipViz';
 
 interface EverOSTabProps {
   onOpenAgentConfig?: (agentId: AgentId) => void;
@@ -52,11 +59,13 @@ interface EverOSTabProps {
 
 export const EverOSTab: React.FC<EverOSTabProps> = ({ onOpenAgentConfig }) => {
   // State
-  const [activeSubTab, setActiveSubTab] = useState<'matrix' | 'mrag' | 'bank' | 'skills' | 'analytics' | 'config'>('matrix');
+  const [activeSubTab, setActiveSubTab] = useState<'matrix' | 'mrag' | 'graph' | 'bank' | 'skills' | 'analytics' | 'config'>('matrix');
   const [config, setConfig] = useState<EverOSConfig>(DEFAULT_EVEROS_CONFIG);
   const [stats, setStats] = useState<EverOSStats>(INITIAL_EVEROS_STATS);
   const [memories, setMemories] = useState<EverOSMemoryItem[]>(INITIAL_EVEROS_MEMORIES);
   const [skills, setSkills] = useState<EverOSSkillItem[]>(INITIAL_EVEROS_SKILLS);
+  const [tasks, setTasks] = useState<AgentTaskItem[]>(INITIAL_AGENT_TASKS);
+  const [relationships, setRelationships] = useState<MemoryTaskRelationship[]>(INITIAL_MEMORY_TASK_RELATIONSHIPS);
   
   // Search & mRAG State
   const [searchQuery, setSearchQuery] = useState('');
@@ -118,6 +127,24 @@ export const EverOSTab: React.FC<EverOSTabProps> = ({ onOpenAgentConfig }) => {
         }
       })
       .catch(() => { /* fallback to defaults */ });
+
+    fetch('/api/everos/tasks')
+      .then(res => res.json())
+      .then(data => {
+        if (data && data.tasks) {
+          setTasks(data.tasks);
+        }
+      })
+      .catch(() => { /* fallback */ });
+
+    fetch('/api/everos/relationships')
+      .then(res => res.json())
+      .then(data => {
+        if (data && data.relationships) {
+          setRelationships(data.relationships);
+        }
+      })
+      .catch(() => { /* fallback */ });
   }, []);
 
   // Execute hybrid mRAG Search
@@ -465,6 +492,19 @@ export const EverOSTab: React.FC<EverOSTabProps> = ({ onOpenAgentConfig }) => {
         >
           <Search className="w-4 h-4" />
           Hybrid mRAG Search Bench
+        </button>
+
+        <button
+          id="everos-tab-graph"
+          onClick={() => setActiveSubTab('graph')}
+          className={`px-3.5 py-2 rounded-xl text-xs font-semibold flex items-center gap-2 transition-all ${
+            activeSubTab === 'graph'
+              ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20'
+              : 'bg-slate-900/80 text-slate-400 hover:text-slate-200 hover:bg-slate-800 border border-slate-800'
+          }`}
+        >
+          <Network className="w-4 h-4 text-cyan-400" />
+          Relationship Graph &amp; Treemap
         </button>
 
         <button
@@ -858,6 +898,18 @@ export const EverOSTab: React.FC<EverOSTabProps> = ({ onOpenAgentConfig }) => {
       )}
 
       {/* ==================================================================== */}
+      {/* 4. SUB-VIEW: D3 GRAPH & TREEMAP (MEMORY CHUNKS & ACTIVE AGENT TASKS) */}
+      {/* ==================================================================== */}
+      {activeSubTab === 'graph' && (
+        <EverOSRelationshipViz
+          memories={memories}
+          tasks={tasks}
+          relationships={relationships}
+          onUpdateRelationships={(newRels) => setRelationships(newRels)}
+        />
+      )}
+
+      {/* ==================================================================== */}
       {/* 5. SUB-VIEW: MEMORY BANK EXPLORER                                    */}
       {/* ==================================================================== */}
       {activeSubTab === 'bank' && (
@@ -924,18 +976,25 @@ export const EverOSTab: React.FC<EverOSTabProps> = ({ onOpenAgentConfig }) => {
                 </div>
 
                 <div className="pt-3 border-t border-slate-800/80 flex items-center justify-between text-[11px] text-slate-500">
-                  <span className="font-mono text-[10px] truncate max-w-[170px]">{mem.filePath}</span>
+                  <span className="font-mono text-[10px] truncate max-w-[150px]">{mem.filePath}</span>
                   <div className="flex items-center gap-2">
                     <button
+                      onClick={() => setActiveSubTab('graph')}
+                      className="text-slate-400 hover:text-cyan-400 transition-colors p-1"
+                      title="View memory in D3 Graph / Treemap"
+                    >
+                      <Network className="w-3.5 h-3.5" />
+                    </button>
+                    <button
                       onClick={() => copyToClipboard(mem.content, mem.id)}
-                      className="text-slate-400 hover:text-white transition-colors"
+                      className="text-slate-400 hover:text-white transition-colors p-1"
                       title="Copy content"
                     >
                       {copiedId === mem.id ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
                     </button>
                     <button
                       onClick={() => handleDeleteMemory(mem.id)}
-                      className="text-slate-500 hover:text-rose-400 transition-colors"
+                      className="text-slate-500 hover:text-rose-400 transition-colors p-1"
                       title="Delete memory"
                     >
                       <Trash2 className="w-3.5 h-3.5" />

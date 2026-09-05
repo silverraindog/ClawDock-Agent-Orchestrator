@@ -325,4 +325,25 @@ export interface EverOSStats {
   lastSyncTime: string;
 }
 
+export interface AgentTaskItem {
+  id: string;
+  title: string;
+  description: string;
+  agentId: AgentId | 'everos-daemon';
+  status: 'running' | 'active' | 'monitoring' | 'idle';
+  category: 'devops' | 'memory' | 'edge' | 'messaging' | 'coding' | 'security';
+  startedAt: string;
+  priority: 'high' | 'medium' | 'low';
+}
+
+export interface MemoryTaskRelationship {
+  id: string;
+  memoryId: string;
+  taskId: string;
+  weight: number; // 0.0 to 1.0 relationship affinity
+  reason: string;
+  accessFrequency: number;
+  lastReinforced: string;
+}
+
 
