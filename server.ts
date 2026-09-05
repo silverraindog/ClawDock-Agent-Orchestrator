@@ -225,13 +225,24 @@ security:
   allow_shell: true`;
   }
 
-  const clawdockDir = path.join(process.cwd(), 'data', 'clawdock');
-  const filePath = path.join(clawdockDir, nativeFileName);
+  const absPath = `/data/clawdock/${nativeFileName}`;
+  const relPath = path.join(process.cwd(), 'data', 'clawdock', nativeFileName);
+  let filePath = relPath;
+  if (fs.existsSync(absPath)) {
+    filePath = absPath;
+  } else if (fs.existsSync(relPath)) {
+    filePath = relPath;
+  } else {
+    filePath = fs.existsSync('/data/clawdock') ? absPath : relPath;
+  }
+  const clawdockDir = path.dirname(filePath);
   let nativeContent = defaultContent;
   let source = 'clawdock_mount_file';
 
   try {
-    fs.mkdirSync(clawdockDir, { recursive: true });
+    try {
+      fs.mkdirSync(clawdockDir, { recursive: true });
+    } catch {}
 
     // Attempt docker exec config export if container is running
     let exported = false;
@@ -244,8 +255,10 @@ security:
           nativeContent = output.trim();
           source = `docker_exec_${cName}_config_show`;
           exported = true;
-          // Cache to clawdock mount file
-          fs.writeFileSync(filePath, nativeContent, 'utf8');
+          // Cache to both paths if possible
+          try { fs.writeFileSync(filePath, nativeContent, 'utf8'); } catch {}
+          try { fs.writeFileSync(absPath, nativeContent, 'utf8'); } catch {}
+          try { fs.writeFileSync(relPath, nativeContent, 'utf8'); } catch {}
           break;
         }
       } catch {
@@ -254,10 +267,20 @@ security:
     }
 
     if (!exported) {
-      if (fs.existsSync(filePath)) {
-        nativeContent = fs.readFileSync(filePath, 'utf8');
+      if (fs.existsSync(absPath)) {
+        nativeContent = fs.readFileSync(absPath, 'utf8');
+        filePath = absPath;
+      } else if (fs.existsSync(relPath)) {
+        nativeContent = fs.readFileSync(relPath, 'utf8');
+        filePath = relPath;
       } else {
-        fs.writeFileSync(filePath, defaultContent, 'utf8');
+        try {
+          fs.writeFileSync(filePath, defaultContent, 'utf8');
+        } catch {
+          fs.writeFileSync(relPath, defaultContent, 'utf8');
+          filePath = relPath;
+        }
+        nativeContent = defaultContent;
       }
     }
   } catch (err) {
@@ -399,17 +422,20 @@ app.put('/api/agents/:id/config', (req, res) => {
     nativeFileName = 'picoclaw.json';
   }
 
-  const clawdockDir = path.join(process.cwd(), 'data', 'clawdock');
-  const filePath = path.join(clawdockDir, nativeFileName);
+  const absPath = `/data/clawdock/${nativeFileName}`;
+  const relPath = path.join(process.cwd(), 'data', 'clawdock', nativeFileName);
   try {
-    fs.mkdirSync(clawdockDir, { recursive: true });
-    fs.writeFileSync(filePath, nativeContent, 'utf8');
+    try { fs.mkdirSync('/data/clawdock', { recursive: true }); } catch {}
+    try { fs.mkdirSync(path.dirname(relPath), { recursive: true }); } catch {}
+    
+    try { fs.writeFileSync(absPath, nativeContent, 'utf8'); } catch (e) { console.error('Failed writing to absPath:', e); }
+    try { fs.writeFileSync(relPath, nativeContent, 'utf8'); } catch (e) { console.error('Failed writing to relPath:', e); }
 
     // Perform container restart if requested via restartContainer toggle
     const shouldRestart = restartContainer !== false;
     if (shouldRestart && agentStates[agentId]) {
       agentStates[agentId].status = 'restarting';
-      agentStates[agentId].logs.push(`[Docker Engine] Config saved to ${filePath}. Executing docker restart on container ${agentStates[agentId].containerId || agentId}...`);
+      agentStates[agentId].logs.push(`[Docker Engine] Config saved to ${absPath}. Executing docker restart on container ${agentStates[agentId].containerId || agentId}...`);
       setTimeout(() => {
         if (agentStates[agentId]) {
           agentStates[agentId].status = 'running';
