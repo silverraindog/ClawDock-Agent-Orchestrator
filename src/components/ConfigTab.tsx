@@ -72,15 +72,10 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
             format: data.nativeFormat,
             content: data.nativeContent
           });
+          setRawText(data.nativeContent);
         }
-        if (data.configSchema && data.configSchema.moa) {
-          onChangeConfig({
-            ...config,
-            moa: {
-              ...(config.moa || { enabled: true, proposerModels: [], aggregatorModel: 'claude-3-7-sonnet', rounds: 2, temperatureSpread: 0.3, consensusThreshold: 0.85 }),
-              ...data.configSchema.moa
-            }
-          });
+        if (data.configSchema) {
+          onChangeConfig(data.configSchema);
         }
       }
     } catch (e) {

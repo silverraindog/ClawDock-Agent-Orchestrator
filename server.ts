@@ -180,6 +180,7 @@ security:
   let nativeContent = defaultContent;
 
   try {
+    fs.mkdirSync(path.join(process.cwd(), 'data', 'sqlite'), { recursive: true });
     if (fs.existsSync(filePath)) {
       nativeContent = fs.readFileSync(filePath, 'utf8');
     } else {
@@ -188,6 +189,53 @@ security:
     }
   } catch (err) {
     console.error(`Error reading config file for ${agentId}:`, err);
+  }
+
+  // Parse native content into structured configSchema for frontend tabs
+  let parsedModelProvider = 'anthropic';
+  let parsedModelName = 'claude-3-7-sonnet';
+  let parsedTemperature = 0.2;
+  let parsedSandboxMode = 'docker_isolated';
+  let parsedMemoryBackend = 'everos';
+  let moaEnabled = agentId === 'hermes-agent';
+
+  try {
+    if (nativeFormat === 'json') {
+      const parsedJson = JSON.parse(nativeContent);
+      if (parsedJson.model?.provider) parsedModelProvider = parsedJson.model.provider;
+      if (parsedJson.model?.model) parsedModelName = parsedJson.model.model;
+      if (parsedJson.model?.temperature !== undefined) parsedTemperature = Number(parsedJson.model.temperature);
+      if (parsedJson.security?.sandbox_mode) parsedSandboxMode = parsedJson.security.sandbox_mode;
+    } else if (nativeFormat === 'toml') {
+      if (nativeContent.includes('provider =')) {
+        const match = nativeContent.match(/provider\s*=\s*"([^"]+)"/);
+        if (match) parsedModelProvider = match[1];
+      }
+      if (nativeContent.includes('model =')) {
+        const match = nativeContent.match(/model\s*=\s*"([^"]+)"/);
+        if (match) parsedModelName = match[1];
+      }
+      if (nativeContent.includes('temperature =')) {
+        const match = nativeContent.match(/temperature\s*=\s*([0-9.]+)/);
+        if (match) parsedTemperature = Number(match[1]);
+      }
+    } else {
+      // yaml
+      if (nativeContent.includes('provider:')) {
+        const match = nativeContent.match(/provider:\s*"([^"]+)"|provider:\s*([^\s]+)/);
+        if (match) parsedModelProvider = match[1] || match[2];
+      }
+      if (nativeContent.includes('model:')) {
+        const match = nativeContent.match(/model:\s*"([^"]+)"|model:\s*([^\s]+)/);
+        if (match) parsedModelName = match[1] || match[2];
+      }
+      if (nativeContent.includes('temperature:')) {
+        const match = nativeContent.match(/temperature:\s*([0-9.]+)/);
+        if (match) parsedTemperature = Number(match[1]);
+      }
+    }
+  } catch (e) {
+    console.error('Error parsing native content for configSchema:', e);
   }
 
   res.json({
@@ -202,19 +250,65 @@ security:
     configSchema: {
       agentId,
       version: '1.0.0',
+      model: {
+        provider: parsedModelProvider as any,
+        model: parsedModelName,
+        apiKey: '',
+        temperature: parsedTemperature,
+        reasoningEffort: 'high',
+        maxTokens: 4096,
+        contextWindow: 128000,
+        topP: 0.95
+      },
+      channels: {
+        telegram: { enabled: true, botToken: 'env:TELEGRAM_BOT_TOKEN', allowedUsers: '@developer', mode: 'polling' },
+        discord: { enabled: false, botToken: '', clientId: '', guildIds: '' },
+        slack: { enabled: false, botToken: '', appToken: '', signingSecret: '', socketMode: true },
+        whatsapp: { enabled: false, sessionId: '', webhookUrl: '' },
+        matrix: { enabled: false, homeserver: '', accessToken: '', roomIds: '' },
+        webhook: { enabled: true, port: 8080, authToken: 'secure_bearer_token', corsOrigin: '*' }
+      },
+      system: {
+        preset: 'engineer',
+        systemPrompt: `You are ${agentId}, an advanced autonomous AI agent orchestrator running in container volume mount.`,
+        agentName: agentId,
+        personaName: 'Autonomous Agent',
+        language: 'en',
+        autoFormatCode: true
+      },
+      security: {
+        sandboxMode: parsedSandboxMode as any,
+        allowedDirectories: ['/workspace', '/data'],
+        blockNetworkAccess: false,
+        maxExecutionTimeSec: 300,
+        requireApprovalForCommands: false,
+        securityProfileFile: 'default.yaml'
+      },
+      storage: {
+        memoryBackend: parsedMemoryBackend as any,
+        dbPath: `./data/sqlite/${agentId}_memory.db`,
+        autoSummarizeInterval: 30,
+        maxHistoryTurns: 100,
+        vectorDbUrl: 'http://everos:8080'
+      },
       moa: {
-        enabled: agentId === 'hermes-agent',
+        enabled: moaEnabled,
         proposerModels: ['claude-3-7-sonnet', 'deepseek-r1', 'gpt-4o'],
-        aggregatorModel: 'claude-3-7-sonnet',
+        aggregatorModel: parsedModelName,
         rounds: 2,
         temperatureSpread: 0.3,
         consensusThreshold: 0.85
+      },
+      customEnv: {
+        CONTAINER_MOUNT_DIR: `/workspace/${agentId}`,
+        LOG_LEVEL: 'info'
       }
     }
   });
 });
 
-// Save / update native config file for agent container
+
+// Save / update native config file for agent container and restart container
 app.put('/api/agents/:id/config', (req, res) => {
   const agentId = req.params.id;
   const { nativeContent } = req.body;
@@ -240,11 +334,26 @@ app.put('/api/agents/:id/config', (req, res) => {
   try {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, nativeContent, 'utf8');
+
+    // Restart container simulation & telemetry logging
+    if (agentStates[agentId]) {
+      agentStates[agentId].status = 'restarting';
+      agentStates[agentId].logs.push(`[Docker Engine] Config file ${nativeFileName} updated. Restarting container ${agentStates[agentId].containerId || agentId}...`);
+      setTimeout(() => {
+        if (agentStates[agentId]) {
+          agentStates[agentId].status = 'running';
+          agentStates[agentId].logs.push(`[Docker Engine] Container successfully restarted and reloaded ${nativeFileName}.`);
+          savePersistentState();
+        }
+      }, 1200);
+    }
+    savePersistentState();
+
     res.json({
       success: true,
       agentId,
       filePath: `data/${subDir}/${nativeFileName}`,
-      message: 'Configuration successfully saved to container mount path.'
+      message: `Configuration saved and container ${agentId} restarted successfully.`
     });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
@@ -1044,15 +1153,26 @@ app.post('/api/updates/apply', (req, res) => {
   if (found) {
     found.currentVersion = targetVersion || found.latestVersion;
     found.status = 'up_to_date';
-    if (found.category === 'agent' && agentStates[found.targetId]) {
-      agentStates[found.targetId].logs.push(`[Update Engine] Applied update to ${found.currentVersion}. Container restarted.`);
+    
+    const targetAgentId = found.targetId || 'hermes-agent';
+    if (agentStates[targetAgentId]) {
+      agentStates[targetAgentId].status = 'restarting';
+      agentStates[targetAgentId].logs.push(`[Update Engine] Applied update ${found.name} (${found.currentVersion}). Restarting container...`);
+      setTimeout(() => {
+        if (agentStates[targetAgentId]) {
+          agentStates[targetAgentId].status = 'running';
+          agentStates[targetAgentId].logs.push(`[Docker Engine] Container successfully restarted with new update.`);
+          savePersistentState();
+        }
+      }, 1500);
     }
+    savePersistentState();
   }
   res.json({
     success: true,
     id,
     version: targetVersion,
-    message: `Successfully applied update to ${targetVersion || 'latest'}`
+    message: `Successfully applied update and restarted container runtime.`
   });
 });
 
