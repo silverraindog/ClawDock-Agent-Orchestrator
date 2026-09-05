@@ -30,6 +30,7 @@ interface DockerTabProps {
   onInstallAgent: (agentId: AgentId) => void;
   onRefreshDetect: () => void;
   onOpenDiscovery: () => void;
+  onAddToast: (type: 'success' | 'error' | 'info', title: string, description?: string) => void;
 }
 
 export const DockerTab: React.FC<DockerTabProps> = ({
@@ -41,12 +42,31 @@ export const DockerTab: React.FC<DockerTabProps> = ({
   onStopAgent,
   onInstallAgent,
   onRefreshDetect,
-  onOpenDiscovery
+  onOpenDiscovery,
+  onAddToast
 }) => {
   const [copiedCompose, setCopiedCompose] = useState(false);
   const [logFilter, setLogFilter] = useState('');
+  const [isCheckingHealth, setIsCheckingHealth] = useState(false);
 
   const currentAgent = agents.find(a => a.id === selectedAgentId) || agents[0];
+
+  const handleHealthCheck = async () => {
+    setIsCheckingHealth(true);
+    try {
+      const res = await fetch('/api/health');
+      const data = await res.json();
+      if (res.ok && data.status === 'ok') {
+        onAddToast('success', 'Backend Healthy', `API responding correctly (Uptime: ${Math.round(data.uptime)}s)`);
+      } else {
+        onAddToast('error', 'Health Check Failed', 'Backend responded with non-OK status');
+      }
+    } catch (e: any) {
+      onAddToast('error', 'Health Check Failed', `Could not reach backend /api/health: ${e.message}`);
+    } finally {
+      setIsCheckingHealth(false);
+    }
+  };
 
   const dockerComposeSnippet = `version: '3.8'
 
@@ -161,6 +181,15 @@ networks:
           </div>
 
           <div className="flex items-center gap-2">
+            <button
+              id="docker-tab-health-btn"
+              onClick={handleHealthCheck}
+              disabled={isCheckingHealth}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 text-xs font-semibold transition-colors disabled:opacity-50"
+            >
+              <Activity className={`w-3.5 h-3.5 text-emerald-400 ${isCheckingHealth ? 'animate-spin' : ''}`} />
+              {isCheckingHealth ? 'Checking...' : 'Health Check'}
+            </button>
             <button
               id="docker-tab-discovery-btn"
               onClick={onOpenDiscovery}

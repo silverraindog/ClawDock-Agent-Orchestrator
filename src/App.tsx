@@ -43,10 +43,11 @@ import { ConsoleTab } from './components/ConsoleTab';
 import { ExportTab } from './components/ExportTab';
 import { UpdatesTab } from './components/UpdatesTab';
 import { EverOSTab } from './components/EverOSTab';
+import { DiagnosticsTab } from './components/DiagnosticsTab';
 import { ToastContainer, ToastMessage } from './components/Toast';
 import { ContainerDiscoveryModal } from './components/ContainerDiscoveryModal';
 
-type MainTab = 'dashboard' | 'config' | 'everos' | 'skills' | 'mcp' | 'docker' | 'console' | 'export' | 'updates';
+type MainTab = 'dashboard' | 'config' | 'everos' | 'skills' | 'mcp' | 'docker' | 'console' | 'export' | 'updates' | 'diagnostics';
 
 export default function App() {
   const [agents, setAgents] = useState<AgentInfo[]>(INITIAL_AGENTS);
@@ -149,6 +150,19 @@ export default function App() {
   // Helper function: triggers docker exec command via backend to read specific config file path and inject into configs state
   const fetchAndInjectConfig = async (agentId: AgentId) => {
     try {
+      addToast('info', 'Verifying Connectivity', `Pinging backend health & checking container connectivity for ${agentId}...`);
+      const healthRes = await fetch('/api/health');
+      const healthData = await healthRes.json();
+      if (!healthRes.ok || healthData.status !== 'ok') {
+        throw new Error('Backend health check returned non-OK status');
+      }
+
+      const detectRes = await fetch(`/api/agents/${agentId}/detect`);
+      const detectData = await detectRes.json();
+      if (detectData.status !== 'running' && detectData.status !== 'detected_local') {
+        addToast('info', 'Container Offline', `Container for ${agentId} is offline or stopped. Using mounted configuration file.`);
+      }
+
       const res = await fetch(`/api/agents/${agentId}/docker-exec-config`, { method: 'POST' });
       const data = await res.json();
       if (data && data.success && data.configSchema) {
@@ -157,10 +171,12 @@ export default function App() {
           [agentId]: data.configSchema
         }));
         addToast('success', 'Docker Exec Config Injected', `Read and injected container native config for ${agentId}, replacing default values.`);
+      } else {
+        throw new Error(data.error || 'Config injection returned unsuccessful');
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error("Failed to fetch and inject config via docker exec:", e);
-      addToast('error', 'Injection Failed', `Could not read container config for ${agentId}`);
+      addToast('error', 'Injection Failed', `Could not read container config for ${agentId}: ${e.message || 'Network error'}`);
     }
   };
 
@@ -614,7 +630,8 @@ export default function App() {
     },
     { id: 'docker', label: 'Docker Engine', icon: Container },
     { id: 'console', label: 'Console', icon: Terminal },
-    { id: 'export', label: 'Codebase', icon: Code2 }
+    { id: 'export', label: 'Codebase', icon: Code2 },
+    { id: 'diagnostics', label: 'API Diagnostics', icon: Activity }
   ];
 
   return (
@@ -796,7 +813,12 @@ export default function App() {
               onInstallAgent={handleInstallAgent}
               onRefreshDetect={handleDetectAgents}
               onOpenDiscovery={() => setIsDiscoveryOpen(true)}
+              onAddToast={addToast}
             />
+          )}
+
+          {currentTab === 'diagnostics' && (
+            <DiagnosticsTab />
           )}
 
           {currentTab === 'console' && (

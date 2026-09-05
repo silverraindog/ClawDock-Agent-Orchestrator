@@ -239,6 +239,26 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
         </div>
       </div>
 
+      {/* Loading Skeleton during live config fetch */}
+      {isFetchingLive && (
+        <div className="p-8 rounded-2xl border border-indigo-500/30 bg-slate-900/90 backdrop-blur-sm space-y-4 animate-pulse">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg bg-indigo-500/20 flex items-center justify-center">
+              <RefreshCw className="w-4 h-4 text-indigo-400 animate-spin" />
+            </div>
+            <div>
+              <div className="h-4 w-48 bg-slate-800 rounded mb-1.5" />
+              <div className="h-3 w-32 bg-slate-800/60 rounded" />
+            </div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-4">
+            <div className="h-24 bg-slate-950/60 rounded-xl border border-slate-800" />
+            <div className="h-24 bg-slate-950/60 rounded-xl border border-slate-800" />
+            <div className="h-24 bg-slate-950/60 rounded-xl border border-slate-800" />
+          </div>
+        </div>
+      )}
+
       {/* Restart Container Confirmation Modal */}
       {isRestartModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm animate-fadeIn">
