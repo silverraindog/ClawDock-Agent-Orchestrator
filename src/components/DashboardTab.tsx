@@ -14,7 +14,8 @@ import {
   Boxes,
   Play,
   Search,
-  Sparkles
+  Sparkles,
+  Brain
 } from 'lucide-react';
 import { AgentFullConfig, AgentInfo, DockerSystemInfo, SkillItem, MCPServerConfig } from '../types';
 
@@ -333,14 +334,27 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
               </span>
             </div>
 
-            <div className="flex items-center justify-between p-3 rounded-xl bg-slate-950 border border-slate-800">
+            <div 
+              onClick={() => onNavigateTab('everos')}
+              className="flex items-center justify-between p-3 rounded-xl bg-slate-950 border border-slate-800 hover:border-indigo-500/40 cursor-pointer transition-colors"
+            >
               <div>
-                <div className="text-xs font-semibold text-white">Episodic Memory Database</div>
+                <div className="text-xs font-semibold text-white flex items-center gap-1.5">
+                  <Brain className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>Memory Backend</span>
+                  {config.storage.memoryBackend === 'everos' && (
+                    <span className="text-[10px] text-emerald-400 font-mono">(EverOS Hybrid mRAG)</span>
+                  )}
+                </div>
                 <div className="text-[11px] text-slate-500 font-mono">
                   {config.storage.dbPath}
                 </div>
               </div>
-              <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold uppercase bg-slate-800 text-slate-300 border border-slate-700">
+              <span className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold uppercase border ${
+                config.storage.memoryBackend === 'everos'
+                  ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30'
+                  : 'bg-slate-800 text-slate-300 border-slate-700'
+              }`}>
                 {config.storage.memoryBackend}
               </span>
             </div>

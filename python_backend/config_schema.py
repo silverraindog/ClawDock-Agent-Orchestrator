@@ -85,11 +85,11 @@ class SecurityConfigSchema(BaseModel):
     security_profile_file: str = '.security.yml'
 
 class StorageConfigSchema(BaseModel):
-    memory_backend: Literal['sqlite', 'chroma', 'redis', 'markdown'] = 'sqlite'
-    db_path: str = '/data/agent_memory.db'
+    memory_backend: Literal['everos', 'sqlite', 'chroma', 'redis', 'markdown'] = 'everos'
+    db_path: str = '/data/everos/memories'
     auto_summarize_interval: int = 25
     max_history_turns: int = 100
-    vector_db_url: Optional[str] = None
+    vector_db_url: Optional[str] = 'http://everos:8080'
 
 class AgentFullConfigSchema(BaseModel):
     agent_id: Literal['hermes-agent', 'zeroclaw', 'openclaw', 'picoclaw']

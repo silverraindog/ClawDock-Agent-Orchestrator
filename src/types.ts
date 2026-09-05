@@ -38,7 +38,7 @@ export type ReasoningEffort = 'none' | 'low' | 'medium' | 'high' | 'extended';
 
 export type SandboxMode = 'docker_isolated' | 'host_restricted' | 'read_only';
 
-export type MemoryBackend = 'sqlite' | 'chroma' | 'redis' | 'markdown';
+export type MemoryBackend = 'everos' | 'sqlite' | 'chroma' | 'redis' | 'markdown';
 
 export interface ModelConfig {
   provider: LLMProvider;
@@ -244,4 +244,75 @@ export interface SystemUpdateItem {
   installCommand?: string;
   autoUpdateSupported?: boolean;
 }
+
+// ==========================================
+// EverOS Memory Operating System (EverMind AI)
+// ==========================================
+
+export type EverOSMemoryType = 'fact' | 'preference' | 'case' | 'skill' | 'code_snippet' | 'conversation';
+
+export interface EverOSMemoryItem {
+  id: string;
+  title: string;
+  content: string; // Markdown content
+  type: EverOSMemoryType;
+  sourceBot: AgentId | 'user' | 'system';
+  targetBots: (AgentId | 'all')[];
+  tags: string[];
+  relevanceScore?: number;
+  bm25Score?: number;
+  vectorScore?: number;
+  filePath: string;
+  createdAt: string;
+  lastAccessed: string;
+  accessCount: number;
+}
+
+export interface EverOSSkillItem {
+  id: string;
+  name: string;
+  description: string;
+  pattern: string;
+  distilledFromCases: string[];
+  confidence: number;
+  timesApplied: number;
+  sourceBot: AgentId;
+  createdAt: string;
+  executablePrompt: string;
+}
+
+export interface EverOSBotSyncConfig {
+  enabled: boolean;
+  namespace: 'global' | 'bot_isolated';
+  autoRecordCases: boolean;
+  mragInjection: boolean;
+  maxContextTokens: number;
+}
+
+export interface EverOSConfig {
+  enabled: boolean;
+  serverUrl: string;
+  apiKey?: string;
+  storagePath: string;
+  storageEngine: 'markdown_sqlite_lancedb';
+  hybridMragAlpha: number; // 0.0 = BM25 keyword, 1.0 = LanceDB dense vector
+  autoConsolidateCases: boolean;
+  consolidationIntervalMin: number;
+  sharedNamespace: boolean;
+  botSync: Record<AgentId, EverOSBotSyncConfig>;
+}
+
+export interface EverOSStats {
+  status: 'healthy' | 'syncing' | 'offline';
+  totalMemories: number;
+  totalCases: number;
+  consolidatedSkills: number;
+  vectorEmbeddings: number;
+  markdownFiles: number;
+  hybridSearchLatencyMs: number;
+  diskUsageMb: number;
+  activeBots: number;
+  lastSyncTime: string;
+}
+
 

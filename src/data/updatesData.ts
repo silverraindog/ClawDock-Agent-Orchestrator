@@ -184,8 +184,51 @@ export const INITIAL_UPDATES: SystemUpdateItem[] = [
   },
 
   // ==========================================
-  // MCP SERVERS
+  // MCP SERVERS & PERSISTENT MEMORY RUNTIMES
   // ==========================================
+  {
+    id: 'update-everos-runtime',
+    name: 'EverOS Memory Runtime',
+    category: 'mcp',
+    targetId: 'mcp-everos',
+    currentVersion: 'v0.9.2',
+    latestVersion: 'v1.1.0',
+    status: 'update_available',
+    lastChecked: '3 mins ago',
+    packageOrImage: 'evermind/everos-server:latest',
+    description: 'EverMind AI persistent memory operating system with Markdown-native storage, hybrid mRAG, and self-evolving case-to-skill consolidation across all bots.',
+    installCommand: 'docker pull evermind/everos-server:v1.1.0 && docker compose restart everos',
+    breakingChanges: false,
+    autoUpdateSupported: true,
+    changelogSummary: [
+      'LanceDB v0.14 embedded vector engine upgrade for sub-300ms p95 search',
+      'Autonomous Case-to-Skill background consolidation pipeline',
+      'Dual BM25 + dense embedding hybrid alpha weighting slider',
+      'Cross-bot shared memory graph with zero external Redis/Postgres dependencies'
+    ],
+    availableVersions: [
+      {
+        version: 'v1.1.0',
+        releaseDate: 'Sep 03, 2026',
+        releaseNotes: 'Recommended: LanceDB v0.14 vector engine, auto case-to-skill distillation, sub-300ms latency.',
+        isLatest: true,
+        channel: 'stable'
+      },
+      {
+        version: 'v1.0.4',
+        releaseDate: 'Aug 21, 2026',
+        releaseNotes: 'Markdown file watcher real-time synchronization and MCP SSE transport support.',
+        channel: 'stable'
+      },
+      {
+        version: 'v0.9.2',
+        releaseDate: 'Jul 14, 2026',
+        releaseNotes: 'Currently running container image on port 8080.',
+        isCurrent: true,
+        channel: 'stable'
+      }
+    ]
+  },
   {
     id: 'update-mcp-filesystem',
     name: 'Filesystem MCP Server',

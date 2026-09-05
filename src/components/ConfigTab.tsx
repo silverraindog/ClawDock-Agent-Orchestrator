@@ -946,6 +946,7 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
                     })}
                     className="w-full appearance-none px-3.5 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-slate-100 text-xs focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-colors pr-10"
                   >
+                    <option value="everos">EverOS Memory Operating System (EverMind AI - Markdown + LanceDB mRAG)</option>
                     <option value="sqlite">SQLite Local Database (Embedded, Fast)</option>
                     <option value="chroma">Chroma Vector DB (Semantic Embeddings)</option>
                     <option value="redis">Redis In-Memory Key-Value Store</option>
@@ -1012,6 +1013,54 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
                   className="w-full px-3.5 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-slate-100 text-xs font-mono"
                 />
               </div>
+
+              {/* EverOS Dedicated Integration Block */}
+              {config.storage.memoryBackend === 'everos' && (
+                <div className="md:col-span-2 p-4 rounded-xl bg-indigo-950/20 border border-indigo-500/30 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Database className="w-4 h-4 text-indigo-400" />
+                      <span className="text-xs font-bold text-white">EverOS Memory Operating System Link</span>
+                      <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                        evermind.ai/everos
+                      </span>
+                    </div>
+                    <span className="text-[11px] text-emerald-400 flex items-center gap-1 font-mono">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                      Connected (sub-350ms mRAG)
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-300">
+                    Provides portable Markdown memories, SQLite cataloging, LanceDB hybrid vector retrieval, and autonomous Case-to-Skill distillation across Hermes, ZeroClaw, OpenClaw, and PicoClaw.
+                  </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                    <div>
+                      <label className="text-[11px] font-medium text-slate-400">EverOS Daemon Endpoint</label>
+                      <input
+                        type="text"
+                        value={config.storage.vectorDbUrl || 'http://everos:8080'}
+                        onChange={(e) => onChangeConfig({
+                          ...config,
+                          storage: { ...config.storage, vectorDbUrl: e.target.value }
+                        })}
+                        className="w-full px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-xs text-indigo-300 font-mono mt-1"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[11px] font-medium text-slate-400">Persistent Markdown Directory</label>
+                      <input
+                        type="text"
+                        value={config.storage.dbPath || '/data/everos/memories'}
+                        onChange={(e) => onChangeConfig({
+                          ...config,
+                          storage: { ...config.storage, dbPath: e.target.value }
+                        })}
+                        className="w-full px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-300 font-mono mt-1"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}

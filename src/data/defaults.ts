@@ -152,11 +152,11 @@ export const DEFAULT_CONFIGS: Record<AgentId, AgentFullConfig> = {
       securityProfileFile: '.security.yml',
     },
     storage: {
-      memoryBackend: 'sqlite',
-      dbPath: '/data/hermes_memory.db',
+      memoryBackend: 'everos',
+      dbPath: '/data/everos/memories',
       autoSummarizeInterval: 25,
       maxHistoryTurns: 100,
-      vectorDbUrl: 'http://localhost:8000',
+      vectorDbUrl: 'http://everos:8080',
     },
     customEnv: {
       HERMES_LOG_LEVEL: 'INFO',
@@ -232,10 +232,11 @@ export const DEFAULT_CONFIGS: Record<AgentId, AgentFullConfig> = {
       securityProfileFile: '.security.yml',
     },
     storage: {
-      memoryBackend: 'markdown',
-      dbPath: '/var/zeroclaw/memory.md',
+      memoryBackend: 'everos',
+      dbPath: '/data/everos/memories/zeroclaw',
       autoSummarizeInterval: 50,
       maxHistoryTurns: 40,
+      vectorDbUrl: 'http://everos:8080',
     },
     customEnv: {
       RUST_LOG: 'info',
@@ -310,14 +311,17 @@ export const DEFAULT_CONFIGS: Record<AgentId, AgentFullConfig> = {
       securityProfileFile: '.security.yml',
     },
     storage: {
-      memoryBackend: 'redis',
-      dbPath: 'redis://localhost:6379/0',
+      memoryBackend: 'everos',
+      dbPath: '/data/everos/memories/openclaw',
       autoSummarizeInterval: 30,
       maxHistoryTurns: 80,
+      vectorDbUrl: 'http://everos:8080',
     },
     customEnv: {
       NODE_ENV: 'production',
       OPENCLAW_ENABLE_PLUGINS: 'true',
+      OPENCLAW_PLUGIN_EVEROS: 'true',
+      EVEROS_ENDPOINT: 'http://everos:8080',
     },
   },
   'picoclaw': {
@@ -389,10 +393,11 @@ export const DEFAULT_CONFIGS: Record<AgentId, AgentFullConfig> = {
       securityProfileFile: '.security.yml',
     },
     storage: {
-      memoryBackend: 'sqlite',
-      dbPath: '/home/sipeed/.picoclaw/pico.db',
+      memoryBackend: 'everos',
+      dbPath: '/data/everos/memories/picoclaw',
       autoSummarizeInterval: 20,
       maxHistoryTurns: 30,
+      vectorDbUrl: 'http://everos:8080',
     },
     customEnv: {
       PICOCLAW_MODE: 'gateway',
@@ -627,6 +632,32 @@ Designed for Sipeed hardware boards and local home automation setups.
 ];
 
 export const INITIAL_MCP_SERVERS: MCPServerConfig[] = [
+  {
+    id: 'mcp-everos',
+    name: 'EverOS Memory Runtime MCP Server',
+    description: 'EverMind AI persistent memory operating system: Markdown-native storage, SQLite + LanceDB hybrid mRAG, and self-evolving case-to-skill consolidation for all agents.',
+    transport: 'sse',
+    command: 'everos',
+    args: ['mcp', '--port', '8080', '--storage', '/data/everos'],
+    env: {
+      EVEROS_URL: 'http://everos:8080',
+      EVEROS_STORAGE_PATH: '/data/everos',
+      EVEROS_STORAGE_ENGINE: 'markdown_sqlite_lancedb',
+      EVEROS_HYBRID_MRAG_ALPHA: '0.6'
+    },
+    url: 'http://everos:8080/sse',
+    enabled: true,
+    category: 'Memory',
+    status: 'connected',
+    toolsProvided: [
+      'everos_store_memory',
+      'everos_retrieve_mrag',
+      'everos_record_trajectory_case',
+      'everos_consolidate_skills',
+      'everos_sync_cross_bot_context',
+      'everos_inspect_memory_bank'
+    ]
+  },
   {
     id: 'mcp-filesystem',
     name: 'Filesystem MCP Server',

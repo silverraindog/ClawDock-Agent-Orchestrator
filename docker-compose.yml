@@ -42,6 +42,37 @@ services:
       retries: 3
 
   # ----------------------------------------------------------------------------
+  # EverOS Persistent Memory Operating System (EverMind AI)
+  # Persistent Memory Layer across Hermes, ZeroClaw, OpenClaw, and PicoClaw
+  # ----------------------------------------------------------------------------
+  everos:
+    image: evermind/everos-server:latest
+    container_name: everos-memory-hub
+    restart: unless-stopped
+    ports:
+      - "8088:8080"
+    volumes:
+      # Persistent Markdown memories, SQLite catalog, and LanceDB vector indices
+      - ./data/everos:/data/everos
+      # Mount shared workspace for multimodal ingestion (documents, code, logs)
+      - ./workspace:/workspace:ro
+    environment:
+      - EVEROS_PORT=8080
+      - EVEROS_STORAGE_DIR=/data/everos
+      - EVEROS_DEFAULT_STORAGE=markdown_sqlite_lancedb
+      - EVEROS_HYBRID_MRAG_ALPHA=0.60
+      - EVEROS_CASE_CONSOLIDATION=true
+      - EVEROS_CONSOLIDATION_INTERVAL_MIN=30
+      - EVEROS_LOG_LEVEL=info
+    networks:
+      - claw-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+
+  # ----------------------------------------------------------------------------
   # Nous Research Hermes-Agent (Python 3.11 Runtime)
   # ----------------------------------------------------------------------------
   hermes-agent:
@@ -53,10 +84,16 @@ services:
     volumes:
       - ./workspace:/workspace
       - ./data/hermes:/data
+      - ./data/everos:/data/everos
     environment:
       - HERMES_PORT=8080
       - PYTHONUNBUFFERED=1
       - WORKSPACE_DIR=/workspace
+      - EVEROS_URL=http://everos:8080
+      - EVEROS_STORAGE_DIR=/data/everos
+      - HERMES_MEMORY_BACKEND=everos
+    depends_on:
+      - everos
     networks:
       - claw-network
 
@@ -72,10 +109,15 @@ services:
     volumes:
       - ./workspace:/var/zeroclaw/workspace
       - ./data/zeroclaw:/var/zeroclaw/data
+      - ./data/everos:/data/everos:ro
     environment:
       - RUST_LOG=info
       - ZEROCLAW_PORT=8081
       - ZEROCLAW_WORKSPACE=/var/zeroclaw/workspace
+      - ZEROCLAW_MEMORY_ENGINE=everos
+      - EVEROS_URL=http://everos:8080
+    depends_on:
+      - everos
     networks:
       - claw-network
 
@@ -95,6 +137,10 @@ services:
       - NODE_ENV=production
       - PORT=8082
       - OPENCLAW_WORKSPACE=/workspace
+      - OPENCLAW_PLUGIN_EVEROS=true
+      - EVEROS_ENDPOINT=http://everos:8080
+    depends_on:
+      - everos
     networks:
       - claw-network
 
@@ -113,6 +159,10 @@ services:
     environment:
       - PICOCLAW_PORT=8083
       - PICOCLAW_MODE=gateway
+      - PICOCLAW_MEMORY_BACKEND=everos
+      - EVEROS_URL=http://everos:8080
+    depends_on:
+      - everos
     networks:
       - claw-network
 

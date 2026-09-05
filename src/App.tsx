@@ -11,7 +11,8 @@ import {
   CheckCircle2, 
   AlertCircle,
   Layers,
-  ArrowUpCircle
+  ArrowUpCircle,
+  Brain
 } from 'lucide-react';
 import { 
   AgentId, 
@@ -41,10 +42,11 @@ import { DockerTab } from './components/DockerTab';
 import { ConsoleTab } from './components/ConsoleTab';
 import { ExportTab } from './components/ExportTab';
 import { UpdatesTab } from './components/UpdatesTab';
+import { EverOSTab } from './components/EverOSTab';
 import { ToastContainer, ToastMessage } from './components/Toast';
 import { ContainerDiscoveryModal } from './components/ContainerDiscoveryModal';
 
-type MainTab = 'dashboard' | 'config' | 'skills' | 'mcp' | 'docker' | 'console' | 'export' | 'updates';
+type MainTab = 'dashboard' | 'config' | 'everos' | 'skills' | 'mcp' | 'docker' | 'console' | 'export' | 'updates';
 
 export default function App() {
   const [agents, setAgents] = useState<AgentInfo[]>(INITIAL_AGENTS);
@@ -505,6 +507,11 @@ export default function App() {
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'config', label: 'Configuration', icon: Sliders },
     { 
+      id: 'everos', 
+      label: 'EverOS Memory', 
+      icon: Brain 
+    },
+    { 
       id: 'skills', 
       label: 'Skills Hub', 
       icon: Boxes, 
@@ -666,6 +673,15 @@ export default function App() {
               onSaveConfig={handleSaveConfig}
               onResetDefaults={handleResetDefaults}
               isSaving={isSavingConfig}
+            />
+          )}
+
+          {currentTab === 'everos' && (
+            <EverOSTab
+              onOpenAgentConfig={(agentId) => {
+                setSelectedAgentId(agentId);
+                setCurrentTab('config');
+              }}
             />
           )}
 

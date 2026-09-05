@@ -459,8 +459,353 @@ let systemUpdatesStore = [
     status: 'update_available',
     lastChecked: 'Just now',
     packageOrImage: 'picoclaw/picoclaw:latest'
+  },
+  {
+    id: 'update-everos-runtime',
+    name: 'EverOS Memory Runtime',
+    category: 'mcp',
+    targetId: 'mcp-everos',
+    currentVersion: 'v0.9.2',
+    latestVersion: 'v1.1.0',
+    status: 'update_available',
+    lastChecked: '3 mins ago',
+    packageOrImage: 'evermind/everos-server:latest'
   }
 ];
+
+// ==========================================
+// EverOS Persistent Memory Layer (EverMind AI)
+// ==========================================
+
+let everosMemoriesStore = [
+  {
+    id: 'mem-001',
+    title: 'ClawStack Network Topology & Docker Socket Permissions',
+    content: `# ClawStack Network Topology & Docker Socket Permissions\n\nAll agent containers reside inside the bridge network \`claw-network\`.\n- Hermes core listens on \`http://hermes-agent:8080\`\n- ZeroClaw Rust daemon runs on port 8081\n- OpenClaw gateway routes on port 8082\n- PicoClaw runs on port 8083\n- EverOS memory runtime daemon listens on \`http://everos:8080\`\n\n**Docker Socket Rule:**\nAlways verify \`/var/run/docker.sock\` volume mount has \`rw\` permissions. When running non-root users inside containers, add user to host \`docker\` group GID 999.`,
+    type: 'fact',
+    sourceBot: 'hermes-agent',
+    targetBots: ['all'],
+    tags: ['docker', 'networking', 'security', 'topology'],
+    relevanceScore: 0.96,
+    bm25Score: 0.94,
+    vectorScore: 0.98,
+    filePath: 'memories/infrastructure/docker-topology.md',
+    createdAt: '2026-09-02 14:20',
+    lastAccessed: 'Just now',
+    accessCount: 42
+  },
+  {
+    id: 'mem-002',
+    title: 'User Coding Preference: Modular TypeScript & Pydantic v2',
+    content: `# User Coding Conventions\n\n- **Frontend:** Strict TypeScript, Tailwind CSS utility styling, Lucide icons, no bloated external UI kits.\n- **Backend:** FastAPI with Pydantic v2 \`BaseModel\` validation and type annotations.\n- **Memory:** Use EverOS hybrid mRAG across all 4 bots rather than isolated ephemeral session state.`,
+    type: 'preference',
+    sourceBot: 'user',
+    targetBots: ['all'],
+    tags: ['preferences', 'typescript', 'fastapi', 'styleguide'],
+    relevanceScore: 0.93,
+    bm25Score: 0.91,
+    vectorScore: 0.95,
+    filePath: 'memories/preferences/user-styleguide.md',
+    createdAt: '2026-09-01 09:15',
+    lastAccessed: '12 mins ago',
+    accessCount: 89
+  },
+  {
+    id: 'mem-003',
+    title: 'Case 038: ZeroClaw Edge Memory Optimization Under 15MB',
+    content: `# Trajectory Case 038: ZeroClaw Memory Pruning\n\n**Problem:** ZeroClaw RSS usage bumped to 18MB after high-frequency MQTT payload streaming.\n**Action:** Replaced dynamic JSON deserialization allocations with pooled \`serde_json\` zero-copy byte buffers. Mounted EverOS client via local UNIX domain socket rather than heavy HTTP keep-alive pools.\n**Outcome:** Memory reduced to 12.4MB RSS, steady-state verified for 72 hours.`,
+    type: 'case',
+    sourceBot: 'zeroclaw',
+    targetBots: ['zeroclaw', 'picoclaw'],
+    tags: ['rust', 'memory-tuning', 'edge', 'trajectory'],
+    relevanceScore: 0.88,
+    bm25Score: 0.85,
+    vectorScore: 0.91,
+    filePath: 'memories/zeroclaw/cases/case_038_memory_tuning.md',
+    createdAt: '2026-09-03 16:40',
+    lastAccessed: '1 hour ago',
+    accessCount: 15
+  },
+  {
+    id: 'mem-004',
+    title: 'Case 041: OpenClaw Multi-Channel Webhook Rate-Limit Recovery',
+    content: `# Trajectory Case 041: Telegram & Discord Webhook Recovery\n\n**Context:** High bursts of messages triggered 429 Too Many Requests from Telegram Bot API.\n**Resolution:**\n1. Implemented token-bucket rate limiter (30 req/sec max).\n2. Diverted background conversational memory synthesis into EverOS offline batch consolidation queue.\n3. Added exponential backoff jitter in \`node-telegram-bot-api\` wrapper.`,
+    type: 'case',
+    sourceBot: 'openclaw',
+    targetBots: ['openclaw', 'hermes-agent'],
+    tags: ['telegram', 'webhooks', 'rate-limit', 'trajectory'],
+    relevanceScore: 0.89,
+    bm25Score: 0.87,
+    vectorScore: 0.92,
+    filePath: 'memories/openclaw/cases/case_041_ratelimits.md',
+    createdAt: '2026-09-03 19:10',
+    lastAccessed: '35 mins ago',
+    accessCount: 23
+  },
+  {
+    id: 'mem-005',
+    title: 'PicoClaw Sipeed RISC-V Cross-Compilation Flags',
+    content: `# PicoClaw RISC-V Build Instructions\n\nFor compiling PicoClaw Go engine targeting Sipeed LicheeRV / MaixCube:\n\`\`\`bash\nCGO_ENABLED=0 GOOS=linux GOARCH=riscv64 go build -ldflags="-s -w" -o picoclaw-edge main.go\n\`\`\`\nPersists telemetry and state to EverOS server over lightweight HTTP REST endpoint on port 8080.`,
+    type: 'code_snippet',
+    sourceBot: 'picoclaw',
+    targetBots: ['picoclaw', 'zeroclaw'],
+    tags: ['go', 'riscv', 'sipeed', 'embedded', 'cross-compile'],
+    relevanceScore: 0.84,
+    bm25Score: 0.81,
+    vectorScore: 0.87,
+    filePath: 'memories/picoclaw/snippets/riscv-build.md',
+    createdAt: '2026-09-02 22:05',
+    lastAccessed: '3 hours ago',
+    accessCount: 9
+  },
+  {
+    id: 'mem-006',
+    title: 'Consolidated Skill: Autonomous Docker Stack Rollback',
+    content: `# Autonomous Docker Stack Health Verification & Safe Rollback\n\nDistilled from 6 recurring troubleshooting cases across Hermes and OpenClaw.\n\n**Procedure:**\n1. Execute \`docker compose ps --filter "health=unhealthy"\`\n2. If healthcheck fails for >3 consecutive polls:\n   - Extract last 50 lines of container stderr.\n   - Revert image tag in \`docker-compose.yml\` to previous verified tag.\n   - Execute \`docker compose up -d <service>\`.\n3. Record rollback reason in EverOS \`memories/incidents/\`.`,
+    type: 'skill',
+    sourceBot: 'hermes-agent',
+    targetBots: ['all'],
+    tags: ['skill', 'docker', 'devops', 'self-healing'],
+    relevanceScore: 0.95,
+    bm25Score: 0.93,
+    vectorScore: 0.97,
+    filePath: 'skills/distilled/autonomous-docker-rollback.md',
+    createdAt: '2026-09-04 11:30',
+    lastAccessed: '18 mins ago',
+    accessCount: 31
+  }
+];
+
+let everosSkillsStore = [
+  {
+    id: 'skill-01',
+    name: 'Autonomous Docker Stack Rollback',
+    description: 'Diagnoses unhealthy containers, captures logs, and orchestrates zero-downtime rollback to last stable tag.',
+    pattern: 'Unhealthy healthcheck polling -> capture stderr -> rollback tag -> emit EverOS incident log',
+    distilledFromCases: ['case-012', 'case-019', 'case-027', 'case-033'],
+    confidence: 0.96,
+    timesApplied: 14,
+    sourceBot: 'hermes-agent',
+    createdAt: '2026-09-04',
+    executablePrompt: 'When container healthcheck status transitions to unhealthy for 3 intervals, trigger safe rollback protocol.'
+  },
+  {
+    id: 'skill-02',
+    name: 'Multi-Channel Telegram/Discord Rate Limiter Jitter',
+    description: 'Intercepts burst traffic across Telegram and Discord gateways and schedules exponential jitter.',
+    pattern: '429 detection -> token bucket throttling -> decouple EverOS offline consolidation -> retry with jitter',
+    distilledFromCases: ['case-039', 'case-041'],
+    confidence: 0.92,
+    timesApplied: 28,
+    sourceBot: 'openclaw',
+    createdAt: '2026-09-03',
+    executablePrompt: 'Apply token-bucket smoothing when webhook requests exceed 25 events per second.'
+  },
+  {
+    id: 'skill-03',
+    name: 'Rust Edge Memory Buffer Recycling',
+    description: 'Reclaims dynamic allocations on ZeroClaw to guarantee steady sub-15MB RAM operation on edge boards.',
+    pattern: 'Buffer reuse -> zero-copy serde deserialization -> UNIX socket EverOS transmission',
+    distilledFromCases: ['case-024', 'case-038'],
+    confidence: 0.94,
+    timesApplied: 9,
+    sourceBot: 'zeroclaw',
+    createdAt: '2026-09-03',
+    executablePrompt: 'Enforce zero-copy deserialization for high-throughput sensor telemetry pipelines.'
+  },
+  {
+    id: 'skill-04',
+    name: 'Cross-Bot Context Synchronization Protocol',
+    description: 'Automatically synchronizes problem-solving breakthroughs made by Hermes to ZeroClaw and OpenClaw via EverOS mRAG.',
+    pattern: 'Hermes marks solution verified -> EverOS generates LanceDB vector embedding -> broadcasts sync signal to active bots',
+    distilledFromCases: ['case-015', 'case-022', 'case-044'],
+    confidence: 0.98,
+    timesApplied: 62,
+    sourceBot: 'hermes-agent',
+    createdAt: '2026-09-04',
+    executablePrompt: 'Broadcast newly verified architectural patterns across all active bots in claw-network.'
+  }
+];
+
+let everosConfigStore = {
+  enabled: true,
+  serverUrl: 'http://everos:8080',
+  storagePath: '/data/everos',
+  storageEngine: 'markdown_sqlite_lancedb',
+  hybridMragAlpha: 0.60,
+  autoConsolidateCases: true,
+  consolidationIntervalMin: 30,
+  sharedNamespace: true,
+  botSync: {
+    'hermes-agent': { enabled: true, namespace: 'global', autoRecordCases: true, mragInjection: true, maxContextTokens: 2048 },
+    'zeroclaw': { enabled: true, namespace: 'global', autoRecordCases: true, mragInjection: true, maxContextTokens: 1024 },
+    'openclaw': { enabled: true, namespace: 'global', autoRecordCases: true, mragInjection: true, maxContextTokens: 2048 },
+    'picoclaw': { enabled: true, namespace: 'global', autoRecordCases: true, mragInjection: true, maxContextTokens: 512 }
+  }
+};
+
+// EverOS Health & Stats
+app.get('/api/everos/status', (req, res) => {
+  res.json({
+    status: 'healthy',
+    totalMemories: everosMemoriesStore.length,
+    totalCases: 47,
+    consolidatedSkills: everosSkillsStore.length,
+    vectorEmbeddings: everosMemoriesStore.length * 6 + 148,
+    markdownFiles: everosMemoriesStore.length + 30,
+    hybridSearchLatencyMs: 312,
+    diskUsageMb: 42.8,
+    activeBots: 4,
+    lastSyncTime: 'Just now',
+    storageEngine: 'Markdown-Native + SQLite BM25 + LanceDB Vectors',
+    serverUrl: everosConfigStore.serverUrl
+  });
+});
+
+// EverOS Config (GET & POST)
+app.get('/api/everos/config', (req, res) => {
+  res.json(everosConfigStore);
+});
+
+app.post('/api/everos/config', (req, res) => {
+  everosConfigStore = { ...everosConfigStore, ...req.body };
+  res.json({ success: true, config: everosConfigStore });
+});
+
+// EverOS Memories List
+app.get('/api/everos/memories', (req, res) => {
+  const { bot, type, search } = req.query as Record<string, string>;
+  let result = [...everosMemoriesStore];
+  if (bot && bot !== 'all') {
+    result = result.filter(m => m.sourceBot === bot || m.targetBots.includes(bot as any) || m.targetBots.includes('all'));
+  }
+  if (type && type !== 'all') {
+    result = result.filter(m => m.type === type);
+  }
+  if (search) {
+    const q = search.toLowerCase();
+    result = result.filter(m => m.title.toLowerCase().includes(q) || m.content.toLowerCase().includes(q) || m.tags.some(t => t.toLowerCase().includes(q)));
+  }
+  res.json({ memories: result, count: result.length });
+});
+
+// Create EverOS Memory
+app.post('/api/everos/memories', (req, res) => {
+  const { title, content, type, sourceBot, targetBots, tags } = req.body;
+  const newMemory = {
+    id: 'mem-' + Date.now().toString(36),
+    title: title || 'Untitled Memory',
+    content: content || '',
+    type: type || 'fact',
+    sourceBot: sourceBot || 'user',
+    targetBots: targetBots || ['all'],
+    tags: tags || ['custom'],
+    relevanceScore: 0.95,
+    bm25Score: 0.93,
+    vectorScore: 0.96,
+    filePath: `memories/${sourceBot || 'general'}/${(title || 'item').toLowerCase().replace(/[^a-z0-9]/g, '_')}.md`,
+    createdAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    lastAccessed: 'Just now',
+    accessCount: 1
+  };
+  everosMemoriesStore.unshift(newMemory);
+  res.json({ success: true, memory: newMemory });
+});
+
+// Delete EverOS Memory
+app.delete('/api/everos/memories/:id', (req, res) => {
+  const { id } = req.params;
+  everosMemoriesStore = everosMemoriesStore.filter(m => m.id !== id);
+  res.json({ success: true, message: `Removed memory ${id}` });
+});
+
+// EverOS Hybrid mRAG Search
+app.post('/api/everos/search', (req, res) => {
+  const { query, alpha = 0.6, botId } = req.body || {};
+  const q = (query || '').toLowerCase();
+  
+  const scored = everosMemoriesStore.map(mem => {
+    let bm25 = 0.3;
+    let vector = 0.4;
+    if (q) {
+      if (mem.title.toLowerCase().includes(q)) {
+        bm25 += 0.5;
+        vector += 0.4;
+      }
+      if (mem.content.toLowerCase().includes(q)) {
+        bm25 += 0.4;
+        vector += 0.35;
+      }
+      if (mem.tags.some(t => t.toLowerCase().includes(q))) {
+        bm25 += 0.45;
+        vector += 0.38;
+      }
+    } else {
+      bm25 = mem.bm25Score || 0.85;
+      vector = mem.vectorScore || 0.90;
+    }
+    bm25 = Math.min(0.99, bm25);
+    vector = Math.min(0.99, vector);
+    const hybrid = (1 - alpha) * bm25 + alpha * vector;
+    return {
+      ...mem,
+      bm25Score: parseFloat(bm25.toFixed(2)),
+      vectorScore: parseFloat(vector.toFixed(2)),
+      relevanceScore: parseFloat(hybrid.toFixed(2))
+    };
+  });
+
+  scored.sort((a, b) => (b.relevanceScore || 0) - (a.relevanceScore || 0));
+
+  res.json({
+    query,
+    alpha,
+    latencyMs: Math.floor(Math.random() * 80) + 140, // sub-300ms
+    engine: 'LanceDB v0.14 + SQLite BM25',
+    results: scored.slice(0, 5)
+  });
+});
+
+// EverOS Case-to-Skill Consolidation
+app.post('/api/everos/consolidate', (req, res) => {
+  const newSkill = {
+    id: 'skill-' + Date.now().toString(36),
+    name: 'Autonomous Multi-Channel Message Debounce & Sync',
+    description: 'Learned trajectory pattern: batching inbound messages during peak load and synchronizing thread context across Hermes and OpenClaw.',
+    pattern: 'Detect rapid bursts -> buffer in SQLite -> summarize key facts via EverOS -> emit consolidated intent to agent loop',
+    distilledFromCases: ['case-045', 'case-047'],
+    confidence: 0.97,
+    timesApplied: 1,
+    sourceBot: 'openclaw',
+    createdAt: new Date().toISOString().split('T')[0],
+    executablePrompt: 'When message frequency from a single user exceeds 4 msgs/5s, invoke EverOS trajectory debouncer.'
+  };
+
+  everosSkillsStore.unshift(newSkill);
+
+  res.json({
+    success: true,
+    message: 'EverOS self-evolving consolidation cycle completed successfully.',
+    casesProcessed: 7,
+    skillsGenerated: 1,
+    newSkill
+  });
+});
+
+// EverOS Bot Sync Toggle
+app.post('/api/everos/sync-bots', (req, res) => {
+  const { botId, enabled } = req.body || {};
+  if (botId && everosConfigStore.botSync[botId]) {
+    everosConfigStore.botSync[botId].enabled = enabled;
+  }
+  res.json({ success: true, botSync: everosConfigStore.botSync });
+});
+
+// EverOS Skills List
+app.get('/api/everos/skills', (req, res) => {
+  res.json({ skills: everosSkillsStore, count: everosSkillsStore.length });
+});
+
 
 // List updates
 app.get('/api/updates', (req, res) => {
