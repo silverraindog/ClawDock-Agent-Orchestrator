@@ -8,19 +8,78 @@ const LOCAL_PERSISTENCE_KEY = 'clawdock_persistence_v2';
 const LOCAL_CONFIGS_KEY = 'clawdock_agent_configs_v2';
 const LOCAL_STATES_KEY = 'clawdock_agent_states_v2';
 
-let isBackendLive: boolean | null = null;
+export function mergeWithDefaultConfig(agentId: AgentId, custom?: Partial<AgentFullConfig>): AgentFullConfig {
+  const base = DEFAULT_CONFIGS[agentId] || DEFAULT_CONFIGS['hermes-agent'];
+  if (!custom) return JSON.parse(JSON.stringify(base));
+
+  return {
+    agentId,
+    version: custom.version || base.version || '1.0.0',
+    model: {
+      provider: custom.model?.provider || base.model.provider,
+      model: (custom.model?.model && custom.model.model !== 'provider:') ? custom.model.model : base.model.model,
+      apiKey: custom.model?.apiKey ?? base.model.apiKey,
+      temperature: typeof custom.model?.temperature === 'number' ? custom.model.temperature : base.model.temperature,
+      reasoningEffort: custom.model?.reasoningEffort || base.model.reasoningEffort,
+      maxTokens: custom.model?.maxTokens || base.model.maxTokens,
+      contextWindow: custom.model?.contextWindow || base.model.contextWindow,
+      baseUrl: custom.model?.baseUrl ?? base.model.baseUrl,
+      topP: typeof custom.model?.topP === 'number' ? custom.model.topP : base.model.topP,
+    },
+    moa: {
+      enabled: custom.moa?.enabled ?? base.moa.enabled,
+      proposerModels: custom.moa?.proposerModels || base.moa.proposerModels,
+      aggregatorModel: custom.moa?.aggregatorModel || base.moa.aggregatorModel,
+      rounds: custom.moa?.rounds || base.moa.rounds,
+      temperatureSpread: custom.moa?.temperatureSpread ?? base.moa.temperatureSpread,
+      consensusThreshold: custom.moa?.consensusThreshold ?? base.moa.consensusThreshold,
+    },
+    channels: {
+      telegram: { ...base.channels.telegram, ...(custom.channels?.telegram || {}) },
+      discord: { ...base.channels.discord, ...(custom.channels?.discord || {}) },
+      slack: { ...base.channels.slack, ...(custom.channels?.slack || {}) },
+      whatsapp: { ...base.channels.whatsapp, ...(custom.channels?.whatsapp || {}) },
+      matrix: { ...base.channels.matrix, ...(custom.channels?.matrix || {}) },
+      webhook: { ...base.channels.webhook, ...(custom.channels?.webhook || {}) },
+    },
+    system: {
+      preset: custom.system?.preset || base.system.preset,
+      systemPrompt: custom.system?.systemPrompt || base.system.systemPrompt,
+      agentName: custom.system?.agentName || base.system.agentName,
+      personaName: custom.system?.personaName || base.system.personaName,
+      language: custom.system?.language || base.system.language,
+      autoFormatCode: custom.system?.autoFormatCode ?? base.system.autoFormatCode,
+    },
+    security: {
+      sandboxMode: custom.security?.sandboxMode || base.security.sandboxMode,
+      allowedDirectories: custom.security?.allowedDirectories || base.security.allowedDirectories,
+      blockNetworkAccess: custom.security?.blockNetworkAccess ?? base.security.blockNetworkAccess,
+      maxExecutionTimeSec: custom.security?.maxExecutionTimeSec || base.security.maxExecutionTimeSec,
+      requireApprovalForCommands: custom.security?.requireApprovalForCommands ?? base.security.requireApprovalForCommands,
+      securityProfileFile: custom.security?.securityProfileFile || base.security.securityProfileFile,
+    },
+    storage: {
+      memoryBackend: custom.storage?.memoryBackend || base.storage.memoryBackend,
+      dbPath: custom.storage?.dbPath || base.storage.dbPath,
+      autoSummarizeInterval: custom.storage?.autoSummarizeInterval || base.storage.autoSummarizeInterval,
+      maxHistoryTurns: custom.storage?.maxHistoryTurns || base.storage.maxHistoryTurns,
+      vectorDbUrl: custom.storage?.vectorDbUrl || base.storage.vectorDbUrl,
+    },
+    customEnv: {
+      ...(base.customEnv || {}),
+      ...(custom.customEnv || {})
+    }
+  };
+}
 
 export async function checkBackendAvailability(): Promise<boolean> {
-  if (isBackendLive !== null) return isBackendLive;
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 1200);
+    const timeoutId = setTimeout(() => controller.abort(), 1500);
     const res = await fetch('/api/health', { signal: controller.signal });
     clearTimeout(timeoutId);
-    isBackendLive = res.ok;
-    return isBackendLive;
+    return res.ok;
   } catch {
-    isBackendLive = false;
     return false;
   }
 }
@@ -28,7 +87,10 @@ export async function checkBackendAvailability(): Promise<boolean> {
 export function getLocalPersistence(): Record<string, any> {
   try {
     const saved = localStorage.getItem(LOCAL_PERSISTENCE_KEY);
-    if (saved) return JSON.parse(saved);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (parsed && typeof parsed === 'object') return parsed;
+    }
   } catch {}
   return { configs: DEFAULT_CONFIGS };
 }
@@ -43,38 +105,40 @@ export function saveLocalPersistence(key: string, value: any): void {
 
 export async function fetchAllAgentConfigs(): Promise<Record<AgentId, AgentFullConfig>> {
   // 1. Start with hardcoded defaults
-  const merged: Record<AgentId, AgentFullConfig> = { ...DEFAULT_CONFIGS };
+  const merged: Record<AgentId, AgentFullConfig> = {
+    'hermes-agent': mergeWithDefaultConfig('hermes-agent'),
+    'zeroclaw': mergeWithDefaultConfig('zeroclaw'),
+    'openclaw': mergeWithDefaultConfig('openclaw'),
+    'picoclaw': mergeWithDefaultConfig('picoclaw'),
+  };
 
   // 2. Overlay with local persistence if present
   try {
     const local = getLocalPersistence();
     if (local && local.configs) {
-      for (const [id, cfg] of Object.entries(local.configs as Record<string, AgentFullConfig>)) {
-        if (cfg && cfg.model && cfg.model.model && cfg.model.model !== 'provider:') {
-          merged[id as AgentId] = { ...merged[id as AgentId], ...cfg };
+      for (const [id, cfg] of Object.entries(local.configs as Record<string, any>)) {
+        if (cfg && typeof cfg === 'object') {
+          merged[id as AgentId] = mergeWithDefaultConfig(id as AgentId, cfg);
         }
       }
     }
   } catch {}
 
-  // 3. Try live backend API if available
+  // 3. Try live backend API (standardized /config suffix)
   try {
-    const isLive = await checkBackendAvailability();
-    if (isLive) {
-      const res = await fetch('/api/agents/all/configs');
-      if (res.ok) {
-        const data = await res.json();
-        if (data && data.success && data.configs) {
-          for (const [id, cfgObj] of Object.entries(data.configs as Record<string, any>)) {
-            if (cfgObj && cfgObj.configSchema && cfgObj.configSchema.model?.model !== 'provider:') {
-              merged[id as AgentId] = { ...merged[id as AgentId], ...cfgObj.configSchema };
-            }
+    const res = await fetch('/api/agents/all/config');
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.success && data.configs) {
+        for (const [id, cfgObj] of Object.entries(data.configs as Record<string, any>)) {
+          if (cfgObj && cfgObj.configSchema) {
+            merged[id as AgentId] = mergeWithDefaultConfig(id as AgentId, cfgObj.configSchema);
           }
         }
       }
     }
   } catch (e) {
-    // Graceful fallback without crashing
+    // Graceful fallback to merged defaults
   }
 
   return merged;
@@ -87,26 +151,20 @@ export async function fetchAgentLiveConfig(agentId: AgentId): Promise<{
   configSchema: AgentFullConfig;
 }> {
   const fallback = DEFAULT_NATIVE_FILES[agentId] || DEFAULT_NATIVE_FILES['hermes-agent'];
-  const fallbackConfig = DEFAULT_CONFIGS[agentId] || DEFAULT_CONFIGS['hermes-agent'];
+  const fallbackConfig = mergeWithDefaultConfig(agentId);
 
   try {
-    const isLive = await checkBackendAvailability();
-    if (isLive) {
-      const res = await fetch(`/api/agents/${agentId}/config`);
-      if (res.ok) {
-        const data = await res.json();
-        if (data && data.success) {
-          const schema = data.configSchema || fallbackConfig;
-          if (schema.model?.model === 'provider:') {
-            schema.model.model = fallbackConfig.model.model;
-          }
-          return {
-            fileName: data.nativeFileName || fallback.fileName,
-            format: data.nativeFormat || fallback.format,
-            content: data.nativeContent || fallback.content,
-            configSchema: schema
-          };
-        }
+    const res = await fetch(`/api/agents/${agentId}/config`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.success) {
+        const schema = mergeWithDefaultConfig(agentId, data.configSchema);
+        return {
+          fileName: data.nativeFileName || fallback.fileName,
+          format: data.nativeFormat || fallback.format,
+          content: data.nativeContent || fallback.content,
+          configSchema: schema
+        };
       }
     }
   } catch {}
@@ -117,6 +175,14 @@ export async function fetchAgentLiveConfig(agentId: AgentId): Promise<{
     const local = getLocalPersistence();
     if (local && local.nativeFiles && local.nativeFiles[agentId]) {
       content = local.nativeFiles[agentId];
+    }
+    if (local && local.configs && local.configs[agentId]) {
+      return {
+        fileName: fallback.fileName,
+        format: fallback.format,
+        content,
+        configSchema: mergeWithDefaultConfig(agentId, local.configs[agentId])
+      };
     }
   } catch {}
 
@@ -146,21 +212,19 @@ export async function saveAgentConfigToBackend(
     localStorage.setItem(LOCAL_PERSISTENCE_KEY, JSON.stringify(current));
   } catch {}
 
-  // Try saving to backend if live
+  // Try saving to backend
   try {
-    const isLive = await checkBackendAvailability();
-    if (isLive) {
-      const res = await fetch(`/api/agents/${agentId}/config`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          config,
-          nativeContent,
-          restart
-        })
-      });
-      return res.ok;
-    }
+    const res = await fetch(`/api/agents/${agentId}/config`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        config,
+        nativeContent,
+        restart,
+        restartContainer: restart
+      })
+    });
+    return res.ok;
   } catch {}
 
   return true;
@@ -207,17 +271,25 @@ export async function fetchRuntimeAgentStates(): Promise<Record<string, { status
   };
 
   try {
-    const isLive = await checkBackendAvailability();
-    if (isLive) {
-      const res = await fetch('/api/state');
-      if (res.ok) {
-        const data = await res.json();
-        if (data && data.success && data.agentStates) {
-          return data.agentStates;
-        }
-      }
+    const res = await fetch('/api/state');
+    if (!res.ok) {
+      const errorText = await res.text().catch(() => '');
+      const err: any = new Error(`GET /api/state failed with HTTP ${res.status}: ${errorText || res.statusText}`);
+      err.status = res.status;
+      err.statusText = res.statusText;
+      err.responseBody = errorText;
+      console.error(`[API Bridge] GET /api/state returned error:`, err);
+      throw err;
     }
-  } catch {}
+    const data = await res.json();
+    if (data && data.success && data.agentStates) {
+      return data.agentStates;
+    }
+  } catch (err) {
+    console.error('[API Bridge] Exception in fetchRuntimeAgentStates:', err);
+    throw err;
+  }
 
   return defaultStates;
 }
+

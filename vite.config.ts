@@ -445,64 +445,45 @@ vector_db_url = "http://everos:8080"
     };
   }
 
-  return {
-    name: 'clawdock-api-server',
-    configureServer(server) {
-      server.middlewares.use(async (req, res, next) => {
-        if (!req.url || !req.url.startsWith('/api/')) {
-          return next();
-        }
+  function createApiHandler() {
+    return async (req: any, res: any, next: any) => {
+      if (!req.url || !req.url.startsWith('/api/')) {
+        return next();
+      }
 
-        const timestamp = new Date().toISOString();
-        const method = req.method || 'GET';
-        const parsedUrl = new URL(req.url, 'http://localhost');
-        const pathname = parsedUrl.pathname;
+      const timestamp = new Date().toISOString();
+      const method = req.method || 'GET';
+      const parsedUrl = new URL(req.url, 'http://localhost');
+      const pathname = parsedUrl.pathname;
 
-        // Comprehensive logging for all incoming API requests
-        console.log(`[Vite API Server] [${timestamp}] ${method} ${pathname} (Full: ${req.url})`);
+      // Comprehensive logging for all incoming API requests (Method + URL)
+      console.log(`[Vite API Server] [${timestamp}] ${method} ${pathname} (Query: ${parsedUrl.search})`);
 
-        // Set CORS headers for all responses
-        res.setHeader('Access-Control-Allow-Origin', '*');
-        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
-        res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept');
+      // Set CORS headers for all responses
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept');
 
-        if (method === 'OPTIONS') {
-          console.log(`[Vite API Server] [${timestamp}] Handled CORS preflight for ${pathname}`);
-          res.statusCode = 200;
-          return res.end();
-        }
+      if (method === 'OPTIONS') {
+        console.log(`[Vite API Server] [${timestamp}] Handled CORS preflight for ${pathname}`);
+        res.statusCode = 200;
+        return res.end();
+      }
 
+      // Centralized Request Router using switch statement
+      switch (pathname) {
         // 1. Health endpoint
-        if (pathname === '/api/health') {
+        case '/api/health': {
           res.setHeader('Content-Type', 'application/json');
-          console.log(`[Vite API Server] [${timestamp}] 200 OK: /api/health`);
-          return res.end(JSON.stringify({ status: 'ok', timestamp }));
+          console.log(`[Vite API Server] [${timestamp}] 200 OK: GET /api/health`);
+          return res.end(JSON.stringify({ status: 'ok', uptime: process.uptime(), timestamp }));
         }
 
-        // 2. Docker status endpoint
-        if (pathname === '/api/docker/status') {
-          res.setHeader('Content-Type', 'application/json');
-          console.log(`[Vite API Server] [${timestamp}] 200 OK: /api/docker/status`);
-          return res.end(JSON.stringify({
-            success: true,
-            dockerOnline: true,
-            daemonVersion: '27.1.1-ce',
-            apiEndpoint: '/var/run/docker.sock',
-            runningContainers: 2,
-            totalContainers: 4,
-            containers: [
-              { id: 'c108a94fd32b', name: 'hermes-agent-core', image: 'ghcr.io/nousresearch/hermes-agent:latest', status: 'Up 4 hours', ports: '0.0.0.0:8080->8080/tcp' },
-              { id: 'e4991ac89b10', name: 'picoclaw-edge', image: 'sipeed/picoclaw:latest', status: 'Up 8 hours', ports: '0.0.0.0:8083->8083/tcp' },
-              { id: 'b94101e4aa22', name: 'zeroclaw-daemon', image: 'zeroclaw/zeroclaw:latest', status: 'Exited (0) 2 hours ago', ports: '0.0.0.0:8081->8081/tcp' }
-            ]
-          }));
-        }
-
-        // 3. State endpoint (GET, POST, PUT)
-        if (pathname === '/api/state') {
+        // 2. State endpoint (GET, POST, PUT) - Full agent states object
+        case '/api/state': {
           res.setHeader('Content-Type', 'application/json');
           if (method === 'GET') {
-            console.log(`[Vite API Server] [${timestamp}] 200 OK: GET /api/state - Returning full agent states object`);
+            console.log(`[Vite API Server] [${timestamp}] 200 OK: GET /api/state - Full Agent States:`, Object.keys(agentStates));
             return res.end(JSON.stringify({
               success: true,
               agentStates,
@@ -512,7 +493,7 @@ vector_db_url = "http://everos:8080"
 
           if (method === 'POST' || method === 'PUT') {
             const body = await readRequestBody(req);
-            console.log(`[Vite API Server] [${timestamp}] 200 OK: ${method} /api/state - Received state update`);
+            console.log(`[Vite API Server] [${timestamp}] 200 OK: ${method} /api/state - Updated state:`, body?.agentStates ? Object.keys(body.agentStates) : 'none');
             if (body && body.agentStates) {
               agentStates = { ...agentStates, ...body.agentStates };
             }
@@ -522,10 +503,25 @@ vector_db_url = "http://everos:8080"
               timestamp
             }));
           }
+          res.statusCode = 405;
+          return res.end(JSON.stringify({ error: 'Method not allowed' }));
+        }
+
+        // 3. Standardized Agent Config retrieval: /api/agents/all/config (and alias /api/agents/all/configs)
+        case '/api/agents/all/config':
+        case '/api/agents/all/configs': {
+          res.setHeader('Content-Type', 'application/json');
+          console.log(`[Vite API Server] [${timestamp}] 200 OK: GET ${pathname} (Standardized /config suffix)`);
+          const agentIds = ['hermes-agent', 'zeroclaw', 'openclaw', 'picoclaw'];
+          const configs: Record<string, any> = {};
+          for (const id of agentIds) {
+            configs[id] = getAgentConfig(id);
+          }
+          return res.end(JSON.stringify({ success: true, configs }));
         }
 
         // 4. Persistence endpoint (GET, POST, PUT)
-        if (pathname === '/api/persistence') {
+        case '/api/persistence': {
           res.setHeader('Content-Type', 'application/json');
           const persistenceFile = path.join(dataDir, 'persistence.json');
 
@@ -564,118 +560,31 @@ vector_db_url = "http://everos:8080"
 
             return res.end(JSON.stringify({ success: true, data: existing }));
           }
+          res.statusCode = 405;
+          return res.end(JSON.stringify({ error: 'Method not allowed' }));
         }
 
-        // 5. Bulk Agent Configs: /api/agents/all/configs
-        if (pathname === '/api/agents/all/configs') {
+        // 5. Docker status endpoint
+        case '/api/docker/status': {
           res.setHeader('Content-Type', 'application/json');
-          console.log(`[Vite API Server] [${timestamp}] 200 OK: GET /api/agents/all/configs`);
-          const agentIds = ['hermes-agent', 'zeroclaw', 'openclaw', 'picoclaw'];
-          const configs: Record<string, any> = {};
-          for (const id of agentIds) {
-            configs[id] = getAgentConfig(id);
-          }
-          return res.end(JSON.stringify({ success: true, configs }));
+          console.log(`[Vite API Server] [${timestamp}] 200 OK: /api/docker/status`);
+          return res.end(JSON.stringify({
+            success: true,
+            dockerOnline: true,
+            daemonVersion: '27.1.1-ce',
+            apiEndpoint: '/var/run/docker.sock',
+            runningContainers: 2,
+            totalContainers: 4,
+            containers: [
+              { id: 'c108a94fd32b', name: 'hermes-agent-core', image: 'ghcr.io/nousresearch/hermes-agent:latest', status: 'Up 4 hours', ports: '0.0.0.0:8080->8080/tcp' },
+              { id: 'e4991ac89b10', name: 'picoclaw-edge', image: 'sipeed/picoclaw:latest', status: 'Up 8 hours', ports: '0.0.0.0:8083->8083/tcp' },
+              { id: 'b94101e4aa22', name: 'zeroclaw-daemon', image: 'zeroclaw/zeroclaw:latest', status: 'Exited (0) 2 hours ago', ports: '0.0.0.0:8081->8081/tcp' }
+            ]
+          }));
         }
 
-        // 6. Individual Agent Config: /api/agents/:id/config (GET, PUT, POST)
-        const agentConfigMatch = pathname.match(/^\/api\/agents\/([^/]+)\/config$/);
-        if (agentConfigMatch) {
-          res.setHeader('Content-Type', 'application/json');
-          const agentId = agentConfigMatch[1];
-
-          if (method === 'GET') {
-            console.log(`[Vite API Server] [${timestamp}] 200 OK: GET /api/agents/${agentId}/config`);
-            const cfg = getAgentConfig(agentId);
-            return res.end(JSON.stringify(cfg));
-          }
-
-          if (method === 'PUT' || method === 'POST') {
-            const body = await readRequestBody(req);
-            console.log(`[Vite API Server] [${timestamp}] 200 OK: ${method} /api/agents/${agentId}/config - Writing config`);
-            const nativeContent = body.nativeContent;
-            const restart = body.restart !== false && body.restartContainer !== false;
-
-            const fallback = defaultNativeFiles[agentId] || defaultNativeFiles['hermes-agent'];
-            const fileName = fallback.fileName;
-            const filePath = path.join(dataDir, fileName);
-
-            if (typeof nativeContent === 'string') {
-              try {
-                fs.writeFileSync(filePath, nativeContent, 'utf8');
-              } catch {}
-            }
-
-            // Update state to restarting then running
-            if (restart && agentStates[agentId]) {
-              agentStates[agentId].status = 'restarting';
-              agentStates[agentId].logs.push(`[Docker Engine] Config saved to ${filePath}. Restarting container...`);
-              setTimeout(() => {
-                if (agentStates[agentId]) {
-                  agentStates[agentId].status = 'running';
-                  agentStates[agentId].logs.push(`[Docker Engine] Container restarted with updated settings.`);
-                }
-              }, 1200);
-            }
-
-            const updatedCfg = getAgentConfig(agentId);
-            return res.end(JSON.stringify({
-              success: true,
-              agentId,
-              filePath: `data/clawdock/${fileName}`,
-              restarted: restart,
-              nativeContent: updatedCfg.nativeContent,
-              configSchema: updatedCfg.configSchema
-            }));
-          }
-        }
-
-        // 7. Agent Lifecycle Actions: /api/agents/:id/start, /api/agents/:id/stop, /api/agents/:id/install, /api/agents/:id/detect, /api/agents/:id/logs
-        const agentActionMatch = pathname.match(/^\/api\/agents\/([^/]+)\/(start|stop|install|detect|logs|docker-exec-config)$/);
-        if (agentActionMatch) {
-          res.setHeader('Content-Type', 'application/json');
-          const agentId = agentActionMatch[1];
-          const action = agentActionMatch[2];
-
-          console.log(`[Vite API Server] [${timestamp}] 200 OK: ${method} /api/agents/${agentId}/${action}`);
-
-          if (action === 'start') {
-            if (agentStates[agentId]) {
-              agentStates[agentId].status = 'running';
-              agentStates[agentId].logs.push(`[${new Date().toLocaleTimeString()}] Container started.`);
-            }
-            return res.end(JSON.stringify({ success: true, status: 'running' }));
-          }
-
-          if (action === 'stop') {
-            if (agentStates[agentId]) {
-              agentStates[agentId].status = 'stopped';
-              agentStates[agentId].logs.push(`[${new Date().toLocaleTimeString()}] Container stopped.`);
-            }
-            return res.end(JSON.stringify({ success: true, status: 'stopped' }));
-          }
-
-          if (action === 'install') {
-            return res.end(JSON.stringify({ success: true, status: 'installed' }));
-          }
-
-          if (action === 'detect') {
-            return res.end(JSON.stringify({ success: true, detected: true, agentId }));
-          }
-
-          if (action === 'logs') {
-            const current = agentStates[agentId];
-            return res.end(JSON.stringify({ success: true, logs: current ? current.logs : [] }));
-          }
-
-          if (action === 'docker-exec-config') {
-            const cfg = getAgentConfig(agentId);
-            return res.end(JSON.stringify({ success: true, config: cfg.configSchema, nativeContent: cfg.nativeContent }));
-          }
-        }
-
-        // 8. Diagnostics Logs
-        if (pathname === '/api/diagnostics/logs') {
+        // 6. Diagnostics Logs
+        case '/api/diagnostics/logs': {
           res.setHeader('Content-Type', 'application/json');
           console.log(`[Vite API Server] [${timestamp}] 200 OK: /api/diagnostics/logs`);
           return res.end(JSON.stringify({
@@ -687,9 +596,149 @@ vector_db_url = "http://everos:8080"
           }));
         }
 
-        console.warn(`[Vite API Server] [${timestamp}] Unhandled API route: ${method} ${pathname}`);
-        next();
-      });
+        // 7. AI Chat Endpoint
+        case '/api/chat': {
+          res.setHeader('Content-Type', 'application/json');
+          const body = await readRequestBody(req);
+          console.log(`[Vite API Server] [${timestamp}] 200 OK: POST /api/chat`);
+          return res.end(JSON.stringify({
+            success: true,
+            response: `[Clawdock Simulator] Received message "${body?.message || ''}". Agent is fully active in container.`
+          }));
+        }
+
+        default: {
+          // Dynamic router fallback: Match agentConfigMatch and agentActionMatch with exact pathname logging
+
+          // Individual Agent Config: /api/agents/:id/config
+          const agentConfigMatch = pathname.match(/^\/api\/agents\/([^/]+)\/config$/);
+          if (agentConfigMatch) {
+            const agentId = agentConfigMatch[1];
+            console.log(`[Vite API Server] [${timestamp}] Regex matched agentConfigMatch on exact pathname: "${pathname}" -> agentId="${agentId}"`);
+
+            res.setHeader('Content-Type', 'application/json');
+
+            if (method === 'GET') {
+              console.log(`[Vite API Server] [${timestamp}] 200 OK: GET /api/agents/${agentId}/config`);
+              const cfg = getAgentConfig(agentId);
+              return res.end(JSON.stringify(cfg));
+            }
+
+            if (method === 'PUT' || method === 'POST') {
+              const body = await readRequestBody(req);
+              console.log(`[Vite API Server] [${timestamp}] 200 OK: ${method} /api/agents/${agentId}/config - Writing config`);
+              const nativeContent = body.nativeContent;
+              const restart = body.restart !== false && body.restartContainer !== false;
+
+              const fallback = defaultNativeFiles[agentId] || defaultNativeFiles['hermes-agent'];
+              const fileName = fallback.fileName;
+              const filePath = path.join(dataDir, fileName);
+
+              if (typeof nativeContent === 'string') {
+                try {
+                  fs.writeFileSync(filePath, nativeContent, 'utf8');
+                } catch {}
+              }
+
+              // Update state to restarting then running
+              if (restart && agentStates[agentId]) {
+                agentStates[agentId].status = 'restarting';
+                agentStates[agentId].logs.push(`[Docker Engine] Config saved to ${filePath}. Restarting container...`);
+                setTimeout(() => {
+                  if (agentStates[agentId]) {
+                    agentStates[agentId].status = 'running';
+                    agentStates[agentId].logs.push(`[Docker Engine] Container restarted with updated settings.`);
+                  }
+                }, 1200);
+              }
+
+              const updatedCfg = getAgentConfig(agentId);
+              return res.end(JSON.stringify({
+                success: true,
+                agentId,
+                filePath: `data/clawdock/${fileName}`,
+                restarted: restart,
+                nativeContent: updatedCfg.nativeContent,
+                configSchema: updatedCfg.configSchema
+              }));
+            }
+          }
+
+          // Agent Lifecycle Actions: /api/agents/:id/:action
+          const agentActionMatch = pathname.match(/^\/api\/agents\/([^/]+)\/(start|stop|install|detect|logs|docker-exec-config)$/);
+          if (agentActionMatch) {
+            const agentId = agentActionMatch[1];
+            const action = agentActionMatch[2];
+            console.log(`[Vite API Server] [${timestamp}] Regex matched agentActionMatch on exact pathname: "${pathname}" -> agentId="${agentId}", action="${action}"`);
+
+            res.setHeader('Content-Type', 'application/json');
+            console.log(`[Vite API Server] [${timestamp}] 200 OK: ${method} /api/agents/${agentId}/${action}`);
+
+            if (action === 'start') {
+              if (agentStates[agentId]) {
+                agentStates[agentId].status = 'running';
+                agentStates[agentId].logs.push(`[${new Date().toLocaleTimeString()}] Container started.`);
+              }
+              return res.end(JSON.stringify({ success: true, status: 'running' }));
+            }
+
+            if (action === 'stop') {
+              if (agentStates[agentId]) {
+                agentStates[agentId].status = 'stopped';
+                agentStates[agentId].logs.push(`[${new Date().toLocaleTimeString()}] Container stopped.`);
+              }
+              return res.end(JSON.stringify({ success: true, status: 'stopped' }));
+            }
+
+            if (action === 'install') {
+              return res.end(JSON.stringify({ success: true, status: 'installed' }));
+            }
+
+            if (action === 'detect') {
+              return res.end(JSON.stringify({ success: true, detected: true, agentId }));
+            }
+
+            if (action === 'logs') {
+              const current = agentStates[agentId];
+              return res.end(JSON.stringify({ success: true, logs: current ? current.logs : [] }));
+            }
+
+            if (action === 'docker-exec-config') {
+              const cfg = getAgentConfig(agentId);
+              return res.end(JSON.stringify({ success: true, config: cfg.configSchema, nativeContent: cfg.nativeContent }));
+            }
+          }
+
+          // EverOS Memory Hub endpoints
+          if (pathname.startsWith('/api/everos/')) {
+            res.setHeader('Content-Type', 'application/json');
+            console.log(`[Vite API Server] [${timestamp}] 200 OK: EverOS endpoint ${pathname}`);
+            if (pathname === '/api/everos/status') {
+              return res.end(JSON.stringify({
+                status: 'online',
+                daemonVersion: 'v2.1.0',
+                backend: 'everos-vector-graph',
+                totalMemories: 1420,
+                activeBots: ['hermes-agent', 'openclaw', 'zeroclaw', 'picoclaw']
+              }));
+            }
+            return res.end(JSON.stringify({ success: true, count: 0, items: [] }));
+          }
+
+          console.warn(`[Vite API Server] [${timestamp}] Unhandled API route: ${method} ${pathname}`);
+          next();
+        }
+      }
+    };
+  }
+
+  return {
+    name: 'clawdock-api-server',
+    configureServer(server) {
+      server.middlewares.use(createApiHandler());
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use(createApiHandler());
     }
   };
 }
@@ -708,5 +757,9 @@ export default defineConfig(() => {
       hmr: process.env.DISABLE_HMR !== 'true',
       watch: process.env.DISABLE_HMR === 'true' ? null : {},
     },
+    preview: {
+      host: '0.0.0.0',
+      port: 3000,
+    }
   };
 });

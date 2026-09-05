@@ -94,28 +94,51 @@ export default function App() {
 
   // Fetch initial telemetry, persistent state, and live configuration files via resilient bridge
   useEffect(() => {
-    // 1. Load agent states
-    fetchRuntimeAgentStates().then(agentStates => {
-      if (agentStates) {
-        setAgents(prev => prev.map(a => {
-          const st = agentStates[a.id];
-          if (st) {
-            return {
-              ...a,
-              status: st.status as any,
-              containerId: st.containerId || a.containerId
-            };
-          }
-          return a;
-        }));
+    // 1. Load agent states with comprehensive error handling & fallback
+    const loadAgentStates = async () => {
+      try {
+        const agentStates = await fetchRuntimeAgentStates();
+        if (agentStates && Object.keys(agentStates).length > 0) {
+          setAgents(prev => prev.map(a => {
+            const st = agentStates[a.id];
+            if (st) {
+              return {
+                ...a,
+                status: st.status as any,
+                containerId: st.containerId || a.containerId
+              };
+            }
+            return a;
+          }));
+        } else {
+          console.warn('[Clawdock Telemetry] /api/state returned empty dataset; defaulting to INITIAL_AGENTS fallback.', {
+            fallbackCount: INITIAL_AGENTS.length
+          });
+          setAgents(INITIAL_AGENTS);
+        }
+      } catch (err: any) {
+        console.error('[Clawdock Telemetry] Failed to fetch /api/state runtime states:', {
+          errorMessage: err?.message || String(err),
+          status: err?.status,
+          statusText: err?.statusText,
+          responseBody: err?.responseBody,
+          errorObject: err,
+          timestamp: new Date().toISOString()
+        });
+        // Fallback mechanism to use INITIAL_AGENTS if the API call returns a 404 or fails
+        setAgents(INITIAL_AGENTS);
       }
-    });
+    };
+
+    loadAgentStates();
 
     // 2. Load all agent configs
     fetchAllAgentConfigs().then(loaded => {
       if (loaded && Object.keys(loaded).length > 0) {
         setConfigs(prev => ({ ...prev, ...loaded }));
       }
+    }).catch(err => {
+      console.error('[Clawdock Config] fetchAllAgentConfigs failed:', err);
     });
 
     // 3. Docker status check
@@ -124,7 +147,9 @@ export default function App() {
       .then(data => {
         if (data) setDockerInfo(data);
       })
-      .catch(() => {});
+      .catch((err) => {
+        console.error('[Clawdock Docker] /api/docker/status error:', err);
+      });
   }, []);
 
   // Save configs to local persistence & backend on change

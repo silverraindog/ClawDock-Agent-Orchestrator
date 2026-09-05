@@ -435,6 +435,11 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
                     })}
                     className="w-full appearance-none px-3.5 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-slate-100 text-xs focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-colors pr-10 font-mono"
                   >
+                    {!currentModelList.some((m) => m.value === config.model.model) && config.model.model && (
+                      <option value={config.model.model}>
+                        {config.model.model} (Active)
+                      </option>
+                    )}
                     {currentModelList.map((m) => (
                       <option key={m.value} value={m.value}>
                         {m.label}

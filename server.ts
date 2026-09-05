@@ -654,17 +654,7 @@ function getAgentConfigData(agentId: string) {
   };
 }
 
-// Fetch live configuration and native config file from agent container volume/filesystem
-app.get('/api/agents/:id/config', (req, res) => {
-  try {
-    const result = getAgentConfigData(req.params.id);
-    res.json(result);
-  } catch (e: any) {
-    res.status(500).json({ success: false, error: e.message });
-  }
-});
-
-// Bulk fetch all configs
+// Bulk fetch all configs (MUST be registered before /api/agents/:id/config)
 app.get('/api/agents/all/configs', (req, res) => {
   const ids = ['hermes-agent', 'zeroclaw', 'openclaw', 'picoclaw'];
   const allConfigs: Record<string, any> = {};
@@ -674,6 +664,27 @@ app.get('/api/agents/all/configs', (req, res) => {
     } catch {}
   }
   res.json({ success: true, configs: allConfigs });
+});
+
+app.get('/api/agents/all/config', (req, res) => {
+  const ids = ['hermes-agent', 'zeroclaw', 'openclaw', 'picoclaw'];
+  const allConfigs: Record<string, any> = {};
+  for (const id of ids) {
+    try {
+      allConfigs[id] = getAgentConfigData(id);
+    } catch {}
+  }
+  res.json({ success: true, configs: allConfigs });
+});
+
+// Fetch live configuration and native config file from agent container volume/filesystem
+app.get('/api/agents/:id/config', (req, res) => {
+  try {
+    const result = getAgentConfigData(req.params.id);
+    res.json(result);
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e.message });
+  }
 });
 
 // Save / update native config file for agent container and restart container
