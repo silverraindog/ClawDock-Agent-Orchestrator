@@ -63,18 +63,20 @@ app.get('/api/docker/status', (req, res) => {
   });
 });
 
-// Fetch live configuration and native config file from agent container
+// Fetch live configuration and native config file from agent container volume/filesystem
 app.get('/api/agents/:id/config', (req, res) => {
   const agentId = req.params.id;
 
   let nativeFileName = 'hermes.yaml';
   let nativeFormat = 'yaml';
-  let nativeContent = '';
+  let defaultContent = '';
+  let subDir = 'hermes';
 
   if (agentId === 'openclaw') {
     nativeFileName = 'openclaw.json';
     nativeFormat = 'json';
-    nativeContent = JSON.stringify({
+    subDir = 'openclaw';
+    defaultContent = JSON.stringify({
       "hub": {
         "port": 8082,
         "plugin_everos": true,
@@ -92,7 +94,8 @@ app.get('/api/agents/:id/config', (req, res) => {
   } else if (agentId === 'zeroclaw') {
     nativeFileName = 'config.toml';
     nativeFormat = 'toml';
-    nativeContent = `[daemon]
+    subDir = 'zeroclaw';
+    defaultContent = `[daemon]
 port = 8081
 rust_log = "info"
 max_ram_mb = 16
@@ -106,20 +109,25 @@ temperature = 0.1
 backend = "sqlite"
 db_path = "/var/zeroclaw/memory.db"`;
   } else if (agentId === 'picoclaw') {
-    nativeFileName = 'picoclaw.yaml';
-    nativeFormat = 'yaml';
-    nativeContent = `mode: gateway
-log_level: info
-port: 8083
-model:
-  provider: ollama
-  model: qwen2.5-coder:7b
-  base_url: http://localhost:11434`;
+    nativeFileName = 'config.json';
+    nativeFormat = 'json';
+    subDir = 'picoclaw';
+    defaultContent = JSON.stringify({
+      "mode": "gateway",
+      "log_level": "info",
+      "port": 8083,
+      "model": {
+        "provider": "ollama",
+        "model": "qwen2.5-coder:7b",
+        "base_url": "http://localhost:11434"
+      }
+    }, null, 2);
   } else {
     // hermes-agent
-    nativeFileName = 'hermes.yaml';
+    nativeFileName = 'config.yaml';
     nativeFormat = 'yaml';
-    nativeContent = `version: "1.0.0"
+    subDir = 'hermes';
+    defaultContent = `version: "1.0.0"
 agent_id: "hermes-agent"
 model:
   provider: "anthropic"
@@ -141,13 +149,28 @@ security:
   allow_shell: true`;
   }
 
+  const filePath = path.join(process.cwd(), 'data', subDir, nativeFileName);
+  let nativeContent = defaultContent;
+
+  try {
+    if (fs.existsSync(filePath)) {
+      nativeContent = fs.readFileSync(filePath, 'utf8');
+    } else {
+      fs.mkdirSync(path.dirname(filePath), { recursive: true });
+      fs.writeFileSync(filePath, defaultContent, 'utf8');
+    }
+  } catch (err) {
+    console.error(`Error reading config file for ${agentId}:`, err);
+  }
+
   res.json({
     success: true,
     agentId,
     nativeFileName,
     nativeFormat,
     nativeContent,
-    source: 'container_volume_mount',
+    filePath: `data/${subDir}/${nativeFileName}`,
+    source: 'container_volume_mount_file',
     fetchedAt: new Date().toISOString(),
     configSchema: {
       agentId,
@@ -162,6 +185,43 @@ security:
       }
     }
   });
+});
+
+// Save / update native config file for agent container
+app.put('/api/agents/:id/config', (req, res) => {
+  const agentId = req.params.id;
+  const { nativeContent } = req.body;
+
+  if (typeof nativeContent !== 'string') {
+    return res.status(400).json({ success: false, error: 'nativeContent string is required' });
+  }
+
+  let nativeFileName = 'config.yaml';
+  let subDir = 'hermes';
+  if (agentId === 'openclaw') {
+    nativeFileName = 'openclaw.json';
+    subDir = 'openclaw';
+  } else if (agentId === 'zeroclaw') {
+    nativeFileName = 'config.toml';
+    subDir = 'zeroclaw';
+  } else if (agentId === 'picoclaw') {
+    nativeFileName = 'config.json';
+    subDir = 'picoclaw';
+  }
+
+  const filePath = path.join(process.cwd(), 'data', subDir, nativeFileName);
+  try {
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, nativeContent, 'utf8');
+    res.json({
+      success: true,
+      agentId,
+      filePath: `data/${subDir}/${nativeFileName}`,
+      message: 'Configuration successfully saved to container mount path.'
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 // Wildcard search for existing Docker containers on the host
