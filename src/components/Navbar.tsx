@@ -4,6 +4,7 @@ import {
   ChevronDown, 
   Container, 
   RefreshCw, 
+  RotateCw,
   Play, 
   Square, 
   Check, 
@@ -25,6 +26,7 @@ interface NavbarProps {
   dockerInfo: DockerSystemInfo;
   onRefreshDetect: () => void;
   onToggleContainer: () => void;
+  onRestartContainer?: () => void;
   isDetecting: boolean;
   onOpenExport: () => void;
   onOpenDiscovery: () => void;
@@ -39,6 +41,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   dockerInfo,
   onRefreshDetect,
   onToggleContainer,
+  onRestartContainer,
   isDetecting,
   onOpenExport,
   onOpenDiscovery,
@@ -67,6 +70,13 @@ export const Navbar: React.FC<NavbarProps> = ({
           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
             Running
+          </span>
+        );
+      case 'restarting':
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+            <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse" />
+            Restarting
           </span>
         );
       case 'stopped':
@@ -227,15 +237,39 @@ export const Navbar: React.FC<NavbarProps> = ({
           {currentAgent.status === 'running' ? (
             <>
               <Square className="w-3 h-3 fill-current" />
-              <span>Stop Container</span>
+              <span>Stop</span>
             </>
           ) : (
             <>
               <Play className="w-3 h-3 fill-current" />
-              <span>Deploy Agent</span>
+              <span>Deploy</span>
             </>
           )}
         </button>
+
+        {/* Dedicated Restart / Start Container Button */}
+        {onRestartContainer && (
+          <button
+            id="navbar-restart-container-btn"
+            onClick={onRestartContainer}
+            disabled={currentAgent.status === 'restarting'}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-indigo-500/30 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 hover:text-white text-xs font-medium transition-colors disabled:opacity-50"
+            title={
+              currentAgent.status === 'running'
+                ? `Restart ${currentAgent.name} Container`
+                : `Start / Restart ${currentAgent.name} Container`
+            }
+          >
+            <RotateCw className={`w-3.5 h-3.5 text-indigo-400 ${currentAgent.status === 'restarting' ? 'animate-spin' : ''}`} />
+            <span className="hidden sm:inline">
+              {currentAgent.status === 'restarting'
+                ? 'Restarting...'
+                : currentAgent.status === 'running'
+                  ? 'Restart'
+                  : 'Restart'}
+            </span>
+          </button>
+        )}
 
         {/* Updates Button if updates are available */}
         {updatesCount !== undefined && updatesCount > 0 && onOpenUpdates && (

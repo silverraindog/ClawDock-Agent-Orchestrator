@@ -28,6 +28,8 @@ interface DockerTabProps {
   containerLogs: string[];
   onStartAgent: (agentId: AgentId) => void;
   onStopAgent: (agentId: AgentId) => void;
+  onRestartAgent: (agentId: AgentId) => void;
+  onRestartAllContainers?: () => void;
   onInstallAgent: (agentId: AgentId) => void;
   onRefreshDetect: () => void;
   onOpenDiscovery: () => void;
@@ -41,6 +43,8 @@ export const DockerTab: React.FC<DockerTabProps> = ({
   containerLogs,
   onStartAgent,
   onStopAgent,
+  onRestartAgent,
+  onRestartAllContainers,
   onInstallAgent,
   onRefreshDetect,
   onOpenDiscovery,
@@ -182,6 +186,17 @@ networks:
           </div>
 
           <div className="flex items-center gap-2">
+            {onRestartAllContainers && (
+              <button
+                id="docker-tab-restart-all-btn"
+                onClick={onRestartAllContainers}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-indigo-500/30 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 text-xs font-semibold transition-colors shadow-sm cursor-pointer"
+                title="Restart all running/stopped agent containers"
+              >
+                <RotateCw className="w-3.5 h-3.5 text-indigo-400" />
+                <span>Restart All Containers</span>
+              </button>
+            )}
             <button
               id="docker-tab-health-btn"
               onClick={handleHealthCheck}
@@ -297,9 +312,14 @@ networks:
 
                     <div>
                       {agent.status === 'running' ? (
-                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-indigo-400 border border-emerald-500/20">
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
                           <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
                           Running
+                        </span>
+                      ) : agent.status === 'restarting' ? (
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+                          <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse" />
+                          Restarting
                         </span>
                       ) : agent.status === 'stopped' ? (
                         <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20">
@@ -307,7 +327,7 @@ networks:
                           Stopped
                         </span>
                       ) : (
-                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
                           Host Local
                         </span>
                       )}
@@ -332,8 +352,10 @@ networks:
                   </span>
 
                   <div className="flex items-center gap-2">
+                    {/* Primary Start / Stop toggle */}
                     {agent.status === 'running' ? (
                       <button
+                        id={`docker-agent-stop-btn-${agent.id}`}
                         onClick={() => onStopAgent(agent.id)}
                         className="flex items-center gap-1 px-3 py-1 rounded-lg text-xs font-medium text-amber-400 hover:bg-amber-500/10 border border-amber-500/30 transition-colors"
                       >
@@ -342,13 +364,26 @@ networks:
                       </button>
                     ) : (
                       <button
+                        id={`docker-agent-start-btn-${agent.id}`}
                         onClick={() => onStartAgent(agent.id)}
-                        className="flex items-center gap-1 px-3 py-1 rounded-lg text-xs font-medium text-indigo-400 hover:bg-emerald-500/10 border border-emerald-500/30 transition-colors"
+                        className="flex items-center gap-1 px-3 py-1 rounded-lg text-xs font-medium text-emerald-400 hover:bg-emerald-500/10 border border-emerald-500/30 transition-colors"
                       >
                         <Play className="w-3 h-3 fill-current" />
                         Start
                       </button>
                     )}
+
+                    {/* Dedicated Restart Button */}
+                    <button
+                      id={`docker-agent-restart-btn-${agent.id}`}
+                      onClick={() => onRestartAgent(agent.id)}
+                      disabled={agent.status === 'restarting'}
+                      className="flex items-center gap-1 px-3 py-1 rounded-lg text-xs font-medium text-indigo-300 hover:text-white hover:bg-indigo-500/20 border border-indigo-500/30 transition-colors disabled:opacity-50"
+                      title={agent.status === 'running' ? `Restart ${agent.name} Container` : `Start / Restart ${agent.name} Container`}
+                    >
+                      <RotateCw className={`w-3 h-3 ${agent.status === 'restarting' ? 'animate-spin text-indigo-400' : ''}`} />
+                      <span>{agent.status === 'restarting' ? 'Restarting...' : 'Restart'}</span>
+                    </button>
 
                     <button
                       onClick={() => onInstallAgent(agent.id)}
@@ -372,6 +407,7 @@ networks:
         agentName={currentAgent.name}
         containerId={currentAgent.containerId}
         isContainerRunning={currentAgent.status === 'running'}
+        onRestartContainer={() => onRestartAgent(selectedAgentId)}
         onAddToast={onAddToast}
       />
 

@@ -233,6 +233,19 @@ def install_agent(agent_id: str):
 def start_agent(agent_id: str):
     return docker_mgr.start_container(agent_id)
 
+@app.post("/api/agents/{agent_id}/restart")
+def restart_agent(agent_id: str):
+    return docker_mgr.restart_container(agent_id)
+
+@app.post("/api/containers/restart-all")
+def restart_all_containers():
+    agent_ids = ["hermes-agent", "zeroclaw", "openclaw", "picoclaw"]
+    results = []
+    for aid in agent_ids:
+        res = docker_mgr.restart_container(aid)
+        results.append({"agentId": aid, "status": res.get("status", "running"), "action": res.get("action", "restarted")})
+    return {"success": True, "count": len(results), "results": results, "message": "All containers restarted"}
+
 @app.post("/api/agents/{agent_id}/stop")
 def stop_agent(agent_id: str):
     return docker_mgr.stop_container(agent_id)

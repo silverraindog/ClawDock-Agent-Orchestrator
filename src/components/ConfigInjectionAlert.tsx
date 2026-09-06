@@ -30,18 +30,25 @@ export interface InjectionStatusInfo {
 
 interface ConfigInjectionAlertProps {
   info: InjectionStatusInfo | null;
+  currentAgentId?: AgentId;
   onDismiss: () => void;
   onRetry?: (agentId: AgentId) => void;
 }
 
 export const ConfigInjectionAlert: React.FC<ConfigInjectionAlertProps> = ({
   info,
+  currentAgentId,
   onDismiss,
   onRetry
 }) => {
   const [expanded, setExpanded] = useState(false);
 
   if (!info || info.status === 'idle') {
+    return null;
+  }
+
+  // Ensure banner is strictly scoped to the active agent if currentAgentId is provided
+  if (currentAgentId && info.agentId !== currentAgentId) {
     return null;
   }
 

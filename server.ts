@@ -1501,7 +1501,70 @@ app.post('/api/agents/:id/start', (req, res) => {
   agentStates[agentId].status = 'running';
   agentStates[agentId].logs.push(`[${new Date().toLocaleTimeString()}] Docker container started successfully.`);
   savePersistentState();
-  res.json({ success: true, status: 'running' });
+  res.json({ success: true, status: 'running', action: 'started' });
+});
+
+// Restart agent container (or start if stopped)
+app.post('/api/agents/:id/restart', (req, res) => {
+  const agentId = req.params.id;
+  if (!agentStates[agentId]) {
+    agentStates[agentId] = { status: 'stopped', containerId: 'c_' + Math.random().toString(36).substring(2, 8), logs: [] };
+  }
+  const wasStopped = agentStates[agentId].status === 'stopped';
+  agentStates[agentId].status = 'restarting';
+  agentStates[agentId].logs.push(
+    wasStopped
+      ? `[${new Date().toLocaleTimeString()}] [Docker Engine] Container was stopped. Starting container ${agentStates[agentId].containerId || agentId}...`
+      : `[${new Date().toLocaleTimeString()}] [Docker Engine] Received restart command. Executing docker restart on container ${agentStates[agentId].containerId || agentId}...`
+  );
+
+  setTimeout(() => {
+    if (agentStates[agentId]) {
+      agentStates[agentId].status = 'running';
+      agentStates[agentId].logs.push(`[${new Date().toLocaleTimeString()}] [Docker Engine] Container restarted successfully and listening for requests.`);
+      savePersistentState();
+    }
+  }, 700);
+
+  savePersistentState();
+  res.json({
+    success: true,
+    status: 'running',
+    action: wasStopped ? 'started' : 'restarted',
+    message: wasStopped ? `Started container for ${agentId}` : `Restarted container for ${agentId}`,
+    containerId: agentStates[agentId].containerId
+  });
+});
+
+// Bulk restart all agent containers
+app.post('/api/containers/restart-all', (req, res) => {
+  const agentIds = ['hermes-agent', 'zeroclaw', 'openclaw', 'picoclaw'];
+  const results: any[] = [];
+
+  agentIds.forEach(id => {
+    if (!agentStates[id]) {
+      agentStates[id] = { status: 'stopped', containerId: 'c_' + Math.random().toString(36).substring(2, 8), logs: [] };
+    }
+    const wasStopped = agentStates[id].status === 'stopped';
+    agentStates[id].status = 'restarting';
+    agentStates[id].logs.push(`[${new Date().toLocaleTimeString()}] [Docker Engine] Bulk restart invoked. Restarting runtime for ${id}...`);
+    setTimeout(() => {
+      if (agentStates[id]) {
+        agentStates[id].status = 'running';
+        agentStates[id].logs.push(`[${new Date().toLocaleTimeString()}] [Docker Engine] Bulk restart completed. Container active.`);
+        savePersistentState();
+      }
+    }, 800);
+    results.push({ agentId: id, action: wasStopped ? 'started' : 'restarted' });
+  });
+
+  savePersistentState();
+  res.json({
+    success: true,
+    count: agentIds.length,
+    results,
+    message: 'All agent containers restart sequence initiated.'
+  });
 });
 
 // Stop agent

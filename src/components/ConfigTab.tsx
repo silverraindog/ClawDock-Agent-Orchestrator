@@ -589,7 +589,8 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
 
       {/* Configuration Injection Status Alert Banner */}
       <ConfigInjectionAlert 
-        info={injectionStatus || null} 
+        info={injectionStatus && injectionStatus.agentId === agentId ? injectionStatus : null} 
+        currentAgentId={agentId}
         onDismiss={onDismissInjectionStatus || (() => {})} 
         onRetry={onInjectConfig} 
       />
@@ -2229,6 +2230,7 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
               issues={deepValidation.issues}
               lineIssuesMap={deepValidation.lineIssuesMap}
               schemaConfig={config}
+              syntaxDetail={deepValidation.syntaxDetail}
               onApplyFix={handleApplySingleFix}
               onAutoFixSyntax={handleAutoFixSyntax}
               onSyncNativeToSchema={handleSyncNativeToSchema}

@@ -183,6 +183,44 @@ class DockerManager:
 
         return {"success": True, "status": "stopped", "message": f"Stopped {spec['container_name']}"}
 
+    def restart_container(self, agent_id: str) -> Dict[str, Any]:
+        spec = AGENT_DOCKER_IMAGES.get(agent_id)
+        if not spec:
+            raise ValueError(f"Unknown agent: {agent_id}")
+
+        if self.client:
+            try:
+                container = self.client.containers.get(spec["container_name"])
+                if container.status != "running":
+                    container.start()
+                    return {
+                        "success": True,
+                        "status": "running",
+                        "action": "started",
+                        "containerId": container.id[:12],
+                        "message": f"Started stopped container {spec['container_name']}"
+                    }
+                else:
+                    container.restart(timeout=10)
+                    return {
+                        "success": True,
+                        "status": "running",
+                        "action": "restarted",
+                        "containerId": container.id[:12],
+                        "message": f"Restarted container {spec['container_name']}"
+                    }
+            except Exception as e:
+                logger.info(f"Container restart get failed, triggering start: {e}")
+                return self.start_container(agent_id)
+
+        return {
+            "success": True,
+            "status": "running",
+            "action": "restarted",
+            "containerId": f"c_{agent_id[:6]}9a",
+            "message": f"Restarted {spec['container_name']} on port {spec['default_port']}"
+        }
+
     def search_containers_wildcard(self, pattern: str = "*") -> List[Dict[str, Any]]:
         import fnmatch
         candidates = []

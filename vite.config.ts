@@ -1367,8 +1367,28 @@ vector_db_url = "http://everos:8080"
             }
           }
 
+          // Bulk container restart
+          if (pathname === '/api/containers/restart-all' && method === 'POST') {
+            res.setHeader('Content-Type', 'application/json');
+            const agentIds = ['hermes-agent', 'zeroclaw', 'openclaw', 'picoclaw'];
+            agentIds.forEach(id => {
+              if (agentStates[id]) {
+                const wasStopped = agentStates[id].status === 'stopped';
+                agentStates[id].status = 'restarting';
+                agentStates[id].logs.push(`[${new Date().toLocaleTimeString()}] [Docker Engine] Bulk restart invoked. Restarting runtime for ${id}...`);
+                setTimeout(() => {
+                  if (agentStates[id]) {
+                    agentStates[id].status = 'running';
+                    agentStates[id].logs.push(`[${new Date().toLocaleTimeString()}] [Docker Engine] Bulk restart completed. Container active.`);
+                  }
+                }, 700);
+              }
+            });
+            return res.end(JSON.stringify({ success: true, count: agentIds.length, message: 'All agent containers restart sequence initiated.' }));
+          }
+
           // Agent Lifecycle Actions: /api/agents/:id/:action
-          const agentActionMatch = pathname.match(/^\/api\/agents\/([^/]+)\/(start|stop|install|detect|logs|docker-exec-config)$/);
+          const agentActionMatch = pathname.match(/^\/api\/agents\/([^/]+)\/(start|stop|restart|install|detect|logs|docker-exec-config)$/);
           if (agentActionMatch) {
             const agentId = agentActionMatch[1];
             const action = agentActionMatch[2];
@@ -1382,7 +1402,32 @@ vector_db_url = "http://everos:8080"
                 agentStates[agentId].status = 'running';
                 agentStates[agentId].logs.push(`[${new Date().toLocaleTimeString()}] Container started.`);
               }
-              return res.end(JSON.stringify({ success: true, status: 'running' }));
+              return res.end(JSON.stringify({ success: true, status: 'running', action: 'started' }));
+            }
+
+            if (action === 'restart') {
+              let wasStopped = false;
+              if (agentStates[agentId]) {
+                wasStopped = agentStates[agentId].status === 'stopped';
+                agentStates[agentId].status = 'restarting';
+                agentStates[agentId].logs.push(
+                  wasStopped
+                    ? `[${new Date().toLocaleTimeString()}] [Docker Engine] Container was stopped. Starting container ${agentId}...`
+                    : `[${new Date().toLocaleTimeString()}] [Docker Engine] Received restart command. Executing docker restart for container ${agentId}...`
+                );
+                setTimeout(() => {
+                  if (agentStates[agentId]) {
+                    agentStates[agentId].status = 'running';
+                    agentStates[agentId].logs.push(`[${new Date().toLocaleTimeString()}] [Docker Engine] Container restarted and healthy.`);
+                  }
+                }, 600);
+              }
+              return res.end(JSON.stringify({ 
+                success: true, 
+                status: 'running', 
+                action: wasStopped ? 'started' : 'restarted',
+                message: wasStopped ? `Started container for ${agentId}` : `Restarted container for ${agentId}` 
+              }));
             }
 
             if (action === 'stop') {

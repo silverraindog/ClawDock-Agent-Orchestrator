@@ -4,6 +4,7 @@ import {
   Play, 
   Pause, 
   RefreshCw, 
+  RotateCw,
   Download, 
   Copy, 
   Check, 
@@ -26,6 +27,7 @@ interface DockerLogsInspectorProps {
   agentName: string;
   containerId?: string;
   isContainerRunning?: boolean;
+  onRestartContainer?: () => void;
   onAddToast?: (type: 'success' | 'error' | 'info', title: string, description?: string) => void;
 }
 
@@ -36,6 +38,7 @@ export const DockerLogsInspector: React.FC<DockerLogsInspectorProps> = ({
   agentName,
   containerId,
   isContainerRunning = true,
+  onRestartContainer,
   onAddToast
 }) => {
   const [logs, setLogs] = useState<string[]>([]);
@@ -243,6 +246,19 @@ export const DockerLogsInspector: React.FC<DockerLogsInspectorProps> = ({
             <option value={5000}>5s poll</option>
             <option value={10000}>10s poll</option>
           </select>
+
+          {/* Restart Container Action */}
+          {onRestartContainer && (
+            <button
+              id="docker-logs-restart-container-btn"
+              onClick={onRestartContainer}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 hover:text-white border border-indigo-500/40 transition-colors text-xs font-medium"
+              title={isContainerRunning ? `Restart ${agentName} Container` : `Start ${agentName} Container`}
+            >
+              <RotateCw className="w-3.5 h-3.5 text-indigo-400" />
+              <span className="hidden md:inline">{isContainerRunning ? 'Restart Container' : 'Start Container'}</span>
+            </button>
+          )}
 
           {/* Force Refresh */}
           <button

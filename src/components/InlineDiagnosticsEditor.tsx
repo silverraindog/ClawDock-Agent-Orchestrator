@@ -19,7 +19,7 @@ import {
   Layers,
   ArrowRight
 } from 'lucide-react';
-import { DeepSchemaIssue } from '../utils/configValidator';
+import { DeepSchemaIssue, SyntaxValidationDetail } from '../utils/configValidator';
 import { AgentFullConfig } from '../types';
 
 interface InlineDiagnosticsEditorProps {
@@ -31,6 +31,7 @@ interface InlineDiagnosticsEditorProps {
   issues: DeepSchemaIssue[];
   lineIssuesMap: Record<number, DeepSchemaIssue[]>;
   schemaConfig: AgentFullConfig;
+  syntaxDetail?: SyntaxValidationDetail;
   onApplyFix: (issue: DeepSchemaIssue) => void;
   onAutoFixSyntax: () => void;
   onSyncNativeToSchema: () => void;
@@ -46,6 +47,7 @@ export const InlineDiagnosticsEditor: React.FC<InlineDiagnosticsEditorProps> = (
   issues,
   lineIssuesMap,
   schemaConfig,
+  syntaxDetail,
   onApplyFix,
   onAutoFixSyntax,
   onSyncNativeToSchema,
@@ -92,6 +94,50 @@ export const InlineDiagnosticsEditor: React.FC<InlineDiagnosticsEditorProps> = (
 
   return (
     <div className="space-y-4">
+      {/* Real-time Syntax Parser Diagnostic Banner */}
+      {errorCount > 0 && (
+        <div className="p-4 rounded-xl bg-gradient-to-r from-rose-950/60 via-rose-900/30 to-slate-900 border border-rose-500/40 text-rose-100 shadow-lg space-y-2.5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <div className="p-1.5 rounded-lg bg-rose-500/20 text-rose-400 border border-rose-500/30">
+                <AlertCircle className="w-4 h-4" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold text-white tracking-wide">
+                    Real-Time Syntax Error Detected
+                  </span>
+                  <span className="px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-rose-500/20 text-rose-300 border border-rose-500/30 uppercase">
+                    {syntaxDetail?.parserName || (format === 'yaml' ? 'YAML Parser' : format === 'toml' ? 'TOML Parser' : 'JSON Engine')}
+                  </span>
+                </div>
+                <p className="text-xs text-rose-200/90 font-sans mt-0.5">
+                  {syntaxDetail?.primaryError || issues.find(i => i.severity === 'error')?.message || 'Parser encountered syntax error in raw configuration.'}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              {syntaxDetail?.primaryLine && (
+                <button
+                  onClick={() => jumpToLine(syntaxDetail.primaryLine!)}
+                  className="px-2.5 py-1 rounded-lg text-xs font-mono font-medium bg-rose-900/60 hover:bg-rose-800 text-rose-200 border border-rose-500/40 transition-colors"
+                >
+                  Jump to Line {syntaxDetail.primaryLine}
+                </button>
+              )}
+              <button
+                onClick={onAutoFixSyntax}
+                className="flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-semibold bg-rose-600 hover:bg-rose-500 text-white shadow-sm transition-all"
+              >
+                <Wrench className="w-3.5 h-3.5" />
+                <span>Quick Auto-Fix</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Editor Control & Diagnostic Stats Bar */}
       <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 rounded-xl bg-slate-900/90 border border-slate-800 backdrop-blur-sm shadow-sm">
         {/* Left: Issue Summary Badges */}
@@ -99,6 +145,11 @@ export const InlineDiagnosticsEditor: React.FC<InlineDiagnosticsEditorProps> = (
           <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-950 border border-slate-800 text-slate-300 font-mono">
             <Layers className="w-3.5 h-3.5 text-indigo-400" />
             <span>{lines.length} lines</span>
+          </div>
+
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-950 border border-slate-800 text-slate-400 font-mono text-[11px]">
+            <span>Engine:</span>
+            <span className="text-cyan-400 font-semibold">{syntaxDetail?.parserName || format.toUpperCase()}</span>
           </div>
 
           {errorCount > 0 ? (

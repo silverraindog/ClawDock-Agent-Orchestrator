@@ -1,6 +1,6 @@
 export type AgentId = 'hermes-agent' | 'zeroclaw' | 'openclaw' | 'picoclaw';
 
-export type AgentStatus = 'running' | 'stopped' | 'not_installed' | 'detected_local' | 'error';
+export type AgentStatus = 'running' | 'stopped' | 'restarting' | 'not_installed' | 'detected_local' | 'error';
 
 export interface AgentInfo {
   id: AgentId;

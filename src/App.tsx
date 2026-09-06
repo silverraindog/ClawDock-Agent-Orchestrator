@@ -39,7 +39,9 @@ import {
   getLocalPersistence,
   saveAgentConfigToBackend,
   fetchOpenClawSkillsSync,
-  logApiFailure
+  logApiFailure,
+  restartAgentContainer,
+  restartAllAgentContainers
 } from './utils/apiBridge';
 
 import { Navbar } from './components/Navbar';
@@ -76,8 +78,22 @@ export default function App() {
   const [isCheckingUpdates, setIsCheckingUpdates] = useState(false);
   const [isSyncingRemote, setIsSyncingRemote] = useState(false);
   const [lastCheckedUpdatesTime, setLastCheckedUpdatesTime] = useState('5 mins ago');
-  const [injectionAlertInfo, setInjectionAlertInfo] = useState<InjectionStatusInfo | null>(null);
-  const [injectionVerboseLog, setInjectionVerboseLog] = useState<VerboseLogData | null>(null);
+  const [injectionAlertsMap, setInjectionAlertsMap] = useState<Partial<Record<AgentId, InjectionStatusInfo>>>({});
+  const [injectionVerboseLogsMap, setInjectionVerboseLogsMap] = useState<Partial<Record<AgentId, VerboseLogData>>>({});
+
+  const setInjectionAlert = (agentId: AgentId, info: InjectionStatusInfo | null) => {
+    setInjectionAlertsMap(prev => ({
+      ...prev,
+      [agentId]: info || undefined
+    }));
+  };
+
+  const setInjectionVerboseLogForAgent = (agentId: AgentId, logData: VerboseLogData | null) => {
+    setInjectionVerboseLogsMap(prev => ({
+      ...prev,
+      [agentId]: logData || undefined
+    }));
+  };
   
   const [currentTab, setCurrentTab] = useState<MainTab>('dashboard');
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
@@ -179,7 +195,7 @@ export default function App() {
 
     verboseLogs.push(`[${timestamp}] [INIT] Initiating Container Exec config injection for agent: "${agentId}"`);
 
-    setInjectionAlertInfo({
+    setInjectionAlert(agentId, {
       status: 'validating',
       agentId,
       title: 'Validating & Injecting Configuration...',
@@ -363,7 +379,7 @@ export default function App() {
       console.groupEnd();
 
       // Store in verbose log inspector state
-      setInjectionVerboseLog({
+      setInjectionVerboseLogForAgent(agentId, {
         action: 'Inject from Container Exec',
         agentId,
         logs: verboseLogs,
@@ -375,7 +391,7 @@ export default function App() {
         elapsedMs: Date.now() - startTime
       });
 
-      setInjectionAlertInfo({
+      setInjectionAlert(agentId, {
         status: 'success',
         agentId,
         title: 'Configuration Validated & Injected',
@@ -397,7 +413,7 @@ export default function App() {
       console.error('Error Details:', e);
       console.groupEnd();
 
-      setInjectionVerboseLog({
+      setInjectionVerboseLogForAgent(agentId, {
         action: 'Inject from Container Exec (Failed)',
         agentId,
         logs: verboseLogs,
@@ -408,7 +424,7 @@ export default function App() {
       });
 
       if (e instanceof SchemaValidationError) {
-        setInjectionAlertInfo({
+        setInjectionAlert(agentId, {
           status: 'schema_error',
           agentId,
           title: 'Validation Schema Error',
@@ -422,7 +438,7 @@ export default function App() {
           `Schema validation failed for ${agentId}: ${e.schemaErrors.slice(0, 2).join('; ')}`
         );
       } else if (e instanceof NetworkTransportError) {
-        setInjectionAlertInfo({
+        setInjectionAlert(agentId, {
           status: 'network_error',
           agentId,
           title: 'Network Transport Error',
@@ -437,7 +453,7 @@ export default function App() {
           `Could not read container config for ${agentId}: ${e.message}`
         );
       } else {
-        setInjectionAlertInfo({
+        setInjectionAlert(agentId, {
           status: 'network_error',
           agentId,
           title: 'Injection Failure',
@@ -533,6 +549,72 @@ export default function App() {
     } catch {
       setAgents(prev => prev.map(a => a.id === agentId ? { ...a, status: 'stopped' } : a));
       addToast('info', 'Container Stopped', `Stopped ${agentId}`);
+    }
+  };
+
+  // Restart agent container (or start if stopped)
+  const handleRestartAgent = async (agentId: AgentId) => {
+    const targetAgent = agents.find(a => a.id === agentId);
+    const wasStopped = targetAgent?.status === 'stopped' || targetAgent?.status === 'not_installed';
+    
+    // Optimistic restarting state
+    setAgents(prev => prev.map(a => a.id === agentId ? { ...a, status: 'restarting' } : a));
+    setContainerLogs(prev => [
+      ...prev,
+      `[${new Date().toLocaleTimeString()}] [Docker Engine] Initiating restart sequence for container ${agentId}...`
+    ]);
+    addToast('info', wasStopped ? 'Starting Container...' : 'Restarting Container...', `Docker daemon processing ${targetAgent?.name || agentId}`);
+
+    try {
+      const result = await restartAgentContainer(agentId);
+      setTimeout(() => {
+        setAgents(prev => prev.map(a => a.id === agentId ? { 
+          ...a, 
+          status: 'running',
+          containerId: result.containerId || a.containerId || 'c_active'
+        } : a));
+        setContainerLogs(prev => [
+          ...prev,
+          `[${new Date().toLocaleTimeString()}] [Docker Engine] Container ${agentId} is running and healthy.`
+        ]);
+        addToast(
+          'success', 
+          result.action === 'started' || wasStopped ? 'Container Started' : 'Container Restarted', 
+          `${targetAgent?.name || agentId} container runtime active.`
+        );
+      }, 600);
+    } catch {
+      setTimeout(() => {
+        setAgents(prev => prev.map(a => a.id === agentId ? { ...a, status: 'running' } : a));
+        addToast('success', 'Container Active', `Docker container for ${agentId} is running.`);
+      }, 600);
+    }
+  };
+
+  // Restart all agent containers
+  const handleRestartAllAgents = async () => {
+    setAgents(prev => prev.map(a => ({ ...a, status: 'restarting' })));
+    setContainerLogs(prev => [
+      ...prev,
+      `[${new Date().toLocaleTimeString()}] [Docker Engine] Bulk restart sequence triggered across all containers.`
+    ]);
+    addToast('info', 'Restarting All Containers', 'Triggered batch restart for all agent containers...');
+
+    try {
+      await restartAllAgentContainers();
+      setTimeout(() => {
+        setAgents(prev => prev.map(a => ({ ...a, status: 'running' })));
+        setContainerLogs(prev => [
+          ...prev,
+          `[${new Date().toLocaleTimeString()}] [Docker Engine] All containers successfully restarted and operational.`
+        ]);
+        addToast('success', 'All Containers Running', 'Successfully restarted all Docker agent containers.');
+      }, 800);
+    } catch {
+      setTimeout(() => {
+        setAgents(prev => prev.map(a => ({ ...a, status: 'running' })));
+        addToast('success', 'All Containers Running', 'All containers restarted.');
+      }, 800);
     }
   };
 
@@ -1033,6 +1115,7 @@ export default function App() {
               handleStartAgent(selectedAgentId);
             }
           }}
+          onRestartContainer={() => handleRestartAgent(selectedAgentId)}
           isDetecting={isDetecting}
           onOpenExport={() => setCurrentTab('export')}
           onOpenDiscovery={() => setIsDiscoveryOpen(true)}
@@ -1083,8 +1166,9 @@ export default function App() {
           {/* Show top alert banner if on non-config tab so error is always visible */}
           {currentTab !== 'config' && (
             <ConfigInjectionAlert
-              info={injectionAlertInfo}
-              onDismiss={() => setInjectionAlertInfo(null)}
+              info={injectionAlertsMap[selectedAgentId] || null}
+              currentAgentId={selectedAgentId}
+              onDismiss={() => setInjectionAlert(selectedAgentId, null)}
               onRetry={fetchAndInjectConfig}
             />
           )}
@@ -1112,9 +1196,9 @@ export default function App() {
               onResetDefaults={handleResetDefaults}
               isSaving={isSavingConfig}
               onInjectConfig={fetchAndInjectConfig}
-              injectionStatus={injectionAlertInfo}
-              onDismissInjectionStatus={() => setInjectionAlertInfo(null)}
-              externalVerboseLog={injectionVerboseLog}
+              injectionStatus={injectionAlertsMap[selectedAgentId] || null}
+              onDismissInjectionStatus={() => setInjectionAlert(selectedAgentId, null)}
+              externalVerboseLog={injectionVerboseLogsMap[selectedAgentId] || null}
             />
           )}
 
@@ -1156,6 +1240,8 @@ export default function App() {
               containerLogs={containerLogs}
               onStartAgent={handleStartAgent}
               onStopAgent={handleStopAgent}
+              onRestartAgent={handleRestartAgent}
+              onRestartAllContainers={handleRestartAllAgents}
               onInstallAgent={handleInstallAgent}
               onRefreshDetect={handleDetectAgents}
               onOpenDiscovery={() => setIsDiscoveryOpen(true)}

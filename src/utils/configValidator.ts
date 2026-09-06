@@ -1,5 +1,7 @@
 import { AgentFullConfig, AgentId, LLMProvider, SandboxMode, MemoryBackend } from '../types';
 import { parseNativeConfigToSchema } from './configParser';
+import YAML from 'yaml';
+import * as TOML from 'smol-toml';
 
 export class SchemaValidationError extends Error {
   public schemaErrors: string[];
@@ -47,6 +49,16 @@ export interface DeepSchemaIssue {
   replacementText?: string;
 }
 
+export interface SyntaxValidationDetail {
+  isValid: boolean;
+  format: 'yaml' | 'toml' | 'json';
+  parserName: string;
+  issues: DeepSchemaIssue[];
+  primaryError?: string;
+  primaryLine?: number;
+  primaryColumn?: number;
+}
+
 export interface ConfigValidationResult {
   isValid: boolean;
   errors: string[];
@@ -55,6 +67,7 @@ export interface ConfigValidationResult {
   normalizedConfig?: AgentFullConfig;
   syncStatus: 'in_sync' | 'mismatched' | 'syntax_invalid';
   lineIssuesMap: Record<number, DeepSchemaIssue[]>;
+  syntaxDetail?: SyntaxValidationDetail;
 }
 
 export const VALID_PROVIDERS: LLMProvider[] = [
@@ -67,28 +80,39 @@ export const VALID_MEMORY_BACKENDS: MemoryBackend[] = ['everos', 'sqlite', 'chro
 export const VALID_AGENT_IDS: AgentId[] = ['hermes-agent', 'zeroclaw', 'openclaw', 'picoclaw'];
 
 /**
- * Validates native syntax (YAML, TOML, JSON) line-by-line and returns precise line-level syntax issues.
+ * Real-time syntax validator for raw native configuration strings.
+ * Uses official YAML/TOML parsing engines (YAML v2 AST & smol-toml) to check
+ * syntax before triggering downstream schema cross-validation.
  */
-export function validateNativeSyntax(
-  content: string, 
+export function validateRawNativeSyntax(
+  content: string,
   format: 'yaml' | 'toml' | 'json' = 'yaml'
-): DeepSchemaIssue[] {
+): SyntaxValidationDetail {
   const issues: DeepSchemaIssue[] = [];
+  const lines = content.split('\n');
+
   if (!content || !content.trim()) {
     issues.push({
       id: 'empty-file',
       type: 'syntax_error',
       severity: 'error',
       path: 'root',
-      message: 'Native configuration file is empty.',
+      message: 'Native configuration file is empty. Provide configuration directives or comments.',
       line: 1,
       column: 1
     });
-    return issues;
+    return {
+      isValid: false,
+      format,
+      parserName: format.toUpperCase(),
+      issues,
+      primaryError: 'Native configuration file is empty.',
+      primaryLine: 1,
+      primaryColumn: 1
+    };
   }
 
-  const lines = content.split('\n');
-
+  // 1. JSON Parser Validation
   if (format === 'json') {
     try {
       JSON.parse(content);
@@ -112,30 +136,117 @@ export function validateNativeSyntax(
         type: 'syntax_error',
         severity: 'error',
         path: `line_${line}`,
-        message: err.message,
+        message: `JSON Syntax Error: ${err.message}`,
         line,
-        column: col
+        column: col,
+        suggestedFix: 'Fix syntax error or trailing comma in JSON'
       });
     }
-    return issues;
+    return {
+      isValid: issues.filter(i => i.severity === 'error').length === 0,
+      format,
+      parserName: 'JSON Engine',
+      issues,
+      primaryError: issues[0]?.message,
+      primaryLine: issues[0]?.line,
+      primaryColumn: issues[0]?.column
+    };
   }
 
-  // YAML & TOML Syntax Linting
+  // 2. TOML Parser Validation using smol-toml
+  if (format === 'toml') {
+    let tomlParseFailed = false;
+    try {
+      TOML.parse(content);
+    } catch (err: any) {
+      tomlParseFailed = true;
+      let lineNum = typeof err.line === 'number' ? err.line : 1;
+      let colNum = typeof err.column === 'number' ? err.column : 1;
+
+      // Extract coordinates if not present directly on error object
+      if (lineNum === 1 && colNum === 1) {
+        const lineMatch = err.message.match(/line\s+(\d+)/i);
+        const colMatch = err.message.match(/col(?:umn)?\s+(\d+)/i);
+        if (lineMatch) lineNum = parseInt(lineMatch[1], 10);
+        if (colMatch) colNum = parseInt(colMatch[1], 10);
+      }
+
+      const cleanMessage = err.message
+        ? err.message.replace(/\s+at\s+line\s+\d+.*$/i, '').trim()
+        : 'TOML syntax error';
+
+      const lineText = lines[lineNum - 1] || '';
+      let suggestedFix: string | undefined;
+      let fixType: DeepSchemaIssue['fixType'];
+      let replacementText: string | undefined;
+
+      if (lineText.trim().startsWith('[') && !lineText.trim().endsWith(']')) {
+        suggestedFix = 'Add closing bracket "]" to table header';
+        fixType = 'replace_line';
+        replacementText = `${lineText}]`;
+      } else if (!lineText.includes('=') && lineText.trim() && !lineText.trim().startsWith('#') && !lineText.trim().startsWith('[')) {
+        suggestedFix = 'Use key = value syntax for TOML attributes';
+      }
+
+      issues.push({
+        id: `toml-parser-err-${lineNum}-${colNum}`,
+        type: 'syntax_error',
+        severity: 'error',
+        path: `line_${lineNum}`,
+        message: `TOML Parser Error: ${cleanMessage}`,
+        line: lineNum,
+        column: colNum,
+        suggestedFix,
+        fixType,
+        replacementText
+      });
+    }
+
+    // Additional TOML line heuristics
+    lines.forEach((lineText, idx) => {
+      const lineNum = idx + 1;
+      const trimmed = lineText.trim();
+      if (!trimmed || trimmed.startsWith('#')) return;
+
+      if (trimmed.startsWith('[') && !trimmed.endsWith(']')) {
+        const alreadyAdded = issues.some(i => i.line === lineNum);
+        if (!alreadyAdded) {
+          issues.push({
+            id: `toml-unclosed-header-${lineNum}`,
+            type: 'syntax_error',
+            severity: 'error',
+            path: `line_${lineNum}`,
+            message: 'Unclosed TOML section header. Must terminate with "]"',
+            line: lineNum,
+            column: lineText.length,
+            suggestedFix: 'Add closing bracket "]" to header',
+            fixType: 'replace_line',
+            replacementText: `${lineText}]`
+          });
+        }
+      }
+    });
+
+    return {
+      isValid: !tomlParseFailed && issues.filter(i => i.severity === 'error').length === 0,
+      format,
+      parserName: 'TOML Parser (smol-toml)',
+      issues,
+      primaryError: issues[0]?.message,
+      primaryLine: issues[0]?.line,
+      primaryColumn: issues[0]?.column
+    };
+  }
+
+  // 3. YAML Parser Validation using yaml AST Document Parser
   const seenTopLevelKeys = new Set<string>();
   const seenSubKeys = new Map<string, Set<string>>();
   let currentParentKey = '';
 
+  // 3a. Check for tab characters (banned in YAML)
   lines.forEach((lineText, idx) => {
     const lineNum = idx + 1;
-    const trimmed = lineText.trim();
-
-    // Skip empty lines or full comments
-    if (!trimmed || trimmed.startsWith('#') || trimmed.startsWith('//')) {
-      return;
-    }
-
-    // 1. Check for raw TAB character indentation in YAML
-    if (format === 'yaml' && lineText.includes('\t')) {
+    if (lineText.includes('\t')) {
       const col = lineText.indexOf('\t') + 1;
       const fixedLine = lineText.replace(/\t/g, '  ');
       issues.push({
@@ -152,7 +263,26 @@ export function validateNativeSyntax(
       });
     }
 
-    // 2. Check for unclosed single or double quotes on single line
+    const trimmed = lineText.trim();
+    if (!trimmed || trimmed.startsWith('#')) return;
+
+    // List item formatting: "-item" -> "- item"
+    if (trimmed.startsWith('-') && trimmed.length > 1 && trimmed[1] !== ' ' && trimmed[1] !== '-') {
+      issues.push({
+        id: `yaml-list-space-${lineNum}`,
+        type: 'syntax_error',
+        severity: 'error',
+        path: `line_${lineNum}`,
+        message: 'YAML list items require a space after the dash (e.g. "- item" instead of "-item").',
+        line: lineNum,
+        column: lineText.indexOf('-') + 1,
+        suggestedFix: 'Add space after "-"',
+        fixType: 'replace_line',
+        replacementText: lineText.replace(/^(\s*)-(\S)/, '$1- $2')
+      });
+    }
+
+    // Unclosed quotes on single line
     const singleQuotes = (lineText.match(/(?<!\\)'/g) || []).length;
     const doubleQuotes = (lineText.match(/(?<!\\)"/g) || []).length;
 
@@ -184,116 +314,140 @@ export function validateNativeSyntax(
       });
     }
 
-    // 3. TOML checks
-    if (format === 'toml') {
-      if (trimmed.startsWith('[') && !trimmed.endsWith(']')) {
-        issues.push({
-          id: `toml-section-${lineNum}`,
-          type: 'syntax_error',
-          severity: 'error',
-          path: `line_${lineNum}`,
-          message: 'Unclosed TOML section header. Must terminate with "]"',
-          line: lineNum,
-          column: lineText.length,
-          suggestedFix: 'Add closing bracket "]" to table header',
-          fixType: 'replace_line',
-          replacementText: `${lineText}]`
-        });
-      } else if (!trimmed.startsWith('[') && !trimmed.includes('=')) {
-        issues.push({
-          id: `toml-kv-${lineNum}`,
-          type: 'syntax_error',
-          severity: 'error',
-          path: `line_${lineNum}`,
-          message: 'TOML property requires key = value syntax.',
-          line: lineNum,
-          column: 1
-        });
-      }
-    }
+    // Duplicate key detection
+    const keyMatch = trimmed.match(/^([a-zA-Z0-9_\-]+)\s*:/);
+    if (keyMatch) {
+      const keyName = keyMatch[1];
+      const indent = lineText.search(/\S/);
 
-    // 4. YAML structure and duplicate key checks
-    if (format === 'yaml') {
-      const isListItem = trimmed.startsWith('-');
-      const contentPart = isListItem ? trimmed.slice(1).trim() : trimmed;
-
-      // Check for list item missing space after dash e.g. "-item: value"
-      if (trimmed.startsWith('-') && trimmed.length > 1 && trimmed[1] !== ' ' && trimmed[1] !== '-') {
-        issues.push({
-          id: `yaml-list-space-${lineNum}`,
-          type: 'syntax_error',
-          severity: 'error',
-          path: `line_${lineNum}`,
-          message: 'YAML list items require a space after the dash (e.g. "- item" instead of "-item").',
-          line: lineNum,
-          column: lineText.indexOf('-') + 1,
-          suggestedFix: 'Add space after "-"',
-          fixType: 'replace_line',
-          replacementText: lineText.replace(/^(\s*)-(\S)/, '$1- $2')
-        });
-      }
-
-      if (contentPart && !contentPart.startsWith('#')) {
-        // If it looks like a key without colon
-        if (!contentPart.includes(':') && !isListItem && !trimmed.startsWith('>') && !trimmed.startsWith('|')) {
+      if (indent === 0) {
+        currentParentKey = keyName;
+        if (seenTopLevelKeys.has(keyName)) {
           issues.push({
-            id: `yaml-colon-${lineNum}`,
+            id: `dup-key-${keyName}-${lineNum}`,
             type: 'syntax_error',
             severity: 'warning',
-            path: `line_${lineNum}`,
-            message: 'Expected key: value mapping in YAML.',
+            path: keyName,
+            message: `Duplicate top-level key "${keyName}" detected. Later definitions may override earlier ones.`,
             line: lineNum,
-            column: lineText.indexOf(trimmed) + 1,
-            suggestedFix: `Add colon: "${trimmed}: "`
+            column: 1,
+            suggestedFix: `Merge duplicate "${keyName}" block`
           });
         }
-
-        // Duplicate key detection
-        const keyMatch = trimmed.match(/^([a-zA-Z0-9_\-]+)\s*:/);
-        if (keyMatch) {
-          const keyName = keyMatch[1];
-          const indent = lineText.search(/\S/);
-
-          if (indent === 0) {
-            currentParentKey = keyName;
-            if (seenTopLevelKeys.has(keyName)) {
-              issues.push({
-                id: `dup-key-${keyName}-${lineNum}`,
-                type: 'syntax_error',
-                severity: 'warning',
-                path: keyName,
-                message: `Duplicate top-level key "${keyName}" detected. Later definitions may override earlier ones.`,
-                line: lineNum,
-                column: 1,
-                suggestedFix: `Merge duplicate "${keyName}" block`
-              });
-            }
-            seenTopLevelKeys.add(keyName);
-          } else if (currentParentKey) {
-            if (!seenSubKeys.has(currentParentKey)) {
-              seenSubKeys.set(currentParentKey, new Set());
-            }
-            const subSet = seenSubKeys.get(currentParentKey)!;
-            if (subSet.has(keyName)) {
-              issues.push({
-                id: `dup-subkey-${currentParentKey}.${keyName}-${lineNum}`,
-                type: 'syntax_error',
-                severity: 'warning',
-                path: `${currentParentKey}.${keyName}`,
-                message: `Duplicate key "${keyName}" inside "${currentParentKey}" block.`,
-                line: lineNum,
-                column: indent + 1,
-                suggestedFix: `Remove duplicate "${keyName}" entry`
-              });
-            }
-            subSet.add(keyName);
-          }
+        seenTopLevelKeys.add(keyName);
+      } else if (currentParentKey) {
+        if (!seenSubKeys.has(currentParentKey)) {
+          seenSubKeys.set(currentParentKey, new Set());
         }
+        const subSet = seenSubKeys.get(currentParentKey)!;
+        if (subSet.has(keyName)) {
+          issues.push({
+            id: `dup-subkey-${currentParentKey}.${keyName}-${lineNum}`,
+            type: 'syntax_error',
+            severity: 'warning',
+            path: `${currentParentKey}.${keyName}`,
+            message: `Duplicate key "${keyName}" inside "${currentParentKey}" block.`,
+            line: lineNum,
+            column: indent + 1,
+            suggestedFix: `Remove duplicate "${keyName}" entry`
+          });
+        }
+        subSet.add(keyName);
       }
     }
   });
 
-  return issues;
+  // 3b. Run YAML Parser Document Validator
+  try {
+    const doc = YAML.parseDocument(content, { prettyErrors: true });
+    if (doc.errors && doc.errors.length > 0) {
+      doc.errors.forEach((yamlErr, idx) => {
+        let line = 1;
+        let col = 1;
+        if (yamlErr.linePos && yamlErr.linePos[0]) {
+          line = yamlErr.linePos[0].line;
+          col = yamlErr.linePos[0].col;
+        } else if (yamlErr.pos && typeof yamlErr.pos[0] === 'number') {
+          const sub = content.slice(0, yamlErr.pos[0]);
+          line = sub.split('\n').length;
+          col = sub.length - sub.lastIndexOf('\n');
+        }
+
+        // Clean message to be human-readable and avoid raw multi-line compiler dumps
+        let cleanMsg = yamlErr.message ? yamlErr.message.split('\n')[0] : 'YAML syntax error';
+        cleanMsg = cleanMsg.replace(/\s+at\s+line\s+\d+.*$/i, '').trim();
+
+        // Avoid duplicate issues on same line if tab issue is already logged
+        const existingTabIssue = issues.find(i => i.line === line && i.id.startsWith('tab-indent'));
+        if (!existingTabIssue) {
+          issues.push({
+            id: `yaml-parser-err-${line}-${col}-${idx}`,
+            type: 'syntax_error',
+            severity: 'error',
+            path: `line_${line}`,
+            message: `YAML Parser Error: ${cleanMsg}`,
+            line,
+            column: col,
+            suggestedFix: 'Correct YAML indentation or mapping structure'
+          });
+        }
+      });
+    }
+
+    if (doc.warnings && doc.warnings.length > 0) {
+      doc.warnings.forEach((warn, idx) => {
+        let line = 1;
+        let col = 1;
+        if (warn.linePos && warn.linePos[0]) {
+          line = warn.linePos[0].line;
+          col = warn.linePos[0].col;
+        }
+        const cleanMsg = warn.message ? warn.message.split('\n')[0].replace(/\s+at\s+line\s+\d+.*$/i, '').trim() : 'YAML warning';
+        issues.push({
+          id: `yaml-parser-warn-${line}-${col}-${idx}`,
+          type: 'syntax_error',
+          severity: 'warning',
+          path: `line_${line}`,
+          message: `YAML Warning: ${cleanMsg}`,
+          line,
+          column: col
+        });
+      });
+    }
+  } catch (err: any) {
+    issues.push({
+      id: 'yaml-fatal-parse-err',
+      type: 'syntax_error',
+      severity: 'error',
+      path: 'root',
+      message: `YAML Parse Failure: ${err.message}`,
+      line: 1,
+      column: 1
+    });
+  }
+
+  const errorIssues = issues.filter(i => i.severity === 'error');
+
+  return {
+    isValid: errorIssues.length === 0,
+    format,
+    parserName: 'YAML Parser (v2.x)',
+    issues,
+    primaryError: errorIssues[0]?.message,
+    primaryLine: errorIssues[0]?.line,
+    primaryColumn: errorIssues[0]?.column
+  };
+}
+
+/**
+ * Validates native syntax (YAML, TOML, JSON) line-by-line and returns precise line-level syntax issues.
+ */
+export function validateNativeSyntax(
+  content: string, 
+  format: 'yaml' | 'toml' | 'json' = 'yaml'
+): DeepSchemaIssue[] {
+  const detail = validateRawNativeSyntax(content, format);
+  return detail.issues;
 }
 
 /**
@@ -357,6 +511,13 @@ export function findLineInNative(
 /**
  * Performs Deep-Link schema validation between native file content (YAML/TOML)
  * and the structured JSON AgentFullConfig schema.
+ * 
+ * Flow:
+ * 1. Executes real-time YAML / TOML parser syntax validation.
+ * 2. If syntax is invalid, immediately halts full schema parsing to present
+ *    clear, high-priority syntax diagnostics in the editor UI.
+ * 3. If syntax is valid, parses native content and performs cross-checking
+ *    against the target AgentFullConfig schema.
  */
 export function validateDeepLinkSchema(
   agentId: AgentId,
@@ -368,9 +529,40 @@ export function validateDeepLinkSchema(
   const errors: string[] = [];
   const warnings: string[] = [];
 
-  // 1. Check Native Syntax
-  const syntaxIssues = validateNativeSyntax(nativeContent, format);
-  issues.push(...syntaxIssues);
+  // 1. Real-time Syntax Validation via YAML / TOML Parsing Library
+  const syntaxDetail = validateRawNativeSyntax(nativeContent, format);
+  issues.push(...syntaxDetail.issues);
+
+  const hasSyntaxErrors = syntaxDetail.issues.some(i => i.severity === 'error');
+
+  // If there are syntax errors, avoid noisy schema mismatch cross-validation
+  // and focus directly on the syntax issues with precise line diagnostics
+  if (hasSyntaxErrors) {
+    const lineIssuesMap: Record<number, DeepSchemaIssue[]> = {};
+    issues.forEach(issue => {
+      if (issue.line) {
+        if (!lineIssuesMap[issue.line]) {
+          lineIssuesMap[issue.line] = [];
+        }
+        lineIssuesMap[issue.line].push(issue);
+      }
+      if (issue.severity === 'error') {
+        errors.push(issue.line ? `[Line ${issue.line}] ${issue.message}` : issue.message);
+      } else if (issue.severity === 'warning') {
+        warnings.push(issue.line ? `[Line ${issue.line}] ${issue.message}` : issue.message);
+      }
+    });
+
+    return {
+      isValid: false,
+      errors,
+      warnings,
+      issues,
+      syncStatus: 'syntax_invalid',
+      lineIssuesMap,
+      syntaxDetail
+    };
+  }
 
   // 2. Parse Native Content into a Partial Schema
   let parsedFromNative: Partial<AgentFullConfig> = {};
@@ -651,11 +843,10 @@ export function validateDeepLinkSchema(
     }
   });
 
-  const hasSyntaxErrors = issues.some(i => i.type === 'syntax_error');
   const hasMismatches = issues.some(i => i.type === 'schema_mismatch');
 
   let syncStatus: 'in_sync' | 'mismatched' | 'syntax_invalid' = 'in_sync';
-  if (hasSyntaxErrors) syncStatus = 'syntax_invalid';
+  if (errors.length > 0) syncStatus = 'syntax_invalid';
   else if (hasMismatches) syncStatus = 'mismatched';
 
   return {
@@ -665,7 +856,8 @@ export function validateDeepLinkSchema(
     issues,
     normalizedConfig: errors.length === 0 ? schemaConfig : undefined,
     syncStatus,
-    lineIssuesMap
+    lineIssuesMap,
+    syntaxDetail
   };
 }
 
@@ -746,3 +938,4 @@ export function validateAgentConfig(data: any, expectedAgentId?: AgentId): Confi
     lineIssuesMap
   };
 }
+
