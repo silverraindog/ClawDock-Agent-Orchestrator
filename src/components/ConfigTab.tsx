@@ -295,34 +295,12 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
 
       let fetchedModels = result.models;
 
-      // If backend was not reached or returned 404, check direct local Ollama baseUrl if applicable
-      if (result.isFallback && config.model.baseUrl && (config.model.provider === 'ollama' || config.model.provider === 'custom' || config.model.baseUrl.includes('11434'))) {
-        try {
-          const cleanBase = config.model.baseUrl.replace(/\/v1\/?$/, '').replace(/\/+$/, '');
-          console.log(`[Model Dropdown] Probing local endpoint directly at ${cleanBase}/api/tags`);
-          const directRes = await fetch(`${cleanBase}/api/tags`, { signal: AbortSignal.timeout(1800) });
-          if (directRes.ok) {
-            const tagData = await directRes.json();
-            if (Array.isArray(tagData.models) && tagData.models.length > 0) {
-              const directModels = tagData.models.map((m: any) => ({
-                value: m.name || m.model,
-                label: `${m.name || m.model} (Live Ollama)`,
-                tag: 'Live'
-              }));
-              // Merge discovered direct models with local catalog
-              const combined = [...directModels];
-              for (const m of fetchedModels) {
-                if (!combined.some(c => c.value === m.value)) {
-                  combined.push(m);
-                }
-              }
-              fetchedModels = combined;
-              console.log(`[Model Dropdown] Direct probe discovered ${directModels.length} models.`);
-            }
-          }
-        } catch {
-          // Direct probe silent fallback, already has robust default 'local' or 'generic' list
-        }
+      // Ensure active model is explicitly included in the fetched catalog if not already present
+      if (config.model.model && !fetchedModels.some(m => m.value === config.model.model)) {
+        fetchedModels = [
+          { value: config.model.model, label: `${config.model.model} (Active)`, tag: 'Active' },
+          ...fetchedModels
+        ];
       }
 
       // Ensure active model is tagged
