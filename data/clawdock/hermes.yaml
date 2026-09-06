@@ -1,3 +1,64 @@
 version: "1.0.0"
 agent_id: "hermes-agent"
-agent_name: "Hermes Agent"
+agent_name: "Hermes Code Assistant"
+persona: "Hermes Prime"
+system_preset: "engineer"
+system_prompt: "You are Hermes Agent, a premier autonomous software engineering and problem-solving AI agent. You have direct access to workspace tools, shell execution, and persistent memory. Always structure complex tasks into clear execution steps, verify your code with tests or linters, and document non-trivial architecture decisions."
+
+model:
+  provider: "anthropic"
+  model: "claude-3-7-sonnet"
+  temperature: 0.3
+  reasoning_effort: "high"
+  max_tokens: 8192
+  context_window: 200000
+  top_p: 0.95
+
+channels:
+  telegram:
+    enabled: true
+    bot_token: "env:TELEGRAM_BOT_TOKEN"
+    allowed_users: ["@developer", "@admin"]
+    mode: "polling"
+  discord:
+    enabled: false
+  slack:
+    enabled: false
+    socket_mode: true
+  webhook:
+    enabled: true
+    port: 8080
+    auth_token: "hermes_secret_token_99"
+
+security:
+  sandbox_mode: "docker_isolated"
+  allowed_directories:
+    - "/workspace"
+    - "/tmp/agent-scratch"
+    - "/var/log/hermes"
+  max_execution_time_sec: 120
+  block_network_access: false
+  require_approval_for_commands: false
+
+storage:
+  memory_backend: "everos"
+  db_path: "/data/everos/memories"
+  auto_summarize_interval: 25
+  max_history_turns: 100
+  vector_db_url: "http://everos:8080"
+
+moa:
+  enabled: true
+  proposer_models:
+    - "claude-3-7-sonnet"
+    - "deepseek-r1"
+    - "gpt-4o"
+  aggregator_model: "claude-3-7-sonnet"
+  rounds: 2
+  temperature_spread: 0.3
+  consensus_threshold: 0.85
+
+env:
+  HERMES_LOG_LEVEL: "INFO"
+  PYTHONUNBUFFERED: "1"
+  WORKSPACE_ROOT: "/workspace"

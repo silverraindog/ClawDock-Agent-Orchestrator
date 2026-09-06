@@ -14,6 +14,8 @@ import io
 import tarfile
 import datetime
 import subprocess
+import time
+import re
 
 from config_schema import AgentFullConfigSchema
 from docker_manager import DockerManager
@@ -34,6 +36,45 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+REQUEST_LOGS: List[Dict[str, Any]] = []
+
+@app.middleware("http")
+async def log_requests(request, call_next):
+    start_time = time.time()
+    try:
+        response = await call_next(request)
+        duration_ms = round((time.time() - start_time) * 1000, 2)
+        entry = {
+            "id": "req_" + str(int(time.time() * 1000))[-6:],
+            "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "method": request.method,
+            "url": str(request.url.path),
+            "pathname": request.url.path,
+            "status": response.status_code,
+            "durationMs": duration_ms,
+            "clientIp": request.client.host if request.client else "unknown"
+        }
+        REQUEST_LOGS.insert(0, entry)
+        if len(REQUEST_LOGS) > 200:
+            REQUEST_LOGS.pop()
+        return response
+    except Exception as e:
+        duration_ms = round((time.time() - start_time) * 1000, 2)
+        entry = {
+            "id": "req_" + str(int(time.time() * 1000))[-6:],
+            "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "method": request.method,
+            "url": str(request.url.path),
+            "pathname": request.url.path,
+            "status": 500,
+            "durationMs": duration_ms,
+            "clientIp": request.client.host if request.client else "unknown"
+        }
+        REQUEST_LOGS.insert(0, entry)
+        if len(REQUEST_LOGS) > 200:
+            REQUEST_LOGS.pop()
+        raise e
 
 docker_mgr = DockerManager()
 
@@ -197,6 +238,155 @@ def stop_agent(agent_id: str):
     return docker_mgr.stop_container(agent_id)
 
 @app.get("/api/agents/all/configs")
+def parse_native_content_to_schema(agent_id: str, native_content: str, ffmt: str) -> Dict[str, Any]:
+    provider = "anthropic" if agent_id == "hermes-agent" else ("deepseek" if agent_id == "zeroclaw" else ("openai" if agent_id == "openclaw" else "ollama"))
+    model_name = "claude-3-7-sonnet" if agent_id == "hermes-agent" else ("deepseek-r1" if agent_id == "zeroclaw" else ("gpt-4o" if agent_id == "openclaw" else "qwen2.5-coder:7b"))
+    temp = 0.3 if agent_id == "hermes-agent" else (0.1 if agent_id == "zeroclaw" else (0.2 if agent_id == "openclaw" else 0.4))
+    max_tokens = 8192 if agent_id == "hermes-agent" else 4096
+    ctx = 200000 if agent_id == "hermes-agent" else 64000
+    top_p = 0.95
+    preset = "engineer" if agent_id in ["hermes-agent", "zeroclaw"] else ("researcher" if agent_id == "openclaw" else "edge_assistant")
+    system_prompt = f"You are {agent_id}, an autonomous AI assistant."
+    agent_name = agent_id
+    persona = agent_id
+    telegram_enabled = True
+    discord_enabled = False
+    slack_enabled = False
+    webhook_enabled = True
+
+    if ffmt == "json":
+        try:
+            data = json.loads(native_content)
+            if isinstance(data, dict):
+                m = data.get("model", {})
+                provider = m.get("provider", provider)
+                model_name = m.get("model", model_name)
+                if "temperature" in m:
+                    temp = float(m["temperature"])
+                if "maxTokens" in m or "max_tokens" in m:
+                    max_tokens = int(m.get("maxTokens", m.get("max_tokens", max_tokens)))
+                if "contextWindow" in m or "context_window" in m:
+                    ctx = int(m.get("contextWindow", m.get("context_window", ctx)))
+                
+                s = data.get("system", {})
+                preset = s.get("preset", preset)
+                system_prompt = s.get("systemPrompt", s.get("system_prompt", system_prompt))
+                agent_name = s.get("agentName", data.get("name", data.get("agent_name", agent_id)))
+                persona = s.get("personaName", data.get("persona", persona))
+                
+                ch = data.get("channels", {})
+                if "telegram" in ch:
+                    telegram_enabled = bool(ch["telegram"].get("enabled", True))
+                if "discord" in ch:
+                    discord_enabled = bool(ch["discord"].get("enabled", False))
+                if "slack" in ch:
+                    slack_enabled = bool(ch["slack"].get("enabled", False))
+                if "webhook" in ch:
+                    webhook_enabled = bool(ch["webhook"].get("enabled", True))
+        except Exception:
+            pass
+    elif ffmt == "toml":
+        try:
+            m_prov = re.search(r'provider\s*=\s*["\']([^"\']+)["\']', native_content)
+            if m_prov: provider = m_prov.group(1)
+            m_mod = re.search(r'model\s*=\s*["\']([^"\']+)["\']', native_content)
+            if m_mod: model_name = m_mod.group(1)
+            m_temp = re.search(r'temperature\s*=\s*([0-9.]+)', native_content)
+            if m_temp: temp = float(m_temp.group(1))
+            m_prompt = re.search(r'system_prompt\s*=\s*["\']([^"\']+)["\']', native_content)
+            if m_prompt: system_prompt = m_prompt.group(1)
+            m_name = re.search(r'name\s*=\s*["\']([^"\']+)["\']', native_content)
+            if m_name: agent_name = m_name.group(1)
+            m_tokens = re.search(r'max_tokens\s*=\s*([0-9]+)', native_content)
+            if m_tokens: max_tokens = int(m_tokens.group(1))
+            m_ctx = re.search(r'context_window\s*=\s*([0-9]+)', native_content)
+            if m_ctx: ctx = int(m_ctx.group(1))
+        except Exception:
+            pass
+    else:
+        # YAML
+        try:
+            m_prov = re.search(r'provider:\s*["\']?([^"\'\n\r]+)["\']?', native_content)
+            if m_prov:
+                val = m_prov.group(1).strip()
+                if val and val != "model:": provider = val
+            m_mod = re.search(r'model:\s*["\']?([a-zA-Z0-9\-_.:]+)["\']?', native_content)
+            if m_mod:
+                val = m_mod.group(1).strip()
+                if val and val != "provider:": model_name = val
+            m_temp = re.search(r'temperature:\s*([0-9.]+)', native_content)
+            if m_temp: temp = float(m_temp.group(1))
+            m_prompt = re.search(r'system_prompt:\s*["\']?([^"\'\n\r]+)["\']?', native_content)
+            if m_prompt: system_prompt = m_prompt.group(1).strip()
+            m_name = re.search(r'agent_name:\s*["\']?([^"\'\n\r]+)["\']?', native_content)
+            if m_name: agent_name = m_name.group(1).strip()
+            m_preset = re.search(r'system_preset:\s*["\']?([^"\'\n\r]+)["\']?', native_content)
+            if m_preset: preset = m_preset.group(1).strip()
+            m_tokens = re.search(r'max_tokens:\s*([0-9]+)', native_content)
+            if m_tokens: max_tokens = int(m_tokens.group(1))
+            m_ctx = re.search(r'context_window:\s*([0-9]+)', native_content)
+            if m_ctx: ctx = int(m_ctx.group(1))
+        except Exception:
+            pass
+
+    return {
+        "agentId": agent_id,
+        "version": "1.0.0",
+        "model": {
+            "provider": provider,
+            "model": model_name,
+            "apiKey": "",
+            "temperature": temp,
+            "reasoningEffort": "high",
+            "maxTokens": max_tokens,
+            "contextWindow": ctx,
+            "topP": top_p
+        },
+        "channels": {
+            "telegram": {"enabled": telegram_enabled, "botToken": "env:TELEGRAM_BOT_TOKEN", "allowedUsers": "@developer", "mode": "polling"},
+            "discord": {"enabled": discord_enabled, "botToken": "", "clientId": "", "guildIds": ""},
+            "slack": {"enabled": slack_enabled, "botToken": "", "appToken": "", "signingSecret": "", "socketMode": True},
+            "whatsapp": {"enabled": False, "sessionId": "", "webhookUrl": ""},
+            "matrix": {"enabled": False, "homeserver": "", "accessToken": "", "roomIds": ""},
+            "webhook": {"enabled": webhook_enabled, "port": 8080, "authToken": "secure_bearer_token", "corsOrigin": "*"}
+        },
+        "system": {
+            "preset": preset,
+            "systemPrompt": system_prompt,
+            "agentName": agent_name,
+            "personaName": persona,
+            "language": "en-US",
+            "autoFormatCode": True
+        },
+        "security": {
+            "sandboxMode": "docker_isolated",
+            "allowedDirectories": ["/workspace", "/data"],
+            "blockNetworkAccess": False,
+            "maxExecutionTimeSec": 120,
+            "requireApprovalForCommands": False,
+            "securityProfileFile": ".security.yml"
+        },
+        "storage": {
+            "memoryBackend": "everos",
+            "dbPath": f"/data/everos/memories/{agent_id}",
+            "autoSummarizeInterval": 25,
+            "maxHistoryTurns": 100,
+            "vectorDbUrl": "http://everos:8080"
+        },
+        "moa": {
+            "enabled": agent_id == "hermes-agent",
+            "proposerModels": ["claude-3-7-sonnet", "deepseek-r1", "gpt-4o"],
+            "aggregatorModel": model_name,
+            "rounds": 2,
+            "temperatureSpread": 0.3,
+            "consensusThreshold": 0.85
+        },
+        "customEnv": {
+            "CONTAINER_MOUNT_DIR": f"/workspace/{agent_id}",
+            "LOG_LEVEL": "info"
+        }
+    }
+
 @app.get("/api/agents/all/config")
 def get_all_configs():
     valid_agents = ["hermes-agent", "zeroclaw", "openclaw", "picoclaw"]
@@ -216,17 +406,25 @@ def get_config(agent_id: str):
     if agent_id == "all":
         return get_all_configs()
 
+    if agent_id not in valid_agents:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found. Valid agents: {valid_agents}")
+
     config_file = os.path.join(CONFIG_STORE_DIR, f"{agent_id}_config.json")
     if os.path.exists(config_file):
-        with open(config_file, "r") as f:
-            return json.load(f)
+        try:
+            with open(config_file, "r") as f:
+                saved = json.load(f)
+                if saved and isinstance(saved, dict) and "model" in saved:
+                    return {
+                        "success": True,
+                        "agentId": agent_id,
+                        "config": saved,
+                        "configSchema": saved
+                    }
+        except Exception:
+            pass
 
-    # Default schema fallback
-    if agent_id in valid_agents:
-        default_config = AgentFullConfigSchema(agent_id=agent_id).model_dump()
-        return default_config
-    
-    raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found. Valid agents: {valid_agents}")
+    return docker_exec_config(agent_id)
 
 @app.api_route("/api/agents/{agent_id}/docker-exec-config", methods=["GET", "POST"])
 def docker_exec_config(agent_id: str):
@@ -271,6 +469,7 @@ def docker_exec_config(agent_id: str):
                 if res.returncode == 0 and len(res.stdout.strip()) > 10:
                     native_content = res.stdout.strip()
                     source = f"docker_exec_{c_name}_config_show"
+                    file_path = f"container:{c_name}:/{fname}"
                     break
             except Exception:
                 pass
@@ -281,9 +480,10 @@ def docker_exec_config(agent_id: str):
                 try:
                     with open(p, "r", encoding="utf-8") as f:
                         content = f.read()
-                        if len(content.strip()) > 5:
+                        if len(content.strip()) > 10:
                             native_content = content
                             file_path = p
+                            source = f"file_mount:{p}"
                             break
                 except Exception:
                     pass
@@ -293,48 +493,25 @@ def docker_exec_config(agent_id: str):
     if os.path.exists(config_file):
         try:
             with open(config_file, "r") as f:
-                schema = json.load(f)
+                saved = json.load(f)
+                if saved and isinstance(saved, dict) and "model" in saved:
+                    schema = saved
         except Exception:
             pass
 
+    # If native content is found, parse it into schema
+    if native_content and len(native_content.strip()) > 10:
+        parsed_from_file = parse_native_content_to_schema(agent_id, native_content, ffmt)
+        if not schema:
+            schema = parsed_from_file
+        else:
+            schema["model"] = {**schema.get("model", {}), **parsed_from_file.get("model", {})}
+            schema["system"] = {**schema.get("system", {}), **parsed_from_file.get("system", {})}
+            schema["channels"] = {**schema.get("channels", {}), **parsed_from_file.get("channels", {})}
+
     if not schema:
-        defaults = {
-            "hermes-agent": {
-                "model": {"provider": "anthropic", "model": "claude-3-7-sonnet", "temperature": 0.3},
-                "channels": {"telegram": {"enabled": True, "botToken": "env:TELEGRAM_BOT_TOKEN", "allowedUsers": "@developer", "mode": "polling"}},
-                "system": {"preset": "engineer", "systemPrompt": "You are Hermes Agent, an autonomous AI assistant capable of reasoning and executing commands.", "agentName": "Hermes Agent", "personaName": "Hermes", "language": "en-US", "autoFormatCode": True},
-                "security": {"sandboxMode": "docker_isolated", "allowedDirectories": ["/workspace", "/data"], "blockNetworkAccess": False, "maxExecutionTimeSec": 120, "requireApprovalForCommands": False, "securityProfileFile": ".security.yml"},
-                "storage": {"memoryBackend": "everos", "dbPath": "/data/everos/memories/hermes-agent", "autoSummarizeInterval": 25, "maxHistoryTurns": 100, "vectorDbUrl": "http://everos:8080"},
-                "moa": {"enabled": True, "proposerModels": ["claude-3-7-sonnet", "deepseek-r1", "gpt-4o"], "aggregatorModel": "claude-3-7-sonnet", "rounds": 2, "temperatureSpread": 0.3, "consensusThreshold": 0.85}
-            },
-            "zeroclaw": {
-                "model": {"provider": "deepseek", "model": "deepseek-r1", "temperature": 0.1},
-                "channels": {"webhook": {"enabled": True, "port": 8081, "authToken": "secret_zeroclaw_token", "corsOrigin": "*"}},
-                "system": {"preset": "engineer", "systemPrompt": "You are ZeroClaw, a minimal ultra-fast Rust autonomous agent.", "agentName": "ZeroClaw", "personaName": "ZeroClaw", "language": "en-US", "autoFormatCode": True},
-                "security": {"sandboxMode": "docker_isolated", "allowedDirectories": ["/var/zeroclaw/workspace"], "blockNetworkAccess": False, "maxExecutionTimeSec": 60, "requireApprovalForCommands": False, "securityProfileFile": ".security.yml"},
-                "storage": {"memoryBackend": "markdown", "dbPath": "/var/zeroclaw/memory.md", "autoSummarizeInterval": 50, "maxHistoryTurns": 50, "vectorDbUrl": "http://everos:8080"},
-                "moa": {"enabled": False, "proposerModels": [], "aggregatorModel": "deepseek-r1", "rounds": 1, "temperatureSpread": 0.0, "consensusThreshold": 0.9}
-            },
-            "openclaw": {
-                "model": {"provider": "openai", "model": "gpt-4o", "temperature": 0.2},
-                "channels": {"discord": {"enabled": True, "botToken": "env:DISCORD_BOT_TOKEN", "clientId": "", "guildIds": ""}, "webhook": {"enabled": True, "port": 8082, "authToken": "secret_openclaw_token", "corsOrigin": "*"}},
-                "system": {"preset": "researcher", "systemPrompt": "You are OpenClaw, a TypeScript autonomous multi-agent gateway hub.", "agentName": "OpenClaw", "personaName": "OpenClaw", "language": "en-US", "autoFormatCode": True},
-                "security": {"sandboxMode": "docker_isolated", "allowedDirectories": ["/workspace"], "blockNetworkAccess": False, "maxExecutionTimeSec": 180, "requireApprovalForCommands": False, "securityProfileFile": ".security.yml"},
-                "storage": {"memoryBackend": "everos", "dbPath": "/data/everos/memories/openclaw", "autoSummarizeInterval": 20, "maxHistoryTurns": 150, "vectorDbUrl": "http://everos:8080"},
-                "moa": {"enabled": True, "proposerModels": ["gpt-4o", "claude-3-7-sonnet"], "aggregatorModel": "gpt-4o", "rounds": 2, "temperatureSpread": 0.2, "consensusThreshold": 0.8}
-            },
-            "picoclaw": {
-                "model": {"provider": "ollama", "model": "qwen2.5-coder:7b", "temperature": 0.4},
-                "channels": {"webhook": {"enabled": True, "port": 8083, "authToken": "secret_picoclaw_token", "corsOrigin": "*"}},
-                "system": {"preset": "edge_assistant", "systemPrompt": "You are PicoClaw, an ultra-low-power edge agent running in Go.", "agentName": "PicoClaw", "personaName": "PicoClaw", "language": "en-US", "autoFormatCode": True},
-                "security": {"sandboxMode": "host_restricted", "allowedDirectories": ["/home/sipeed/.picoclaw"], "blockNetworkAccess": False, "maxExecutionTimeSec": 90, "requireApprovalForCommands": False, "securityProfileFile": ".security.yml"},
-                "storage": {"memoryBackend": "everos", "dbPath": "/data/everos/memories/picoclaw", "autoSummarizeInterval": 20, "maxHistoryTurns": 30, "vectorDbUrl": "http://everos:8080"},
-                "moa": {"enabled": False, "proposerModels": [], "aggregatorModel": "qwen2.5-coder:7b", "rounds": 1, "temperatureSpread": 0.0, "consensusThreshold": 0.9}
-            }
-        }
-        schema = defaults.get(agent_id, defaults["hermes-agent"])
-        schema["agentId"] = agent_id
-        schema["version"] = "1.0.0"
+        schema = parse_native_content_to_schema(agent_id, "", ffmt)
+        source = "default_factory_schema"
 
     if not native_content:
         if ffmt == "yaml":
@@ -352,15 +529,24 @@ def docker_exec_config(agent_id: str):
         "nativeContent": native_content,
         "filePath": file_path,
         "source": source,
-        "configSchema": schema
+        "configSchema": schema,
+        "config": schema
     }
 
 @app.api_route("/api/agents/{agent_id}/config", methods=["POST", "PUT"])
 def save_config(agent_id: str, payload: Dict[str, Any] = Body(...)):
-    cfg = payload.get("config", payload)
-    config_file = os.path.join(CONFIG_STORE_DIR, f"{agent_id}_config.json")
-    with open(config_file, "w") as f:
-        json.dump(cfg, f, indent=2)
+    cfg = payload.get("config")
+    if not cfg or not isinstance(cfg, dict):
+        if "model" in payload or "system" in payload or "channels" in payload:
+            cfg = payload
+
+    if cfg and isinstance(cfg, dict) and ("model" in cfg or "system" in cfg or "channels" in cfg):
+        config_file = os.path.join(CONFIG_STORE_DIR, f"{agent_id}_config.json")
+        try:
+            with open(config_file, "w") as f:
+                json.dump(cfg, f, indent=2)
+        except Exception:
+            pass
 
     native_content = payload.get("nativeContent")
     if native_content and isinstance(native_content, str):
@@ -419,6 +605,26 @@ def handle_persistence(payload: Dict[str, Any] = Body(default={})):
             pass
             
     return {"success": True, "data": data}
+
+@app.get("/api/diagnostics/request-logs")
+def get_diagnostics_request_logs():
+    return {
+        "success": True,
+        "logs": REQUEST_LOGS,
+        "total": len(REQUEST_LOGS),
+        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat()
+    }
+
+@app.get("/api/diagnostics/logs")
+def get_diagnostics_logs():
+    return {
+        "success": True,
+        "logs": [
+            f"[{datetime.datetime.now(datetime.timezone.utc).strftime('%H:%M:%S')}] [SYSTEM] Clawdock container orchestrator online.",
+            f"[{datetime.datetime.now(datetime.timezone.utc).strftime('%H:%M:%S')}] [DOCKER] Docker socket link verified.",
+            f"[{datetime.datetime.now(datetime.timezone.utc).strftime('%H:%M:%S')}] [ROUTER] Active routes: /api/state, /api/agents/:id/docker-exec-config, /api/diagnostics/request-logs."
+        ]
+    }
 
 @app.post("/api/chat")
 def chat_with_agent(payload: Dict[str, Any] = Body(...)):

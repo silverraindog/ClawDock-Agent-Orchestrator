@@ -91,6 +91,26 @@ function apiServerPlugin(): Plugin {
 
   let agentStates = { ...defaultAgentStates };
 
+  interface ServerRequestLog {
+    id: string;
+    timestamp: string;
+    method: string;
+    url: string;
+    pathname: string;
+    status: number;
+    durationMs: number;
+    clientIp: string;
+  }
+
+  const serverRequestLogs: ServerRequestLog[] = [];
+
+  function recordServerLog(entry: ServerRequestLog) {
+    serverRequestLogs.unshift(entry);
+    if (serverRequestLogs.length > 200) {
+      serverRequestLogs.pop();
+    }
+  }
+
   const defaultNativeFiles: Record<string, { fileName: string; format: string; content: string }> = {
     'hermes-agent': {
       fileName: 'hermes.yaml',
@@ -425,10 +445,16 @@ vector_db_url = "http://everos:8080"
   function getAgentConfig(agentId: string) {
     const fallback = defaultNativeFiles[agentId] || defaultNativeFiles['hermes-agent'];
     const filePath = path.join(dataDir, fallback.fileName);
+    const absPath = `/data/clawdock/${fallback.fileName}`;
     let content = fallback.content;
+    let resolvedPath = filePath;
     try {
-      if (fs.existsSync(filePath)) {
+      if (fs.existsSync(absPath) && fs.statSync(absPath).size > 10) {
+        content = fs.readFileSync(absPath, 'utf8');
+        resolvedPath = absPath;
+      } else if (fs.existsSync(filePath) && fs.statSync(filePath).size > 10) {
         content = fs.readFileSync(filePath, 'utf8');
+        resolvedPath = filePath;
       } else {
         fs.writeFileSync(filePath, content, 'utf8');
       }
@@ -441,7 +467,10 @@ vector_db_url = "http://everos:8080"
       nativeFileName: fallback.fileName,
       nativeFormat: fallback.format,
       nativeContent: content,
-      configSchema
+      filePath: resolvedPath,
+      configSchema,
+      config: configSchema,
+      source: resolvedPath.startsWith('/data') ? 'clawdock_mount_file' : 'vite_data_clawdock'
     };
   }
 
@@ -454,7 +483,30 @@ vector_db_url = "http://everos:8080"
       const timestamp = new Date().toISOString();
       const method = req.method || 'GET';
       const parsedUrl = new URL(req.url, 'http://localhost');
-      const pathname = parsedUrl.pathname;
+      const rawPath = parsedUrl.pathname;
+      const pathname = rawPath.length > 1 && rawPath.endsWith('/') ? rawPath.slice(0, -1) : rawPath;
+      const startTime = Date.now();
+
+      // Intercept res.end to log all requests into serverRequestLogs
+      const originalEnd = res.end;
+      let isLogged = false;
+      res.end = function (...args: any[]) {
+        if (!isLogged) {
+          isLogged = true;
+          const durationMs = Math.round(Date.now() - startTime);
+          recordServerLog({
+            id: 'req_' + Math.random().toString(36).substring(2, 9),
+            timestamp: new Date().toISOString(),
+            method,
+            url: req.url,
+            pathname,
+            status: res.statusCode || 200,
+            durationMs,
+            clientIp: req.socket?.remoteAddress || '127.0.0.1'
+          });
+        }
+        return originalEnd.apply(res, args);
+      };
 
       // Comprehensive logging for all incoming API requests (Method + URL)
       console.log(`[Vite API Server] [${timestamp}] ${method} ${pathname} (Query: ${parsedUrl.search})`);
@@ -487,7 +539,7 @@ vector_db_url = "http://everos:8080"
             console.log(`[Vite API Server] [${timestamp}] 200 OK: GET /api/state - Full Agent States:`, Object.keys(agentStates));
             return res.end(JSON.stringify({
               success: true,
-              agentStates,
+              agentStates: { ...agentStates },
               timestamp
             }));
           }
@@ -500,12 +552,24 @@ vector_db_url = "http://everos:8080"
             }
             return res.end(JSON.stringify({
               success: true,
-              agentStates,
+              agentStates: { ...agentStates },
               timestamp
             }));
           }
           res.statusCode = 405;
-          return res.end(JSON.stringify({ error: 'Method not allowed' }));
+          return res.end(JSON.stringify({ success: false, error: 'Method not allowed. Use GET, POST, or PUT.' }));
+        }
+
+        // 3. Diagnostics Request Logs (Real-time HTTP requests ring buffer)
+        case '/api/diagnostics/request-logs': {
+          res.setHeader('Content-Type', 'application/json');
+          console.log(`[Vite API Server] [${timestamp}] 200 OK: GET /api/diagnostics/request-logs (${serverRequestLogs.length} items)`);
+          return res.end(JSON.stringify({
+            success: true,
+            logs: serverRequestLogs,
+            total: serverRequestLogs.length,
+            timestamp
+          }));
         }
 
         // 3. Standardized Agent Config retrieval: /api/agents/all/config (and alias /api/agents/all/configs)
@@ -648,7 +712,25 @@ vector_db_url = "http://everos:8080"
                 try {
                   fs.writeFileSync(filePath, nativeContent, 'utf8');
                 } catch {}
+                try {
+                  const rootPath = `/data/clawdock/${fileName}`;
+                  if (fs.existsSync('/data/clawdock')) {
+                    fs.writeFileSync(rootPath, nativeContent, 'utf8');
+                  }
+                } catch {}
               }
+
+              // Update persistence file with config
+              try {
+                const pFile = path.join(dataDir, 'persistence.json');
+                let pObj: any = {};
+                if (fs.existsSync(pFile)) {
+                  pObj = JSON.parse(fs.readFileSync(pFile, 'utf8'));
+                }
+                if (!pObj.configs) pObj.configs = {};
+                pObj.configs[agentId] = body.config || body;
+                fs.writeFileSync(pFile, JSON.stringify(pObj, null, 2), 'utf8');
+              } catch {}
 
               // Update state to restarting then running
               if (restart && agentStates[agentId]) {
@@ -714,8 +796,22 @@ vector_db_url = "http://everos:8080"
             }
 
             if (action === 'docker-exec-config') {
+              if (method !== 'GET' && method !== 'POST') {
+                res.statusCode = 405;
+                return res.end(JSON.stringify({ success: false, error: 'Method not allowed. Use GET or POST.' }));
+              }
               const cfg = getAgentConfig(agentId);
-              return res.end(JSON.stringify({ success: true, config: cfg.configSchema, nativeContent: cfg.nativeContent }));
+              return res.end(JSON.stringify({
+                success: true,
+                agentId,
+                nativeFileName: cfg.nativeFileName,
+                nativeFormat: cfg.nativeFormat,
+                nativeContent: cfg.nativeContent,
+                filePath: `data/clawdock/${cfg.nativeFileName}`,
+                configSchema: cfg.configSchema,
+                config: cfg.configSchema,
+                source: 'vite_api_docker_exec'
+              }));
             }
           }
 

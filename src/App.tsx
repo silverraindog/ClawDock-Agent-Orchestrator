@@ -36,7 +36,8 @@ import {
   fetchAllAgentConfigs, 
   fetchRuntimeAgentStates, 
   saveLocalPersistence, 
-  getLocalPersistence 
+  getLocalPersistence,
+  saveAgentConfigToBackend
 } from './utils/apiBridge';
 
 import { Navbar } from './components/Navbar';
@@ -53,6 +54,7 @@ import { DiagnosticsTab } from './components/DiagnosticsTab';
 import { ToastContainer, ToastMessage } from './components/Toast';
 import { ContainerDiscoveryModal } from './components/ContainerDiscoveryModal';
 import { ConfigInjectionAlert, InjectionStatusInfo } from './components/ConfigInjectionAlert';
+import { VerboseLogData } from './components/VerboseLogInspector';
 import { 
   validateAgentConfig, 
   SchemaValidationError, 
@@ -71,6 +73,7 @@ export default function App() {
   const [isCheckingUpdates, setIsCheckingUpdates] = useState(false);
   const [lastCheckedUpdatesTime, setLastCheckedUpdatesTime] = useState('5 mins ago');
   const [injectionAlertInfo, setInjectionAlertInfo] = useState<InjectionStatusInfo | null>(null);
+  const [injectionVerboseLog, setInjectionVerboseLog] = useState<VerboseLogData | null>(null);
   
   const [currentTab, setCurrentTab] = useState<MainTab>('dashboard');
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
@@ -166,16 +169,23 @@ export default function App() {
 
   // Helper function: triggers docker exec command via backend to read specific config file path and inject into configs state
   const fetchAndInjectConfig = async (agentId: AgentId) => {
+    const startTime = Date.now();
+    const timestamp = new Date().toLocaleTimeString();
+    const verboseLogs: string[] = [];
+
+    verboseLogs.push(`[${timestamp}] [INIT] Initiating Container Exec config injection for agent: "${agentId}"`);
+
     setInjectionAlertInfo({
       status: 'validating',
       agentId,
       title: 'Validating & Injecting Configuration...',
       message: `Establishing connection with ${agentId} container and verifying configuration schema integrity.`,
-      timestamp: new Date().toLocaleTimeString()
+      timestamp
     });
 
     try {
       addToast('info', 'Verifying Connectivity', `Pinging backend health & checking container connectivity for ${agentId}...`);
+      verboseLogs.push(`[${new Date().toLocaleTimeString()}] [PROBE] Checking backend health endpoint /api/health...`);
       
       let healthRes: Response;
       try {
@@ -207,11 +217,13 @@ export default function App() {
           agentId
         );
       }
+      verboseLogs.push(`[${new Date().toLocaleTimeString()}] [HTTP] Health check passed: HTTP ${healthRes.status} (status: ok)`);
 
       try {
         const detectRes = await fetch(`/api/agents/${agentId}/detect`);
         if (detectRes.ok) {
           const detectData = await detectRes.json();
+          verboseLogs.push(`[${new Date().toLocaleTimeString()}] [DETECT] Container status for ${agentId}: ${detectData.status}`);
           if (detectData.status !== 'running' && detectData.status !== 'detected_local') {
             addToast('info', 'Container Offline', `Container for ${agentId} is offline or stopped. Reading mounted configuration file.`);
           }
@@ -219,17 +231,30 @@ export default function App() {
       } catch {}
 
       const endpoint = `/api/agents/${agentId}/docker-exec-config`;
+      verboseLogs.push(`[${new Date().toLocaleTimeString()}] [HTTP] Requesting container exec config from ${endpoint}...`);
       let res: Response;
       try {
         res = await fetch(endpoint, { method: 'POST' });
+        if (res.status === 405) {
+          verboseLogs.push(`[${new Date().toLocaleTimeString()}] [WARN] POST returned 405 Method Not Allowed. Retrying with GET...`);
+          console.warn(`[Config Injection] POST ${endpoint} returned 405 Method Not Allowed. Falling back to GET...`);
+          res = await fetch(endpoint, { method: 'GET' });
+        }
       } catch (netErr: any) {
-        throw new NetworkTransportError(
-          `Failed network POST to ${endpoint}: ${netErr.message || 'Host network error'}`,
-          0,
-          endpoint,
-          agentId
-        );
+        try {
+          verboseLogs.push(`[${new Date().toLocaleTimeString()}] [RETRY] Network retry with GET ${endpoint}...`);
+          res = await fetch(endpoint, { method: 'GET' });
+        } catch {
+          throw new NetworkTransportError(
+            `Failed network request to ${endpoint}: ${netErr.message || 'Host network error'}`,
+            0,
+            endpoint,
+            agentId
+          );
+        }
       }
+
+      verboseLogs.push(`[${new Date().toLocaleTimeString()}] [HTTP] ${endpoint} responded with HTTP ${res.status} ${res.statusText}`);
 
       if (!res.ok) {
         throw new NetworkTransportError(
@@ -251,6 +276,8 @@ export default function App() {
         );
       }
 
+      verboseLogs.push(`[${new Date().toLocaleTimeString()}] [PARSE] JSON response successfully parsed (keys: ${Object.keys(data).join(', ')})`);
+
       if (!data || !data.success) {
         throw new NetworkTransportError(
           data?.error || `Container exec returned unsuccessful status for ${agentId}.`,
@@ -269,9 +296,12 @@ export default function App() {
         );
       }
 
+      verboseLogs.push(`[${new Date().toLocaleTimeString()}] [SOURCE] Detected source: "${data.source || 'docker_exec'}", Path: "${data.filePath || 'container'}"`);
+
       // Specific validation layer
       const validation = validateAgentConfig(candidateConfig, agentId);
       if (!validation.isValid) {
+        verboseLogs.push(`[${new Date().toLocaleTimeString()}] [VALIDATION_ERROR] Schema validation failed with ${validation.errors.length} errors`);
         throw new SchemaValidationError(
           `Configuration schema validation failed for ${agentId}. State was NOT modified.`,
           validation.errors,
@@ -279,17 +309,42 @@ export default function App() {
         );
       }
 
+      const appliedConfig = validation.normalizedConfig || candidateConfig;
+      verboseLogs.push(`[${new Date().toLocaleTimeString()}] [VALIDATION] Schema passed. Model: ${appliedConfig.model?.provider}/${appliedConfig.model?.model} (temp: ${appliedConfig.model?.temperature})`);
+      verboseLogs.push(`[${new Date().toLocaleTimeString()}] [APPLY] Updating active application state for ${agentId}...`);
+
       // Valid configuration passed all checks -> update state
       setConfigs(prev => ({
         ...prev,
-        [agentId]: validation.normalizedConfig || candidateConfig
+        [agentId]: appliedConfig
       }));
+
+      // Output to Browser Console
+      console.group(`%c[ClawDock Container Exec Injection] Agent: ${agentId}`, 'color: #10b981; font-weight: bold; font-size: 12px;');
+      console.log(`Execution duration: ${Date.now() - startTime}ms | Timestamp: ${timestamp}`);
+      console.log('Verbose Execution Logs:\n' + verboseLogs.join('\n'));
+      console.log('Raw Injected JSON Payload:', data);
+      console.log('Active Injected Configuration:', appliedConfig);
+      console.groupEnd();
+
+      // Store in verbose log inspector state
+      setInjectionVerboseLog({
+        action: 'Inject from Container Exec',
+        agentId,
+        logs: verboseLogs,
+        rawJson: data,
+        timestamp,
+        source: data.source || 'docker_exec',
+        filePath: data.filePath || `data/clawdock/${agentId}`,
+        status: 'success',
+        elapsedMs: Date.now() - startTime
+      });
 
       setInjectionAlertInfo({
         status: 'success',
         agentId,
         title: 'Configuration Validated & Injected',
-        message: `Successfully read and injected valid container configuration for ${agentId}.`,
+        message: `Successfully read and injected valid container configuration for ${agentId} (${data.source || 'docker-exec'}).`,
         warnings: validation.warnings,
         timestamp: new Date().toLocaleTimeString()
       });
@@ -300,7 +355,22 @@ export default function App() {
         `Read and validated container native config for ${agentId}, replacing default values.`
       );
     } catch (e: any) {
-      console.error('[ClawDock Config Injection Error]', e);
+      verboseLogs.push(`[${new Date().toLocaleTimeString()}] [ERROR] ${e.message}`);
+
+      console.group(`%c[ClawDock Config Injection ERROR] Agent: ${agentId}`, 'color: #f43f5e; font-weight: bold; font-size: 12px;');
+      console.error('Execution Logs:\n' + verboseLogs.join('\n'));
+      console.error('Error Details:', e);
+      console.groupEnd();
+
+      setInjectionVerboseLog({
+        action: 'Inject from Container Exec (Failed)',
+        agentId,
+        logs: verboseLogs,
+        rawJson: { error: e.message, statusCode: e.statusCode, endpoint: e.endpoint, schemaErrors: e.schemaErrors },
+        timestamp: new Date().toLocaleTimeString(),
+        status: 'error',
+        elapsedMs: Date.now() - startTime
+      });
 
       if (e instanceof SchemaValidationError) {
         setInjectionAlertInfo({
@@ -522,10 +592,16 @@ export default function App() {
     setIsSavingConfig(true);
     try {
       const nativeContent = JSON.stringify(currentConfig, null, 2);
+      saveAgentConfigToBackend(selectedAgentId, currentConfig, nativeContent, restartContainer);
+
       const res = await fetch(`/api/agents/${selectedAgentId}/config`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ nativeContent, restartContainer })
+        body: JSON.stringify({ 
+          config: currentConfig,
+          nativeContent, 
+          restartContainer 
+        })
       });
       const data = await res.json();
       addToast(
@@ -953,6 +1029,7 @@ export default function App() {
               onInjectConfig={fetchAndInjectConfig}
               injectionStatus={injectionAlertInfo}
               onDismissInjectionStatus={() => setInjectionAlertInfo(null)}
+              externalVerboseLog={injectionVerboseLog}
             />
           )}
 

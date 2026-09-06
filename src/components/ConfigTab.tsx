@@ -18,7 +18,8 @@ import {
   Globe,
   Terminal,
   Cpu,
-  RefreshCw
+  RefreshCw,
+  Code2
 } from 'lucide-react';
 import { 
   AgentFullConfig, 
@@ -31,6 +32,7 @@ import {
 import { MODEL_OPTIONS, DEFAULT_CONFIGS, DEFAULT_NATIVE_FILES } from '../data/defaults';
 import { fetchAgentLiveConfig, saveAgentConfigToBackend } from '../utils/apiBridge';
 import { ConfigInjectionAlert, InjectionStatusInfo } from './ConfigInjectionAlert';
+import { VerboseLogInspector, VerboseLogData } from './VerboseLogInspector';
 import { validateAgentConfig } from '../utils/configValidator';
 
 interface ConfigTabProps {
@@ -43,6 +45,7 @@ interface ConfigTabProps {
   onInjectConfig?: (agentId: AgentId) => Promise<void>;
   injectionStatus?: InjectionStatusInfo | null;
   onDismissInjectionStatus?: () => void;
+  externalVerboseLog?: VerboseLogData | null;
 }
 
 type ConfigSection = 'model' | 'moa' | 'channels' | 'system' | 'security' | 'storage' | 'raw';
@@ -56,7 +59,8 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
   isSaving,
   onInjectConfig,
   injectionStatus,
-  onDismissInjectionStatus
+  onDismissInjectionStatus,
+  externalVerboseLog
 }) => {
   const [activeSection, setActiveSection] = useState<ConfigSection>('model');
   const [copiedRaw, setCopiedRaw] = useState(false);
@@ -64,6 +68,8 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
   const [rawMode, setRawMode] = useState<'schema' | 'native'>('native');
   const [rawError, setRawError] = useState<string | null>(null);
   const [isFetchingLive, setIsFetchingLive] = useState(false);
+  const [activeLogInspection, setActiveLogInspection] = useState<VerboseLogData | null>(null);
+  const [isInspectorOpen, setIsInspectorOpen] = useState(false);
   
   // Default native config info initialized from DEFAULT_NATIVE_FILES
   const [nativeConfigInfo, setNativeConfigInfo] = useState<{ fileName: string; format: string; content: string }>(() => {
@@ -73,11 +79,19 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
   const [restartContainer, setRestartContainer] = useState(true);
   const [isRestartModalOpen, setIsRestartModalOpen] = useState(false);
 
+  // Sync external verbose logs (e.g. from container exec injection in App.tsx)
+  React.useEffect(() => {
+    if (externalVerboseLog) {
+      setActiveLogInspection(externalVerboseLog);
+      setIsInspectorOpen(true);
+    }
+  }, [externalVerboseLog]);
+
   // Fetch live config automatically on mount and agentId change
   React.useEffect(() => {
     const fallback = DEFAULT_NATIVE_FILES[agentId] || DEFAULT_NATIVE_FILES['hermes-agent'];
     setNativeConfigInfo(fallback);
-    fetchLiveConfig();
+    fetchLiveConfig(false);
   }, [agentId]);
 
   // Sync raw text when config or mode changes
@@ -89,7 +103,7 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
     }
   }, [config, rawMode, nativeConfigInfo, agentId]);
 
-  const fetchLiveConfig = async () => {
+  const fetchLiveConfig = async (isManualClick: boolean = false) => {
     setIsFetchingLive(true);
     try {
       const data = await fetchAgentLiveConfig(agentId);
@@ -102,10 +116,46 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
         if (data.configSchema) {
           onChangeConfig(data.configSchema);
         }
+
+        const logData: VerboseLogData = {
+          action: 'Fetch Live Container Config',
+          agentId,
+          logs: data.verboseLogs,
+          rawJson: data.rawJson,
+          timestamp: data.timestamp,
+          source: data.source,
+          filePath: data.filePath,
+          status: data.isLive ? 'success' : 'warning'
+        };
+
+        setActiveLogInspection(logData);
+
+        if (isManualClick) {
+          setIsInspectorOpen(true);
+          console.group(`%c[ClawDock Live Container Config Manual Fetch] Agent: ${agentId}`, 'color: #818cf8; font-weight: bold; font-size: 12px;');
+          console.log('Verbose logs:\n' + data.verboseLogs.join('\n'));
+          console.log('Raw JSON Payload:', data.rawJson);
+          console.groupEnd();
+        }
       }
-    } catch (e) {
+    } catch (e: any) {
       const fallback = DEFAULT_NATIVE_FILES[agentId] || DEFAULT_NATIVE_FILES['hermes-agent'];
       setNativeConfigInfo(fallback);
+      const errLog: VerboseLogData = {
+        action: 'Fetch Live Container Config (Failed)',
+        agentId,
+        logs: [
+          `[${new Date().toLocaleTimeString()}] [ERROR] Fetch failed: ${e?.message || e}`,
+          `[${new Date().toLocaleTimeString()}] [FALLBACK] Restored template from ${fallback.fileName}.`
+        ],
+        rawJson: { error: e?.message || String(e) },
+        timestamp: new Date().toLocaleTimeString(),
+        source: 'fallback',
+        filePath: fallback.fileName,
+        status: 'error'
+      };
+      setActiveLogInspection(errLog);
+      if (isManualClick) setIsInspectorOpen(true);
     } finally {
       setIsFetchingLive(false);
     }
@@ -200,7 +250,10 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
           {onInjectConfig && (
             <button
               id="inject-exec-config-btn"
-              onClick={() => onInjectConfig(agentId)}
+              onClick={async () => {
+                setIsInspectorOpen(true);
+                await onInjectConfig(agentId);
+              }}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-emerald-300 hover:text-white bg-emerald-950/60 hover:bg-emerald-900/60 border border-emerald-500/30 transition-colors"
             >
               <Zap className="w-3.5 h-3.5 text-emerald-400" />
@@ -210,13 +263,29 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
 
           <button
             id="fetch-live-config-btn"
-            onClick={fetchLiveConfig}
+            onClick={() => fetchLiveConfig(true)}
             disabled={isFetchingLive}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-indigo-300 hover:text-white bg-indigo-950/60 hover:bg-indigo-900/60 border border-indigo-500/30 transition-colors disabled:opacity-50"
           >
             <Terminal className="w-3.5 h-3.5 text-indigo-400" />
             {isFetchingLive ? 'Fetching...' : 'Fetch Live Container Config'}
           </button>
+
+          {activeLogInspection && (
+            <button
+              id="toggle-verbose-inspector-btn"
+              type="button"
+              onClick={() => setIsInspectorOpen(!isInspectorOpen)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                isInspectorOpen 
+                  ? 'bg-indigo-600 text-white border-indigo-500 shadow-sm' 
+                  : 'text-indigo-300 hover:text-white bg-indigo-950/60 hover:bg-indigo-900/60 border border-indigo-500/30'
+              }`}
+            >
+              <Code2 className="w-3.5 h-3.5 text-indigo-400" />
+              {isInspectorOpen ? 'Hide Logs & JSON' : 'View Logs & JSON'}
+            </button>
+          )}
 
           <button
             id="reset-config-btn"
@@ -273,6 +342,14 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
         onDismiss={onDismissInjectionStatus || (() => {})} 
         onRetry={onInjectConfig} 
       />
+
+      {/* Verbose Log & JSON Inspector Drawer */}
+      {isInspectorOpen && activeLogInspection && (
+        <VerboseLogInspector 
+          data={activeLogInspection} 
+          onClose={() => setIsInspectorOpen(false)} 
+        />
+      )}
 
       {/* Loading Skeleton during live config fetch */}
       {isFetchingLive && (

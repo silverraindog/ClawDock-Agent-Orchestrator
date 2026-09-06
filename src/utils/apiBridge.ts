@@ -148,30 +148,99 @@ export async function fetchAllAgentConfigs(): Promise<Record<AgentId, AgentFullC
   return merged;
 }
 
-export async function fetchAgentLiveConfig(agentId: AgentId): Promise<{
+export interface LiveConfigFetchResult {
   fileName: string;
   format: string;
   content: string;
   configSchema: AgentFullConfig;
-}> {
+  rawJson: any;
+  verboseLogs: string[];
+  source: string;
+  filePath: string;
+  timestamp: string;
+  isLive: boolean;
+}
+
+export async function fetchAgentLiveConfig(agentId: AgentId): Promise<LiveConfigFetchResult> {
   const fallback = DEFAULT_NATIVE_FILES[agentId] || DEFAULT_NATIVE_FILES['hermes-agent'];
   const fallbackConfig = mergeWithDefaultConfig(agentId);
+  const verboseLogs: string[] = [];
+  const startTime = Date.now();
+  const timestamp = new Date().toLocaleTimeString();
 
-  try {
-    const res = await fetch(`/api/agents/${agentId}/config`);
-    if (res.ok) {
-      const data = await res.json();
-      if (data && data.success) {
-        const schema = mergeWithDefaultConfig(agentId, data.configSchema);
-        return {
-          fileName: data.nativeFileName || fallback.fileName,
-          format: data.nativeFormat || fallback.format,
-          content: data.nativeContent || fallback.content,
-          configSchema: schema
-        };
+  verboseLogs.push(`[${timestamp}] [INIT] Initiating live container config fetch for agent: "${agentId}"`);
+
+  let fetchedData: any = null;
+  let source = 'unknown';
+  let filePath = `data/clawdock/${fallback.fileName}`;
+  let isLive = false;
+
+  // Primary live endpoint: /api/agents/${agentId}/docker-exec-config
+  const endpointsToTry = [
+    { url: `/api/agents/${agentId}/docker-exec-config`, method: 'GET', desc: 'Docker Exec Live Config (GET)' },
+    { url: `/api/agents/${agentId}/docker-exec-config`, method: 'POST', desc: 'Docker Exec Live Config (POST)' },
+    { url: `/api/agents/${agentId}/config`, method: 'GET', desc: 'Agent Config API (GET)' }
+  ];
+
+  for (const ep of endpointsToTry) {
+    try {
+      verboseLogs.push(`[${new Date().toLocaleTimeString()}] [HTTP] Trying ${ep.desc} -> ${ep.url}`);
+      const t0 = Date.now();
+      const res = await fetch(ep.url, { method: ep.method });
+      const elapsed = Date.now() - t0;
+      verboseLogs.push(`[${new Date().toLocaleTimeString()}] [HTTP] ${ep.url} responded with HTTP ${res.status} ${res.statusText} (${elapsed}ms)`);
+
+      if (res.ok) {
+        const data = await res.json();
+        fetchedData = data;
+        source = data.source || (ep.url.includes('docker-exec') ? 'docker_exec' : 'api_config');
+        filePath = data.filePath || filePath;
+        isLive = true;
+        verboseLogs.push(`[${new Date().toLocaleTimeString()}] [SUCCESS] Successfully received payload from ${ep.url}`);
+        verboseLogs.push(`[${new Date().toLocaleTimeString()}] [PARSE] Detected source: "${source}", file: "${filePath}"`);
+        break;
+      } else {
+        verboseLogs.push(`[${new Date().toLocaleTimeString()}] [WARN] Endpoint ${ep.url} returned non-200 status: ${res.status}`);
       }
+    } catch (err: any) {
+      verboseLogs.push(`[${new Date().toLocaleTimeString()}] [ERROR] Request to ${ep.url} failed: ${err?.message || err}`);
     }
-  } catch {}
+  }
+
+  // Console output
+  console.group(`%c[ClawDock Live Container Config] Agent: ${agentId}`, 'color: #818cf8; font-weight: bold; font-size: 12px;');
+  console.log(`Fetch duration: ${Date.now() - startTime}ms | Timestamp: ${timestamp}`);
+  console.log('Verbose Execution Logs:\n' + verboseLogs.join('\n'));
+  if (fetchedData) {
+    console.log('Raw Received JSON:', fetchedData);
+  } else {
+    console.warn('No remote live payload received, falling back to local store/defaults.');
+  }
+  console.groupEnd();
+
+  if (fetchedData) {
+    const rawSchema = fetchedData.configSchema || fetchedData.config || (fetchedData.model ? fetchedData : null);
+    const schema = rawSchema ? mergeWithDefaultConfig(agentId, rawSchema) : fallbackConfig;
+    const content = fetchedData.nativeContent || fallback.content;
+    const fileName = fetchedData.nativeFileName || fallback.fileName;
+    const format = fetchedData.nativeFormat || fallback.format;
+
+    verboseLogs.push(`[${new Date().toLocaleTimeString()}] [SCHEMA] Model: ${schema.model.provider}/${schema.model.model} (temp: ${schema.model.temperature})`);
+    verboseLogs.push(`[${new Date().toLocaleTimeString()}] [SCHEMA] Channels: Telegram=${schema.channels.telegram.enabled}, Discord=${schema.channels.discord.enabled}, Webhook=${schema.channels.webhook.enabled}`);
+
+    return {
+      fileName,
+      format,
+      content,
+      configSchema: schema,
+      rawJson: fetchedData,
+      verboseLogs,
+      source,
+      filePath,
+      timestamp,
+      isLive: true
+    };
+  }
 
   // Load from local storage if previously modified
   let content = fallback.content;
@@ -181,20 +250,35 @@ export async function fetchAgentLiveConfig(agentId: AgentId): Promise<{
       content = local.nativeFiles[agentId];
     }
     if (local && local.configs && local.configs[agentId]) {
+      const localSchema = mergeWithDefaultConfig(agentId, local.configs[agentId]);
+      verboseLogs.push(`[${new Date().toLocaleTimeString()}] [FALLBACK] Loaded configuration from client local storage.`);
       return {
         fileName: fallback.fileName,
         format: fallback.format,
         content,
-        configSchema: mergeWithDefaultConfig(agentId, local.configs[agentId])
+        configSchema: localSchema,
+        rawJson: { fallback: true, source: 'local_storage', config: localSchema },
+        verboseLogs,
+        source: 'local_storage',
+        filePath: `localStorage:configs.${agentId}`,
+        timestamp,
+        isLive: false
       };
     }
   } catch {}
 
+  verboseLogs.push(`[${new Date().toLocaleTimeString()}] [FALLBACK] Using factory defaults for ${agentId}.`);
   return {
     fileName: fallback.fileName,
     format: fallback.format,
     content,
-    configSchema: fallbackConfig
+    configSchema: fallbackConfig,
+    rawJson: { fallback: true, source: 'factory_defaults', config: fallbackConfig },
+    verboseLogs,
+    source: 'factory_defaults',
+    filePath: `defaults:${fallback.fileName}`,
+    timestamp,
+    isLive: false
   };
 }
 
