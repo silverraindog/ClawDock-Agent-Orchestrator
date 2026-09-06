@@ -203,6 +203,23 @@ app.all(['/api/models', '/api/models/', '/api/model/list', '/api/model/list/', '
       { value: 'openai/gpt-4o', label: 'OpenRouter: GPT-4o', tag: 'Proxy' }
     ];
 
+    const CUSTOM_CATALOG = [
+      { value: 'claude-3-7-sonnet', label: 'Claude 3.7 Sonnet (Hybrid Reasoning)', tag: 'Frontier' },
+      { value: 'gemma4-soul:latest', label: 'gemma4-soul:latest (Local Edge / Active)', tag: 'Active' },
+      { value: 'qwen2.5-coder:7b', label: 'qwen2.5-coder:7b (Edge Coding)', tag: 'Sipeed' },
+      { value: 'qwen2.5-coder:14b', label: 'qwen2.5-coder:14b (Deep Coding)', tag: 'Local' },
+      { value: 'qwen2.5-coder:32b', label: 'qwen2.5-coder:32b (Heavy Coding)', tag: 'Local' },
+      { value: 'deepseek-r1:8b', label: 'deepseek-r1:8b (Local Reasoning)', tag: 'Reasoning' },
+      { value: 'deepseek-r1:14b', label: 'deepseek-r1:14b (Mid Reasoning)', tag: 'Reasoning' },
+      { value: 'deepseek-r1:32b', label: 'deepseek-r1:32b (Full Reasoning)', tag: 'Reasoning' },
+      { value: 'deepseek-r1:70b', label: 'deepseek-r1:70b (Max Reasoning)', tag: 'Reasoning' },
+      { value: 'llama3.3:70b', label: 'llama3.3:70b (High Capability)', tag: 'Local' },
+      { value: 'llama3.2:3b', label: 'llama3.2:3b (Ultra-light)', tag: 'Edge' },
+      { value: 'mistral-nemo:12b', label: 'mistral-nemo:12b (Balanced 128k)', tag: 'Local' },
+      { value: 'phi4:14b', label: 'phi4:14b (Microsoft Reasoning)', tag: 'Local' },
+      { value: 'custom-model', label: 'Custom Model Name (Manual entry)', tag: 'Custom' }
+    ];
+
     let models: any[] = [];
     if (provider === 'anthropic') models = ANTHROPIC_CATALOG;
     else if (provider === 'openai') models = OPENAI_CATALOG;
@@ -211,8 +228,19 @@ app.all(['/api/models', '/api/models/', '/api/model/list', '/api/model/list/', '
     else if (provider === 'gemini') models = GEMINI_CATALOG;
     else if (provider === 'mistral') models = MISTRAL_CATALOG;
     else if (provider === 'openrouter') models = OPENROUTER_CATALOG;
-    else {
-      // Ollama or custom local provider
+    else if (provider === 'custom') {
+      const map = new Map<string, any>();
+      for (const m of liveOllamaModels) {
+        map.set(m, { value: m, label: `${m} (Live Ollama Server)`, tag: 'Live' });
+      }
+      for (const item of CUSTOM_CATALOG) {
+        if (!map.has(item.value)) {
+          map.set(item.value, item);
+        }
+      }
+      models = Array.from(map.values());
+    } else {
+      // Ollama local provider
       const map = new Map<string, any>();
       for (const m of liveOllamaModels) {
         map.set(m, { value: m, label: `${m} (Live Ollama Server)`, tag: 'Live' });

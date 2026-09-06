@@ -49,11 +49,13 @@ import {
   fetchModelsWithFallback, 
   logApiFailure, 
   DEFAULT_LOCAL_MODELS, 
-  DEFAULT_GENERIC_MODELS 
+  DEFAULT_GENERIC_MODELS,
+  DEFAULT_PROVIDER_MODELS 
 } from '../utils/apiBridge';
 import { ConfigInjectionAlert, InjectionStatusInfo } from './ConfigInjectionAlert';
 import { VerboseLogInspector, VerboseLogData } from './VerboseLogInspector';
-import { validateAgentConfig, validateDeepLinkSchema, DeepSchemaIssue } from '../utils/configValidator';
+import { InlineDiagnosticsEditor } from './InlineDiagnosticsEditor';
+import { validateAgentConfig, validateDeepLinkSchema, DeepSchemaIssue, applySingleFix } from '../utils/configValidator';
 import { parseNativeConfigToSchema } from '../utils/configParser';
 
 interface ConfigTabProps {
@@ -164,6 +166,21 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
     }
   };
 
+  const handleApplySingleFix = (issue: DeepSchemaIssue) => {
+    const fixedContent = applySingleFix(rawText, issue);
+    setRawText(fixedContent);
+    if (rawMode === 'native') {
+      setNativeConfigInfo(prev => ({ ...prev, content: fixedContent }));
+    } else {
+      try {
+        const parsed = JSON.parse(fixedContent);
+        onChangeConfig(parsed);
+      } catch {
+        // Handled by validation
+      }
+    }
+  };
+
   const fetchLiveConfig = async (isManualClick: boolean = false) => {
     setIsFetchingLive(true);
     try {
@@ -228,7 +245,6 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
   const [secondaryModel, setSecondaryModel] = useState<string>('qwen2.5-coder:7b');
   const [comparisonMode, setComparisonMode] = useState<boolean>(false);
   const [modelSearchQuery, setModelSearchQuery] = useState<string>('');
-  const [selectedProviderFilter, setSelectedProviderFilter] = useState<string>('all');
   const [sortByContext, setSortByContext] = useState<boolean>(false);
   const [bulkSelectMode, setBulkSelectMode] = useState<boolean>(false);
   const [selectedModelsForBulk, setSelectedModelsForBulk] = useState<string[]>([]);
@@ -331,7 +347,7 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
   const handleFetchModels = async () => {
     setIsFetchingModules(true);
     try {
-      // Execute resilient model fetch with automatic 404 fallback to default 'local' or 'generic' model list
+      // Execute resilient model fetch strictly for the currently selected provider
       const result = await fetchModelsWithFallback(
         config.model.provider,
         config.model.baseUrl,
@@ -360,9 +376,9 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
         [config.model.provider]: formattedModels
       }));
     } catch (e: any) {
-      // Graceful fallback to default 'local' or 'generic' list if any exception occurs
-      const isLocal = config.model.provider === 'ollama' || config.model.provider === 'custom' || agentId === 'picoclaw';
-      const fallbackList = isLocal ? DEFAULT_LOCAL_MODELS : DEFAULT_GENERIC_MODELS;
+      // Graceful fallback strictly providing models for the selected provider
+      const prov = config.model.provider || 'ollama';
+      const fallbackList = DEFAULT_PROVIDER_MODELS[prov] || MODEL_OPTIONS[prov] || DEFAULT_LOCAL_MODELS;
       setFetchedModelsMap(prev => ({
         ...prev,
         [config.model.provider]: fallbackList
@@ -377,8 +393,9 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
   useEffect(() => {
     handleFetchModels();
   }, [config.model.provider, config.model.baseUrl, agentId]);
+
   const handleProviderChange = (provider: LLMProvider) => {
-    const available = MODEL_OPTIONS[provider] || [];
+    const available = MODEL_OPTIONS[provider] || DEFAULT_PROVIDER_MODELS[provider] || [];
     const defaultModel = available[0]?.value || 'custom-model';
     onChangeConfig({
       ...config,
@@ -436,7 +453,7 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
     setTimeout(() => setCopiedRaw(false), 2000);
   };
 
-  const rawProviderList = fetchedModelsMap[config.model.provider] || MODEL_OPTIONS[config.model.provider] || [];
+  const rawProviderList = fetchedModelsMap[config.model.provider] || MODEL_OPTIONS[config.model.provider] || DEFAULT_PROVIDER_MODELS[config.model.provider] || [];
   const currentModelList = [...rawProviderList];
   if (config.model.model && !currentModelList.some((m) => m.value === config.model.model)) {
     currentModelList.unshift({
@@ -451,18 +468,10 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
       const matchesSearch = (
         m.value.toLowerCase().includes(q) ||
         m.label.toLowerCase().includes(q) ||
-        config.model.provider.toLowerCase().includes(q) ||
         (m.tag && m.tag.toLowerCase().includes(q))
       );
       if (!matchesSearch) return false;
     }
-
-    if (selectedProviderFilter && selectedProviderFilter !== 'all') {
-      const prov = selectedProviderFilter.toLowerCase();
-      const itemStr = (m.value + ' ' + m.label + ' ' + config.model.provider).toLowerCase();
-      if (!itemStr.includes(prov)) return false;
-    }
-
     return true;
   });
 
@@ -858,26 +867,26 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
                     )}
                   </div>
 
-                  {/* Provider Filter Dropdown */}
+                  {/* Provider Indicator & Direct Switcher */}
                   <div className="relative sm:col-span-3">
                     <select
                       id="provider-filter-select"
-                      value={selectedProviderFilter}
-                      onChange={(e) => setSelectedProviderFilter(e.target.value)}
-                      className="w-full appearance-none pl-7 pr-7 py-1.5 rounded-xl bg-slate-950/70 border border-slate-800 text-slate-200 text-xs focus:outline-none focus:border-indigo-500 font-sans capitalize"
+                      value={config.model.provider}
+                      onChange={(e) => handleProviderChange(e.target.value as LLMProvider)}
+                      className="w-full appearance-none pl-7 pr-7 py-1.5 rounded-xl bg-slate-950/70 border border-indigo-500/30 text-indigo-200 text-xs focus:outline-none focus:border-indigo-500 font-sans capitalize font-medium"
+                      title="Current Provider (Click to switch provider and fetch its models)"
                     >
-                      <option value="all">All Providers</option>
-                      <option value="ollama">Ollama</option>
+                      <option value="ollama">Ollama / Local</option>
                       <option value="anthropic">Anthropic</option>
                       <option value="openai">OpenAI</option>
-                      <option value="gemini">Gemini</option>
+                      <option value="gemini">Google Gemini</option>
                       <option value="deepseek">DeepSeek</option>
                       <option value="groq">Groq</option>
-                      <option value="mistral">Mistral</option>
+                      <option value="mistral">Mistral AI</option>
                       <option value="openrouter">OpenRouter</option>
-                      <option value="custom">Custom</option>
+                      <option value="custom">Custom Endpoint</option>
                     </select>
-                    <Filter className="w-3 h-3 text-slate-400 absolute left-2.5 top-2.5 pointer-events-none" />
+                    <Filter className="w-3 h-3 text-indigo-400 absolute left-2.5 top-2.5 pointer-events-none" />
                     <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-2.5 top-2.5 pointer-events-none" />
                   </div>
 
@@ -2194,143 +2203,37 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
                     JSON Schema
                   </button>
                 </div>
-
-                <button
-                  id="copy-raw-json-btn"
-                  onClick={() => {
-                    navigator.clipboard.writeText(rawText);
-                    setCopiedRaw(true);
-                    setTimeout(() => setCopiedRaw(false), 2000);
-                  }}
-                  className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
-                >
-                  {copiedRaw ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                  {copiedRaw ? 'Copied' : 'Copy'}
-                </button>
               </div>
             </div>
 
-            {/* Quick Sync & Auto-Fix Action Bar */}
-            <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 rounded-xl bg-slate-950/80 border border-slate-800">
-              <div className="flex items-center gap-2 text-xs text-slate-300">
-                <Sparkles className="w-4 h-4 text-indigo-400" />
-                <span>Deep-Link Cross-Validation Status:</span>
-                <span className="font-mono text-slate-400">
-                  {deepValidation.issues.length === 0 ? '0 issues' : `${deepValidation.issues.length} detected`}
-                </span>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={handleAutoFixSyntax}
-                  className="flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 text-indigo-300 border border-slate-700 transition-colors"
-                  title="Auto-replace tabs with spaces and trim trailing whitespace"
-                >
-                  <Wrench className="w-3 h-3" />
-                  Auto-Fix Syntax
-                </button>
-
-                <button
-                  onClick={handleSyncNativeToSchema}
-                  className="flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium bg-indigo-950/60 hover:bg-indigo-900/60 text-indigo-200 border border-indigo-500/30 transition-colors"
-                  title="Parse native content and update active JSON Schema"
-                >
-                  <RotateCcw className="w-3 h-3" />
-                  Sync Native → Schema
-                </button>
-              </div>
-            </div>
-
-            {/* Deep Schema Issues & Syntax Error Card */}
-            {deepValidation.issues.length > 0 && (
-              <div className="rounded-xl border border-rose-500/30 bg-rose-950/20 p-4 space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2 text-xs font-bold text-rose-300">
-                    <AlertCircle className="w-4 h-4 text-rose-400" />
-                    <span>Schema Validation &amp; Syntax Errors ({deepValidation.issues.length})</span>
-                  </div>
-                  <span className="text-[10px] text-rose-400/80 font-mono">
-                    Direct Deep-Link Inspector
-                  </span>
-                </div>
-
-                <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
-                  {deepValidation.issues.map((issue) => (
-                    <div 
-                      key={issue.id}
-                      className={`p-2.5 rounded-lg text-xs font-mono flex flex-col sm:flex-row sm:items-center justify-between gap-2 border ${
-                        issue.severity === 'error'
-                          ? 'bg-rose-900/30 border-rose-500/40 text-rose-200'
-                          : 'bg-amber-900/30 border-amber-500/40 text-amber-200'
-                      }`}
-                    >
-                      <div className="flex items-start gap-2">
-                        {issue.line ? (
-                          <span className="px-2 py-0.5 rounded bg-slate-900 text-indigo-300 text-[10px] font-bold border border-slate-700 shrink-0">
-                            Line {issue.line}{issue.column ? `:${issue.column}` : ''}
-                          </span>
-                        ) : (
-                          <span className="px-2 py-0.5 rounded bg-slate-900 text-slate-400 text-[10px] font-bold border border-slate-700 shrink-0">
-                            {issue.path}
-                          </span>
-                        )}
-                        <div>
-                          <p className="text-xs">{issue.message}</p>
-                          {issue.suggestedFix && (
-                            <p className="text-[11px] text-emerald-300 font-sans mt-0.5">
-                              💡 Suggested Fix: {issue.suggestedFix}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-
-                      {issue.type === 'schema_mismatch' && (
-                        <div className="text-[10px] text-right shrink-0 bg-slate-950/60 px-2 py-1 rounded border border-slate-800">
-                          <div>Native: <span className="text-amber-300">{String(issue.nativeValue)}</span></div>
-                          <div>Schema: <span className="text-indigo-300">{String(issue.schemaValue)}</span></div>
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {rawError && (
-              <div className="p-3 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs font-mono">
-                Syntax Error: {rawError}
-              </div>
-            )}
-
-            {/* Editor Container */}
-            <div className="relative rounded-xl border border-slate-800 bg-slate-950 overflow-hidden">
-              <div className="flex items-center justify-between px-3 py-1.5 bg-slate-900 border-b border-slate-800 text-[11px] text-slate-400 font-mono">
-                <span>Format: {rawMode === 'native' ? (nativeConfigInfo?.format || 'yaml').toUpperCase() : 'JSON'}</span>
-                <span>Lines: {rawText.split('\n').length}</span>
-              </div>
-              <textarea
-                id="raw-json-editor"
-                rows={20}
-                value={rawText}
-                onChange={(e) => {
-                  const text = e.target.value;
-                  setRawText(text);
-                  if (rawMode === 'schema') {
-                    try {
-                      const parsed = JSON.parse(text);
-                      onChangeConfig(parsed);
-                      setRawError(null);
-                    } catch (err: any) {
-                      setRawError(err.message);
-                    }
-                  } else {
-                    setNativeConfigInfo(prev => ({ ...prev, content: text }));
+            {/* Inline Diagnostic Code Editor Component */}
+            <InlineDiagnosticsEditor
+              content={rawText}
+              onChangeContent={(text) => {
+                setRawText(text);
+                if (rawMode === 'schema') {
+                  try {
+                    const parsed = JSON.parse(text);
+                    onChangeConfig(parsed);
+                    setRawError(null);
+                  } catch (err: any) {
+                    setRawError(err.message);
                   }
-                }}
-                className="w-full p-4 bg-slate-950 text-indigo-300 font-mono text-xs leading-relaxed focus:outline-none focus:ring-1 focus:ring-indigo-500 selection:bg-indigo-900 selection:text-white"
-                placeholder="Enter configuration here..."
-              />
-            </div>
+                } else {
+                  setNativeConfigInfo(prev => ({ ...prev, content: text }));
+                }
+              }}
+              format={(nativeConfigInfo?.format || 'yaml') as 'yaml' | 'toml' | 'json'}
+              rawMode={rawMode}
+              fileName={nativeConfigInfo?.fileName || (rawMode === 'native' ? 'config.yaml' : 'config.json')}
+              issues={deepValidation.issues}
+              lineIssuesMap={deepValidation.lineIssuesMap}
+              schemaConfig={config}
+              onApplyFix={handleApplySingleFix}
+              onAutoFixSyntax={handleAutoFixSyntax}
+              onSyncNativeToSchema={handleSyncNativeToSchema}
+              rawError={rawError}
+            />
           </div>
         )}
       </div>

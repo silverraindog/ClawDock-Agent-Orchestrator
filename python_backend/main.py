@@ -640,41 +640,85 @@ DEFAULT_LOCAL_MODEL_CATALOG = [
     {"value": "command-r:35b", "label": "command-r:35b (Cohere Local)", "tag": "Local"}
 ]
 
-DEFAULT_GENERIC_MODEL_CATALOG = [
-    {"value": "claude-3-7-sonnet", "label": "Claude 3.7 Sonnet (Hybrid Reasoning)", "tag": "Frontier"},
-    {"value": "claude-3-5-sonnet", "label": "Claude 3.5 Sonnet (Benchmark Standard)", "tag": "Recommended"},
-    {"value": "claude-3-5-haiku", "label": "Claude 3.5 Haiku (Ultra-fast)", "tag": "Fast"},
-    {"value": "gpt-4o", "label": "GPT-4o (Omni Flagship)", "tag": "Recommended"},
-    {"value": "gpt-4o-mini", "label": "GPT-4o Mini (Fast & Cheap)", "tag": "Fast"},
-    {"value": "o1", "label": "o1 (Deep Reasoning)", "tag": "Reasoning"},
-    {"value": "o3-mini", "label": "o3-mini (High-speed Reasoning)", "tag": "Reasoning"},
-    {"value": "deepseek-r1", "label": "DeepSeek-R1 (Frontier Reasoning)", "tag": "Reasoning"},
-    {"value": "deepseek-v3", "label": "DeepSeek-V3 (Multi-token General)", "tag": "Flagship"},
-    {"value": "gemini-2.5-pro", "label": "Gemini 2.5 Pro (State-of-the-art coding)", "tag": "Frontier"},
-    {"value": "gemini-2.5-flash", "label": "Gemini 2.5 Flash (State-of-the-art speed)", "tag": "Fast"},
-    {"value": "llama-3.3-70b-versatile", "label": "Llama 3.3 70B (Ultra-fast)", "tag": "Fast"},
-    {"value": "mistral-large-latest", "label": "Mistral Large 2 (Flagship)", "tag": "Flagship"},
-    {"value": "generic-model", "label": "Generic / Custom Model", "tag": "Generic"}
-]
+PROVIDER_MODEL_CATALOGS = {
+    "anthropic": [
+        {"value": "claude-3-7-sonnet", "label": "Claude 3.7 Sonnet (Hybrid Reasoning)", "tag": "Frontier"},
+        {"value": "claude-3-5-sonnet", "label": "Claude 3.5 Sonnet (Benchmark Standard)", "tag": "Recommended"},
+        {"value": "claude-3-5-haiku", "label": "Claude 3.5 Haiku (Ultra-fast)", "tag": "Fast"},
+        {"value": "claude-3-opus", "label": "Claude 3 Opus (Research)", "tag": "Legacy"}
+    ],
+    "openai": [
+        {"value": "gpt-4o", "label": "GPT-4o (Omni Flagship)", "tag": "Recommended"},
+        {"value": "gpt-4o-mini", "label": "GPT-4o Mini (Fast & Cheap)", "tag": "Fast"},
+        {"value": "o1", "label": "OpenAI o1 (Deep Reasoning)", "tag": "Reasoning"},
+        {"value": "o3-mini", "label": "OpenAI o3-mini (High-speed Reasoning)", "tag": "Reasoning"},
+        {"value": "gpt-4.5-preview", "label": "GPT-4.5 Preview", "tag": "Preview"}
+    ],
+    "gemini": [
+        {"value": "gemini-2.5-pro", "label": "Gemini 2.5 Pro (State-of-the-art coding)", "tag": "Frontier"},
+        {"value": "gemini-2.5-flash", "label": "Gemini 2.5 Flash (State-of-the-art speed)", "tag": "Fast"},
+        {"value": "gemini-2.0-flash-thinking-exp", "label": "Gemini 2.0 Flash Thinking", "tag": "Reasoning"}
+    ],
+    "deepseek": [
+        {"value": "deepseek-r1", "label": "DeepSeek-R1 (Frontier Reasoning)", "tag": "Reasoning"},
+        {"value": "deepseek-v3", "label": "DeepSeek-V3 (Multi-token General)", "tag": "Flagship"},
+        {"value": "deepseek-coder-v2", "label": "DeepSeek Coder V2 (236B MoE)", "tag": "Code"}
+    ],
+    "groq": [
+        {"value": "llama-3.3-70b-versatile", "label": "Llama 3.3 70B (300+ tok/s)", "tag": "Ultra-fast"},
+        {"value": "deepseek-r1-distill-llama-70b", "label": "DeepSeek R1 Distill 70B", "tag": "Fast Reasoning"},
+        {"value": "mixtral-8x7b-32768", "label": "Mixtral 8x7B (32k context)", "tag": "Fast"}
+    ],
+    "mistral": [
+        {"value": "mistral-large-latest", "label": "Mistral Large 2 (Flagship)", "tag": "Flagship"},
+        {"value": "codestral-latest", "label": "Codestral (Specialized code)", "tag": "Code"},
+        {"value": "ministral-8b-latest", "label": "Ministral 8B (Compact)", "tag": "Edge"}
+    ],
+    "ollama": DEFAULT_LOCAL_MODEL_CATALOG,
+    "openrouter": [
+        {"value": "anthropic/claude-3.7-sonnet", "label": "OpenRouter: Claude 3.7 Sonnet", "tag": "Proxy"},
+        {"value": "deepseek/deepseek-r1", "label": "OpenRouter: DeepSeek R1", "tag": "Proxy"},
+        {"value": "meta-llama/llama-3.3-70b-instruct", "label": "OpenRouter: Llama 3.3 70B", "tag": "Proxy"},
+        {"value": "openai/gpt-4o", "label": "OpenRouter: GPT-4o", "tag": "Proxy"}
+    ],
+    "custom": [
+        {"value": "claude-3-7-sonnet", "label": "Claude 3.7 Sonnet (Hybrid Reasoning)", "tag": "Frontier"},
+        {"value": "gemma4-soul:latest", "label": "gemma4-soul:latest (Local Edge / Active)", "tag": "Active"},
+        {"value": "qwen2.5-coder:7b", "label": "qwen2.5-coder:7b (Edge Coding)", "tag": "Sipeed"},
+        {"value": "qwen2.5-coder:14b", "label": "qwen2.5-coder:14b (Deep Coding)", "tag": "Local"},
+        {"value": "qwen2.5-coder:32b", "label": "qwen2.5-coder:32b (Heavy Coding)", "tag": "Local"},
+        {"value": "deepseek-r1:8b", "label": "deepseek-r1:8b (Local Reasoning)", "tag": "Reasoning"},
+        {"value": "deepseek-r1:14b", "label": "deepseek-r1:14b (Mid Reasoning)", "tag": "Reasoning"},
+        {"value": "deepseek-r1:32b", "label": "deepseek-r1:32b (Full Reasoning)", "tag": "Reasoning"},
+        {"value": "deepseek-r1:70b", "label": "deepseek-r1:70b (Max Reasoning)", "tag": "Reasoning"},
+        {"value": "llama3.3:70b", "label": "llama3.3:70b (High Capability)", "tag": "Local"},
+        {"value": "llama3.2:3b", "label": "llama3.2:3b (Ultra-light)", "tag": "Edge"},
+        {"value": "mistral-nemo:12b", "label": "mistral-nemo:12b (Balanced 128k)", "tag": "Local"},
+        {"value": "phi4:14b", "label": "phi4:14b (Microsoft Reasoning)", "tag": "Local"},
+        {"value": "custom-model", "label": "Custom Model Name (Manual entry)", "tag": "Custom"}
+    ]
+}
 
 @app.api_route("/api/models", methods=["GET", "POST", "PUT"])
 @app.api_route("/api/models/", methods=["GET", "POST", "PUT"])
 @app.api_route("/api/model/list", methods=["GET", "POST", "PUT"])
 @app.api_route("/api/agents/models", methods=["GET", "POST", "PUT"])
-def list_available_models(provider: str = "custom", baseUrl: str = "", agentId: str = "hermes-agent", t: str = ""):
-    prov = (provider or "").lower()
-    burl = baseUrl or ""
-    is_local = (
-        prov in ["ollama", "custom", "local", "picoclaw", "vllm"] or
-        any(k in burl for k in ["11434", "192.168.", "10.", "localhost", "127.0.0.1"]) or
-        agentId in ["picoclaw", "zeroclaw", "hermes-agent"]
-    )
-
-    catalog = list(DEFAULT_LOCAL_MODEL_CATALOG if is_local else DEFAULT_GENERIC_MODEL_CATALOG)
+def list_available_models(provider: str = "ollama", baseUrl: str = "", agentId: str = "hermes-agent", t: str = ""):
+    prov = (provider or "ollama").lower()
+    if prov in PROVIDER_MODEL_CATALOGS:
+        catalog = list(PROVIDER_MODEL_CATALOGS[prov])
+    else:
+        burl = baseUrl or ""
+        is_local = (
+            prov in ["ollama", "custom", "local", "picoclaw", "vllm"] or
+            any(k in burl for k in ["11434", "192.168.", "10.", "localhost", "127.0.0.1"]) or
+            agentId in ["picoclaw", "zeroclaw", "hermes-agent"]
+        )
+        catalog = list(DEFAULT_LOCAL_MODEL_CATALOG if is_local else DEFAULT_GENERIC_MODEL_CATALOG)
 
     return {
         "success": True,
-        "provider": provider,
+        "provider": prov,
         "baseUrl": baseUrl,
         "agentId": agentId,
         "modelsCount": len(catalog),
