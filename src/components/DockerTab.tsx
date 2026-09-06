@@ -19,6 +19,7 @@ import {
   RefreshCw
 } from 'lucide-react';
 import { AgentInfo, DockerSystemInfo, AgentId } from '../types';
+import { DockerLogsInspector } from './DockerLogsInspector';
 
 interface DockerTabProps {
   agents: AgentInfo[];
@@ -365,44 +366,14 @@ networks:
         </div>
       </div>
 
-      {/* Live Container Logs Console */}
-      <div className="rounded-2xl border border-slate-800 bg-slate-900/80 overflow-hidden">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-4 border-b border-slate-800 bg-slate-950/80">
-          <div className="flex items-center gap-2">
-            <Terminal className="w-4 h-4 text-indigo-400" />
-            <h3 className="text-sm font-semibold text-white">
-              Container Output Logs ({currentAgent.name})
-            </h3>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <input
-              type="text"
-              placeholder="Filter logs..."
-              value={logFilter}
-              onChange={(e) => setLogFilter(e.target.value)}
-              className="px-2.5 py-1 rounded-lg bg-slate-800 border border-slate-700 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono"
-            />
-          </div>
-        </div>
-
-        <div className="p-4 bg-slate-950 font-mono text-xs text-slate-300 max-h-72 overflow-y-auto space-y-1 leading-relaxed">
-          {filteredLogs.length > 0 ? (
-            filteredLogs.map((log, idx) => (
-              <div key={idx} className="hover:bg-slate-900/40 px-1 py-0.5 rounded">
-                <span className="text-slate-600 select-none mr-2">[{idx + 1}]</span>
-                <span className={log.includes('Error') || log.includes('error') ? 'text-rose-400' : log.includes('WARN') ? 'text-amber-400' : 'text-slate-300'}>
-                  {log}
-                </span>
-              </div>
-            ))
-          ) : (
-            <div className="text-slate-500 italic py-4 text-center">
-              No matching logs captured yet. Container is waiting for incoming triggers.
-            </div>
-          )}
-        </div>
-      </div>
+      {/* Live Container Logs Inspector with Real-Time Polling & Troubleshooting */}
+      <DockerLogsInspector
+        agentId={selectedAgentId}
+        agentName={currentAgent.name}
+        containerId={currentAgent.containerId}
+        isContainerRunning={currentAgent.status === 'running'}
+        onAddToast={onAddToast}
+      />
 
       {/* Docker Compose File Viewer */}
       <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-5 space-y-3">

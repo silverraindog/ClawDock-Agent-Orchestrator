@@ -27,7 +27,12 @@ import {
   ArrowUpDown,
   CheckSquare,
   Square,
-  Filter
+  Filter,
+  AlertTriangle,
+  AlertCircle,
+  CheckCircle2,
+  Wrench,
+  Sparkles
 } from 'lucide-react';
 import { 
   AgentFullConfig, 
@@ -48,7 +53,8 @@ import {
 } from '../utils/apiBridge';
 import { ConfigInjectionAlert, InjectionStatusInfo } from './ConfigInjectionAlert';
 import { VerboseLogInspector, VerboseLogData } from './VerboseLogInspector';
-import { validateAgentConfig } from '../utils/configValidator';
+import { validateAgentConfig, validateDeepLinkSchema, DeepSchemaIssue } from '../utils/configValidator';
+import { parseNativeConfigToSchema } from '../utils/configParser';
 
 interface ConfigTabProps {
   agentId: AgentId;
@@ -117,6 +123,46 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
       setRawText(nativeConfigInfo?.content || DEFAULT_NATIVE_FILES[agentId]?.content || JSON.stringify(config, null, 2));
     }
   }, [config, rawMode, nativeConfigInfo, agentId]);
+
+  // Deep-Link schema validation between native content and JSON schema
+  const deepValidation = React.useMemo(() => {
+    const format = (nativeConfigInfo?.format || 'yaml') as 'yaml' | 'toml' | 'json';
+    const content = rawMode === 'native' ? rawText : (nativeConfigInfo?.content || '');
+    return validateDeepLinkSchema(agentId, content, config, format);
+  }, [agentId, rawText, rawMode, nativeConfigInfo, config]);
+
+  const handleSyncNativeToSchema = () => {
+    try {
+      const format = (nativeConfigInfo?.format || 'yaml') as 'yaml' | 'toml' | 'json';
+      const content = rawMode === 'native' ? rawText : (nativeConfigInfo?.content || '');
+      const parsed = parseNativeConfigToSchema(agentId, content, format);
+      if (parsed && Object.keys(parsed).length > 0) {
+        onChangeConfig({
+          ...config,
+          ...parsed,
+          model: {
+            ...config.model,
+            ...(parsed.model || {})
+          }
+        });
+        setRawError(null);
+      }
+    } catch (err: any) {
+      setRawError(`Sync failed: ${err.message}`);
+    }
+  };
+
+  const handleAutoFixSyntax = () => {
+    let fixed = rawText;
+    // Replace tab characters with 2 spaces
+    fixed = fixed.replace(/\t/g, '  ');
+    // Remove trailing whitespace on each line
+    fixed = fixed.split('\n').map(l => l.trimEnd()).join('\n');
+    setRawText(fixed);
+    if (rawMode === 'native') {
+      setNativeConfigInfo(prev => ({ ...prev, content: fixed }));
+    }
+  };
 
   const fetchLiveConfig = async (isManualClick: boolean = false) => {
     setIsFetchingLive(true);
@@ -606,19 +652,25 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
         </div>
       )}
 
-      {/* Navigation Pills */}
+      {/* Navigation Pills with Deep-Link Validation Badges */}
       <div className="flex overflow-x-auto gap-2 pb-1 border-b border-slate-800/80">
         {[
-          { id: 'model', label: 'Model & Reasoning', icon: Zap },
-          { id: 'moa', label: 'Mixture-of-Agents (MoA)', icon: Cpu },
-          { id: 'channels', label: 'Communication Channels', icon: Radio },
-          { id: 'system', label: 'Prompt & Persona', icon: MessageSquare },
-          { id: 'security', label: 'Security & Sandbox', icon: Shield },
-          { id: 'storage', label: 'Storage & Memory', icon: Database },
-          { id: 'raw', label: 'Raw JSON / Schema', icon: FileCode },
+          { id: 'model', label: 'Model & Reasoning', icon: Zap, sectionKey: 'model' },
+          { id: 'moa', label: 'Mixture-of-Agents (MoA)', icon: Cpu, sectionKey: 'moa' },
+          { id: 'channels', label: 'Communication Channels', icon: Radio, sectionKey: 'channels' },
+          { id: 'system', label: 'Prompt & Persona', icon: MessageSquare, sectionKey: 'system' },
+          { id: 'security', label: 'Security & Sandbox', icon: Shield, sectionKey: 'security' },
+          { id: 'storage', label: 'Storage & Memory', icon: Database, sectionKey: 'storage' },
+          { id: 'raw', label: 'Raw Editor & Validator', icon: FileCode, sectionKey: 'raw' },
         ].map((tab) => {
           const Icon = tab.icon;
           const isActive = activeSection === tab.id;
+          const sectionIssues = deepValidation.issues.filter(i => 
+            tab.sectionKey === 'raw' ? true : i.path.startsWith(tab.sectionKey)
+          );
+          const hasErrors = sectionIssues.some(i => i.severity === 'error');
+          const hasWarnings = sectionIssues.some(i => i.severity === 'warning');
+
           return (
             <button
               key={tab.id}
@@ -632,6 +684,13 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
             >
               <Icon className="w-3.5 h-3.5" />
               <span>{tab.label}</span>
+              {sectionIssues.length > 0 && (
+                <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold ${
+                  hasErrors ? 'bg-rose-500/20 text-rose-400 border border-rose-500/40' : 'bg-amber-500/20 text-amber-400 border border-amber-500/40'
+                }`}>
+                  {sectionIssues.length}
+                </span>
+              )}
             </button>
           );
         })}
@@ -2077,27 +2136,48 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
 
         {/* ================= RAW JSON / YAML / TOML SCHEMA & NATIVE FILE ================= */}
         {activeSection === 'raw' && (
-          <div className="space-y-4">
+          <div className="space-y-5">
+            {/* Top Toolbar */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-4">
               <div>
-                <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+                <div className="flex items-center gap-2">
                   <FileCode className="w-4 h-4 text-indigo-400" />
-                  {rawMode === 'native' ? `Native Config File (${nativeConfigInfo?.fileName || 'config'})` : 'JSON Configuration Schema'}
-                </h3>
-                <p className="text-xs text-slate-400 mt-0.5">
+                  <h3 className="text-sm font-bold text-white">
+                    {rawMode === 'native' ? `Native Config File: ${nativeConfigInfo?.fileName || 'config'}` : 'JSON Configuration Schema'}
+                  </h3>
+                  {deepValidation.syncStatus === 'in_sync' && (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                      <CheckCircle2 className="w-3 h-3" />
+                      Schema &amp; Syntax In Sync
+                    </span>
+                  )}
+                  {deepValidation.syncStatus === 'syntax_invalid' && (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-medium bg-rose-500/10 text-rose-400 border border-rose-500/20">
+                      <AlertCircle className="w-3 h-3" />
+                      Syntax Errors Detected
+                    </span>
+                  )}
+                  {deepValidation.syncStatus === 'mismatched' && (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                      <AlertTriangle className="w-3 h-3" />
+                      Schema Discrepancies
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-slate-400 mt-1">
                   {rawMode === 'native' 
-                    ? `Direct raw file content matching container mount: data/clawdock/${nativeConfigInfo?.fileName}`
-                    : 'Structured JSON schema representation used for multi-agent synchronization.'}
+                    ? `Mounted file: data/clawdock/${nativeConfigInfo?.fileName} (${nativeConfigInfo?.format?.toUpperCase() || 'YAML'})`
+                    : 'Structured JSON schema representation synchronized with multi-agent runtime.'}
                 </p>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <div className="flex bg-slate-950 p-0.5 rounded-lg border border-slate-800 text-xs">
                   <button
                     onClick={() => setRawMode('native')}
                     className={`px-3 py-1 rounded-md transition-all ${
                       rawMode === 'native'
-                        ? 'bg-indigo-600 text-white font-medium'
+                        ? 'bg-indigo-600 text-white font-medium shadow'
                         : 'text-slate-400 hover:text-white'
                     }`}
                   >
@@ -2107,7 +2187,7 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
                     onClick={() => setRawMode('schema')}
                     className={`px-3 py-1 rounded-md transition-all ${
                       rawMode === 'schema'
-                        ? 'bg-indigo-600 text-white font-medium'
+                        ? 'bg-indigo-600 text-white font-medium shadow'
                         : 'text-slate-400 hover:text-white'
                     }`}
                   >
@@ -2130,33 +2210,127 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
               </div>
             </div>
 
+            {/* Quick Sync & Auto-Fix Action Bar */}
+            <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 rounded-xl bg-slate-950/80 border border-slate-800">
+              <div className="flex items-center gap-2 text-xs text-slate-300">
+                <Sparkles className="w-4 h-4 text-indigo-400" />
+                <span>Deep-Link Cross-Validation Status:</span>
+                <span className="font-mono text-slate-400">
+                  {deepValidation.issues.length === 0 ? '0 issues' : `${deepValidation.issues.length} detected`}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleAutoFixSyntax}
+                  className="flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 text-indigo-300 border border-slate-700 transition-colors"
+                  title="Auto-replace tabs with spaces and trim trailing whitespace"
+                >
+                  <Wrench className="w-3 h-3" />
+                  Auto-Fix Syntax
+                </button>
+
+                <button
+                  onClick={handleSyncNativeToSchema}
+                  className="flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium bg-indigo-950/60 hover:bg-indigo-900/60 text-indigo-200 border border-indigo-500/30 transition-colors"
+                  title="Parse native content and update active JSON Schema"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                  Sync Native → Schema
+                </button>
+              </div>
+            </div>
+
+            {/* Deep Schema Issues & Syntax Error Card */}
+            {deepValidation.issues.length > 0 && (
+              <div className="rounded-xl border border-rose-500/30 bg-rose-950/20 p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-xs font-bold text-rose-300">
+                    <AlertCircle className="w-4 h-4 text-rose-400" />
+                    <span>Schema Validation &amp; Syntax Errors ({deepValidation.issues.length})</span>
+                  </div>
+                  <span className="text-[10px] text-rose-400/80 font-mono">
+                    Direct Deep-Link Inspector
+                  </span>
+                </div>
+
+                <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                  {deepValidation.issues.map((issue) => (
+                    <div 
+                      key={issue.id}
+                      className={`p-2.5 rounded-lg text-xs font-mono flex flex-col sm:flex-row sm:items-center justify-between gap-2 border ${
+                        issue.severity === 'error'
+                          ? 'bg-rose-900/30 border-rose-500/40 text-rose-200'
+                          : 'bg-amber-900/30 border-amber-500/40 text-amber-200'
+                      }`}
+                    >
+                      <div className="flex items-start gap-2">
+                        {issue.line ? (
+                          <span className="px-2 py-0.5 rounded bg-slate-900 text-indigo-300 text-[10px] font-bold border border-slate-700 shrink-0">
+                            Line {issue.line}{issue.column ? `:${issue.column}` : ''}
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded bg-slate-900 text-slate-400 text-[10px] font-bold border border-slate-700 shrink-0">
+                            {issue.path}
+                          </span>
+                        )}
+                        <div>
+                          <p className="text-xs">{issue.message}</p>
+                          {issue.suggestedFix && (
+                            <p className="text-[11px] text-emerald-300 font-sans mt-0.5">
+                              💡 Suggested Fix: {issue.suggestedFix}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+
+                      {issue.type === 'schema_mismatch' && (
+                        <div className="text-[10px] text-right shrink-0 bg-slate-950/60 px-2 py-1 rounded border border-slate-800">
+                          <div>Native: <span className="text-amber-300">{String(issue.nativeValue)}</span></div>
+                          <div>Schema: <span className="text-indigo-300">{String(issue.schemaValue)}</span></div>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {rawError && (
               <div className="p-3 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs font-mono">
                 Syntax Error: {rawError}
               </div>
             )}
 
-            <textarea
-              id="raw-json-editor"
-              rows={18}
-              value={rawText}
-              onChange={(e) => {
-                const text = e.target.value;
-                setRawText(text);
-                if (rawMode === 'schema') {
-                  try {
-                    const parsed = JSON.parse(text);
-                    onChangeConfig(parsed);
-                    setRawError(null);
-                  } catch (err: any) {
-                    setRawError(err.message);
+            {/* Editor Container */}
+            <div className="relative rounded-xl border border-slate-800 bg-slate-950 overflow-hidden">
+              <div className="flex items-center justify-between px-3 py-1.5 bg-slate-900 border-b border-slate-800 text-[11px] text-slate-400 font-mono">
+                <span>Format: {rawMode === 'native' ? (nativeConfigInfo?.format || 'yaml').toUpperCase() : 'JSON'}</span>
+                <span>Lines: {rawText.split('\n').length}</span>
+              </div>
+              <textarea
+                id="raw-json-editor"
+                rows={20}
+                value={rawText}
+                onChange={(e) => {
+                  const text = e.target.value;
+                  setRawText(text);
+                  if (rawMode === 'schema') {
+                    try {
+                      const parsed = JSON.parse(text);
+                      onChangeConfig(parsed);
+                      setRawError(null);
+                    } catch (err: any) {
+                      setRawError(err.message);
+                    }
+                  } else {
+                    setNativeConfigInfo(prev => ({ ...prev, content: text }));
                   }
-                } else {
-                  setNativeConfigInfo(prev => ({ ...prev, content: text }));
-                }
-              }}
-              className="w-full p-4 rounded-xl bg-slate-950 border border-slate-800 text-indigo-300 font-mono text-xs leading-relaxed focus:outline-none focus:border-indigo-500 selection:bg-indigo-900 selection:text-white"
-            />
+                }}
+                className="w-full p-4 bg-slate-950 text-indigo-300 font-mono text-xs leading-relaxed focus:outline-none focus:ring-1 focus:ring-indigo-500 selection:bg-indigo-900 selection:text-white"
+                placeholder="Enter configuration here..."
+              />
+            </div>
           </div>
         )}
       </div>

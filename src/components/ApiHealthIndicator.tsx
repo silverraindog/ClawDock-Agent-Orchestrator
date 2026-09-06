@@ -54,7 +54,7 @@ export const ApiHealthIndicator: React.FC = () => {
       probeApiHealth().then((res) => {
         setHealth(res);
       });
-    }, 10000);
+    }, 30000); // 30s background polling interval
 
     const timerId = setInterval(() => {
       if (health.timestamp) {
