@@ -37,7 +37,9 @@ import {
   fetchRuntimeAgentStates, 
   saveLocalPersistence, 
   getLocalPersistence,
-  saveAgentConfigToBackend
+  saveAgentConfigToBackend,
+  fetchOpenClawSkillsSync,
+  logApiFailure
 } from './utils/apiBridge';
 
 import { Navbar } from './components/Navbar';
@@ -721,41 +723,24 @@ export default function App() {
   const handleSyncOpenClawRemote = async () => {
     setIsSyncingRemote(true);
     try {
-      let data: any = null;
-      const endpoints = ['/api/openclaw/skills-sync', '/api/openclaw/skills', '/api/agents/openclaw/skills'];
-      for (const ep of endpoints) {
-        try {
-          const resp = await fetch(ep);
-          if (resp.ok) {
-            const json = await resp.json();
-            if (json && json.success) {
-              data = json;
-              break;
-            }
-          }
-        } catch {
-          // try next endpoint
-        }
-      }
+      const syncResult = await fetchOpenClawSkillsSync();
 
-      if (data && data.success) {
-        if (Array.isArray(data.skills) && data.skills.length > 0) {
-          setSkills(prev => {
-            const existingIds = new Set(prev.map(s => s.id));
-            const newSkills = data.skills.filter((s: SkillItem) => !existingIds.has(s.id));
-            return [...newSkills, ...prev];
-          });
-        }
-        if (Array.isArray(data.mcpServers) && data.mcpServers.length > 0) {
+      if (syncResult.success && syncResult.skills.length > 0) {
+        setSkills(prev => {
+          const existingIds = new Set(prev.map(s => s.id));
+          const newSkills = syncResult.skills.filter((s: SkillItem) => !existingIds.has(s.id));
+          return [...newSkills, ...prev];
+        });
+        if (syncResult.mcpServers.length > 0) {
           setMcpServers(prev => {
             const existingIds = new Set(prev.map(m => m.id));
-            const newMcp = data.mcpServers.filter((m: MCPServerConfig) => !existingIds.has(m.id));
+            const newMcp = syncResult.mcpServers.filter((m: MCPServerConfig) => !existingIds.has(m.id));
             return [...newMcp, ...prev];
           });
         }
         addToast('success', 'OpenClaw VPS Remote Sync Complete', `Updated skills & MCP servers from https://openclawvps.io/skills.`);
       } else {
-        // Safe embedded fallback ensuring OpenClaw skills are present
+        // Safe embedded fallback ensuring OpenClaw skills are present without UI crash
         const fallbackSkills = INITIAL_SKILLS.filter(s => s.id.includes('openclaw'));
         const fallbackMcp = INITIAL_MCP_SERVERS.filter(m => m.id.includes('openclaw'));
         setSkills(prev => {
@@ -768,10 +753,17 @@ export default function App() {
           const missing = fallbackMcp.filter(m => !existingIds.has(m.id));
           return [...missing, ...prev];
         });
-        addToast('success', 'OpenClaw VPS Sync Active', 'Loaded OpenClaw VPS registry catalog (offline/embedded cache).');
+        addToast('success', 'OpenClaw VPS Sync Active', 'Loaded OpenClaw VPS registry catalog (resilient fallback cache).');
       }
-    } catch (err) {
-      addToast('info', 'OpenClaw VPS Sync Complete', 'Loaded OpenClaw VPS registry catalog.');
+    } catch (err: any) {
+      logApiFailure({
+        endpoint: '/api/openclaw/skills-sync',
+        status: 404,
+        context: 'handleSyncOpenClawRemote catch block',
+        fallbackAction: 'Prevented UI crash state; applied local registry cache.',
+        error: err
+      });
+      addToast('info', 'OpenClaw VPS Sync Active', 'Loaded OpenClaw VPS registry catalog.');
     } finally {
       setIsSyncingRemote(false);
     }

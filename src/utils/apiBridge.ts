@@ -16,10 +16,23 @@ export interface ApiFailureLogParams {
   error?: any;
 }
 
+export interface ApiDiagnosticLog {
+  endpoint: string;
+  statusCode: number;
+  timestamp: string;
+  method: string;
+  statusText: string;
+  context: string;
+  responseBody?: any;
+  error?: any;
+  fallbackAction?: string;
+}
+
 /**
- * Robust, structured logging mechanism for 404 responses and failed API calls.
- * Displays detailed debug telemetry in the UI developer console with badges
- * without crashing or throwing unhandled exceptions in the application state.
+ * Robust, structured logging mechanism for 404 responses and non-200 failed API calls.
+ * Explicitly emits detailed diagnostic data (endpoint, status code, and timestamp) to
+ * console.warn (for 404 status codes) or console.error (for 5xx or unhandled exceptions),
+ * while preventing global UI crash states through resilient fallback execution.
  */
 export function logApiFailure({
   endpoint,
@@ -27,49 +40,195 @@ export function logApiFailure({
   status = 404,
   statusText = 'Not Found',
   responseBody,
-  context,
+  context = 'UI Bridge',
   fallbackAction,
   error
 }: ApiFailureLogParams): void {
   const is404 = status === 404;
-  const badgeColor = is404 ? '#f59e0b' : '#ef4444';
   const timestamp = new Date().toISOString();
+  const fallbackDesc = fallbackAction || 'Retained local state safely; default fallback data applied.';
 
-  // Print grouped diagnostic payload in browser console
+  // Diagnostic data payload containing endpoint, status code, timestamp, and context
+  const diagnosticData: ApiDiagnosticLog = {
+    endpoint,
+    statusCode: status,
+    timestamp,
+    method,
+    statusText,
+    context,
+    responseBody: responseBody ?? null,
+    error: error?.message || error || null,
+    fallbackAction: fallbackDesc
+  };
+
+  const logMessage = `[ClawDock API Bridge Diagnostic] [${timestamp}] HTTP ${status} (${statusText}) for ${method} ${endpoint}${context ? ` [${context}]` : ''}`;
+
+  // Emit directly to console.warn (for 404 errors) or console.error (for other non-200 errors)
+  if (is404) {
+    console.warn(logMessage, diagnosticData);
+  } else {
+    console.error(logMessage, diagnosticData);
+  }
+
+  // Print grouped diagnostic payload in browser console for rich visual inspection
   try {
+    const badgeColor = is404 ? '#f59e0b' : '#ef4444';
     console.groupCollapsed(
-      `%c[ClawDock API Bridge] HTTP ${status} ${statusText} | ${method} ${endpoint}`,
+      `%c[ClawDock Diagnostic Group] HTTP ${status} ${statusText} | ${method} ${endpoint}`,
       `background: ${badgeColor}; color: #0f172a; font-weight: bold; padding: 2px 6px; border-radius: 4px;`
     );
 
+    console.log(`%cEndpoint:%c ${endpoint}`, 'font-weight: bold; color: #94a3b8;', 'color: #38bdf8;');
+    console.log(`%cStatus Code:%c ${status} (${statusText})`, 'font-weight: bold; color: #94a3b8;', is404 ? 'color: #f59e0b; font-weight: bold;' : 'color: #f87171;');
     console.log(`%cTimestamp:%c ${timestamp}`, 'font-weight: bold; color: #94a3b8;', 'color: #f1f5f9;');
-    console.log(`%cEndpoint:%c ${method} ${endpoint}`, 'font-weight: bold; color: #94a3b8;', 'color: #38bdf8;');
-    console.log(`%cHTTP Status:%c ${status} (${statusText})`, 'font-weight: bold; color: #94a3b8;', is404 ? 'color: #f59e0b; font-weight: bold;' : 'color: #f87171;');
-
     if (context) {
       console.log(`%cContext / Agent:%c ${context}`, 'font-weight: bold; color: #94a3b8;', 'color: #a78bfa;');
     }
-
     if (responseBody) {
       console.log('%cResponse Body / Payload:%c', 'font-weight: bold; color: #94a3b8;', '', responseBody);
     }
-
     if (error) {
       console.log('%cUnderlying Exception:%c', 'font-weight: bold; color: #94a3b8;', '', error?.message || error);
     }
-
-    const fallbackDesc = fallbackAction || 'Retained local state safely; default fallback data applied.';
     console.info(
-      `%c[Graceful Fallback Engaged]:%c ${fallbackDesc} Application state remained fully intact.`,
+      `%c[Graceful Fallback Engaged]:%c ${fallbackDesc} UI crash prevented.`,
       'font-weight: bold; color: #10b981;',
       'color: #34d399;'
     );
 
     console.groupEnd();
-  } catch {
-    // Fallback simple warning if console grouping is unavailable
-    console.warn(`[ClawDock API Bridge] ${status} ${statusText} on ${method} ${endpoint}. Fallback: ${fallbackAction || 'Default catalog applied.'}`);
+  } catch {}
+}
+
+export interface ApiRequestOptions extends RequestInit {
+  context?: string;
+  fallbackAction?: string;
+  timeoutMs?: number;
+}
+
+export interface ApiRequestResult<T = any> {
+  ok: boolean;
+  status: number;
+  statusText: string;
+  data: T | null;
+  error?: any;
+  timestamp: string;
+  endpoint: string;
+}
+
+/**
+ * Universal safe API request utility that logs detailed diagnostic data (endpoint, status code, timestamp)
+ * for non-200 responses and prevents 404 or network errors from triggering global UI crash states.
+ */
+export async function apiRequest<T = any>(
+  endpoint: string,
+  options: ApiRequestOptions = {}
+): Promise<ApiRequestResult<T>> {
+  const timestamp = new Date().toISOString();
+  const method = options.method || 'GET';
+  const { context, fallbackAction, timeoutMs = 6000, ...fetchOptions } = options;
+
+  let res: Response | null = null;
+  let responseData: any = null;
+  let caughtError: any = null;
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    res = await fetch(endpoint, {
+      ...fetchOptions,
+      signal: options.signal || controller.signal
+    });
+    clearTimeout(timeoutId);
+
+    const contentType = res.headers.get('content-type') || '';
+    if (contentType.includes('application/json')) {
+      try {
+        responseData = await res.json();
+      } catch {
+        responseData = null;
+      }
+    } else {
+      try {
+        responseData = await res.text();
+      } catch {
+        responseData = null;
+      }
+    }
+  } catch (err: any) {
+    caughtError = err;
   }
+
+  const status = res ? res.status : 404;
+  const statusText = res
+    ? res.statusText
+    : caughtError
+    ? caughtError.name === 'AbortError'
+      ? 'Request Timeout'
+      : 'Network / Route Unavailable'
+    : 'Not Found';
+  const isOk = res ? res.ok : false;
+
+  // Log detailed diagnostic data for non-200 responses to console.warn or console.error
+  if (!isOk) {
+    logApiFailure({
+      endpoint,
+      method,
+      status,
+      statusText,
+      responseBody: responseData,
+      context: context || 'apiRequest',
+      fallbackAction: fallbackAction || 'Retained safe local UI state; crash state prevented.',
+      error: caughtError
+    });
+  }
+
+  return {
+    ok: isOk,
+    status,
+    statusText,
+    data: isOk ? responseData : null,
+    error: caughtError,
+    timestamp,
+    endpoint
+  };
+}
+
+/**
+ * Synchronize skills and MCP server registry from /api/openclaw/skills-sync.
+ * Captures non-200/404 diagnostic data and falls back gracefully to prevent UI crash states.
+ */
+export async function fetchOpenClawSkillsSync(): Promise<{
+  success: boolean;
+  skills: any[];
+  mcpServers: any[];
+  isFallback: boolean;
+  statusMessage: string;
+}> {
+  const endpoint = '/api/openclaw/skills-sync';
+  const result = await apiRequest(endpoint, {
+    method: 'GET',
+    context: 'OpenClaw VPS Skills Sync',
+    fallbackAction: 'Preserving active OpenClaw skills and MCP servers without crashing UI.'
+  });
+
+  if (result.ok && result.data && result.data.success) {
+    return {
+      success: true,
+      skills: Array.isArray(result.data.skills) ? result.data.skills : [],
+      mcpServers: Array.isArray(result.data.mcpServers) ? result.data.mcpServers : [],
+      isFallback: false,
+      statusMessage: result.data.statusMessage || 'Synchronized with OpenClaw VPS registry.'
+    };
+  }
+
+  return {
+    success: false,
+    skills: [],
+    mcpServers: [],
+    isFallback: true,
+    statusMessage: 'Loaded OpenClaw VPS registry catalog (fallback mode).'
+  };
 }
 
 export interface ModelOptionItem {

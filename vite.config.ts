@@ -817,11 +817,46 @@ vector_db_url = "http://everos:8080"
         case '/api/agents/models':
         case '/api/agents/models/': {
           res.setHeader('Content-Type', 'application/json');
-          const provider = (parsedUrl.searchParams.get('provider') || 'ollama').toLowerCase();
-          const baseUrl = parsedUrl.searchParams.get('baseUrl') || '';
-          const agentId = parsedUrl.searchParams.get('agentId') || 'hermes-agent';
 
-          console.log(`[Vite API Server] [${timestamp}] GET ${pathname} - provider: "${provider}", baseUrl: "${baseUrl}", agentId: "${agentId}"`);
+          let body: any = {};
+          if (method === 'POST' || method === 'PUT') {
+            try {
+              body = (await readRequestBody(req)) || {};
+            } catch {}
+          }
+
+          // Properly capture all query parameters (agentId, provider, baseUrl) with query aliases and body support
+          const provider = (
+            parsedUrl.searchParams.get('provider') ||
+            parsedUrl.searchParams.get('modelProvider') ||
+            parsedUrl.searchParams.get('model_provider') ||
+            body?.provider ||
+            body?.modelProvider ||
+            body?.model_provider ||
+            'ollama'
+          ).toLowerCase().trim();
+
+          const baseUrl = (
+            parsedUrl.searchParams.get('baseUrl') ||
+            parsedUrl.searchParams.get('base_url') ||
+            parsedUrl.searchParams.get('url') ||
+            body?.baseUrl ||
+            body?.base_url ||
+            body?.url ||
+            ''
+          ).trim();
+
+          const agentId = (
+            parsedUrl.searchParams.get('agentId') ||
+            parsedUrl.searchParams.get('agent_id') ||
+            parsedUrl.searchParams.get('id') ||
+            body?.agentId ||
+            body?.agent_id ||
+            body?.id ||
+            'hermes-agent'
+          ).trim();
+
+          console.log(`[Vite API Server] [${timestamp}] ${method} ${pathname} - agentId: "${agentId}", provider: "${provider}", baseUrl: "${baseUrl}"`);
 
           let liveOllamaModels: string[] = [];
           if (baseUrl && (provider === 'ollama' || provider === 'custom' || baseUrl.includes('11434'))) {
