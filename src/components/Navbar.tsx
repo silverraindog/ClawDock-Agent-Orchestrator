@@ -12,9 +12,11 @@ import {
   Layers, 
   Sparkles, 
   Search,
-  ArrowUpCircle
+  ArrowUpCircle,
+  Activity
 } from 'lucide-react';
 import { AgentId, AgentInfo, DockerSystemInfo } from '../types';
+import { ApiHealthIndicator } from './ApiHealthIndicator';
 
 interface NavbarProps {
   agents: AgentInfo[];
@@ -108,9 +110,12 @@ export const Navbar: React.FC<NavbarProps> = ({
       </div>
 
       {/* Right controls */}
-      <div className="flex items-center gap-2 sm:gap-4">
+      <div className="flex items-center gap-2 sm:gap-3 lg:gap-4">
+        {/* Backend API Health Indicator */}
+        <ApiHealthIndicator />
+
         {/* Docker Engine status indicator */}
-        <div className="hidden md:flex items-center gap-2 text-xs font-medium text-slate-400">
+        <div className="hidden lg:flex items-center gap-2 text-xs font-medium text-slate-400">
           <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
           <span>Docker Engine: Active</span>
           <span className="text-[10px] font-mono text-slate-500">
@@ -119,7 +124,7 @@ export const Navbar: React.FC<NavbarProps> = ({
         </div>
 
         {/* Divider */}
-        <div className="h-8 w-px bg-slate-800 mx-1 hidden md:block" />
+        <div className="h-8 w-px bg-slate-800 mx-1 hidden sm:block" />
 
         {/* Agent Selector Dropdown */}
         <div className="relative" ref={dropdownRef}>

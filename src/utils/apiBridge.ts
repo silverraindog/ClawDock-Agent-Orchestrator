@@ -514,16 +514,102 @@ export function mergeWithDefaultConfig(agentId: AgentId, custom?: Partial<AgentF
   };
 }
 
-export async function checkBackendAvailability(): Promise<boolean> {
+export interface ApiHealthStatus {
+  status: 'healthy' | 'unhealthy' | 'checking';
+  latencyMs: number | null;
+  statusCode: number | null;
+  uptime: number | null;
+  timestamp: string;
+  endpoint: string;
+  errorMessage?: string;
+  rawResponse?: any;
+}
+
+let lastKnownHealth: ApiHealthStatus = {
+  status: 'checking',
+  latencyMs: null,
+  statusCode: null,
+  uptime: null,
+  timestamp: new Date().toISOString(),
+  endpoint: '/api/health'
+};
+
+export function getLastKnownApiHealth(): ApiHealthStatus {
+  return lastKnownHealth;
+}
+
+export async function probeApiHealth(): Promise<ApiHealthStatus> {
+  const start = performance.now();
+  const timestamp = new Date().toISOString();
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 1500);
-    const res = await fetch('/api/health', { signal: controller.signal });
+    const timeoutId = setTimeout(() => controller.abort(), 3000);
+    const res = await fetch('/api/health', { 
+      signal: controller.signal,
+      headers: { 'Accept': 'application/json' },
+      cache: 'no-store'
+    });
     clearTimeout(timeoutId);
-    return res.ok;
-  } catch {
-    return false;
+    const latencyMs = Math.round(performance.now() - start);
+
+    if (res.ok) {
+      let data: any = {};
+      try {
+        data = await res.json();
+      } catch {}
+
+      const result: ApiHealthStatus = {
+        status: 'healthy',
+        latencyMs,
+        statusCode: res.status,
+        uptime: typeof data?.uptime === 'number' ? data.uptime : null,
+        timestamp,
+        endpoint: '/api/health',
+        rawResponse: data
+      };
+      lastKnownHealth = result;
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('clawdock:api-health', { detail: result }));
+      }
+      return result;
+    } else {
+      const result: ApiHealthStatus = {
+        status: 'unhealthy',
+        latencyMs,
+        statusCode: res.status,
+        uptime: null,
+        timestamp,
+        endpoint: '/api/health',
+        errorMessage: `HTTP ${res.status} ${res.statusText || 'Error'}`
+      };
+      lastKnownHealth = result;
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('clawdock:api-health', { detail: result }));
+      }
+      return result;
+    }
+  } catch (err: any) {
+    const latencyMs = Math.round(performance.now() - start);
+    const result: ApiHealthStatus = {
+      status: 'unhealthy',
+      latencyMs,
+      statusCode: 0,
+      uptime: null,
+      timestamp,
+      endpoint: '/api/health',
+      errorMessage: err?.name === 'AbortError' ? 'Connection timed out (>3000ms)' : (err?.message || 'Server unreachable')
+    };
+    lastKnownHealth = result;
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('clawdock:api-health', { detail: result }));
+    }
+    return result;
   }
+}
+
+export async function checkBackendAvailability(): Promise<boolean> {
+  const health = await probeApiHealth();
+  return health.status === 'healthy';
 }
 
 export function getLocalPersistence(): Record<string, any> {

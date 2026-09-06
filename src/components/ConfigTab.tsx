@@ -206,7 +206,7 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
     setIsPinging(true);
     const start = performance.now();
     try {
-      const res = await fetch('/api/models?t=' + Date.now(), { method: 'GET' });
+      const res = await fetch('/api/health', { method: 'GET', cache: 'no-store' });
       const elapsed = Math.round(performance.now() - start);
       setPingLatencyMs(elapsed > 0 ? elapsed : 14);
     } catch {
