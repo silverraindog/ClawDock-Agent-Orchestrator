@@ -61,43 +61,14 @@ export function logApiFailure({
     fallbackAction: fallbackDesc
   };
 
-  const logMessage = `[ClawDock API Bridge Diagnostic] [${timestamp}] HTTP ${status} (${statusText}) for ${method} ${endpoint}${context ? ` [${context}]` : ''}`;
+  const logMessage = `[ClawDock API Bridge] [${timestamp}] HTTP ${status} (${statusText}) for ${method} ${endpoint}${context ? ` [${context}]` : ''}`;
 
-  // Emit directly to console.warn (for 404 errors) or console.error (for other non-200 errors)
-  if (is404) {
+  if (!is404) {
     console.warn(logMessage, diagnosticData);
   } else {
-    console.error(logMessage, diagnosticData);
+    // For 404 with graceful fallback, log cleanly without throwing uncaught UI alarms
+    console.debug?.(logMessage, diagnosticData);
   }
-
-  // Print grouped diagnostic payload in browser console for rich visual inspection
-  try {
-    const badgeColor = is404 ? '#f59e0b' : '#ef4444';
-    console.groupCollapsed(
-      `%c[ClawDock Diagnostic Group] HTTP ${status} ${statusText} | ${method} ${endpoint}`,
-      `background: ${badgeColor}; color: #0f172a; font-weight: bold; padding: 2px 6px; border-radius: 4px;`
-    );
-
-    console.log(`%cEndpoint:%c ${endpoint}`, 'font-weight: bold; color: #94a3b8;', 'color: #38bdf8;');
-    console.log(`%cStatus Code:%c ${status} (${statusText})`, 'font-weight: bold; color: #94a3b8;', is404 ? 'color: #f59e0b; font-weight: bold;' : 'color: #f87171;');
-    console.log(`%cTimestamp:%c ${timestamp}`, 'font-weight: bold; color: #94a3b8;', 'color: #f1f5f9;');
-    if (context) {
-      console.log(`%cContext / Agent:%c ${context}`, 'font-weight: bold; color: #94a3b8;', 'color: #a78bfa;');
-    }
-    if (responseBody) {
-      console.log('%cResponse Body / Payload:%c', 'font-weight: bold; color: #94a3b8;', '', responseBody);
-    }
-    if (error) {
-      console.log('%cUnderlying Exception:%c', 'font-weight: bold; color: #94a3b8;', '', error?.message || error);
-    }
-    console.info(
-      `%c[Graceful Fallback Engaged]:%c ${fallbackDesc} UI crash prevented.`,
-      'font-weight: bold; color: #10b981;',
-      'color: #34d399;'
-    );
-
-    console.groupEnd();
-  } catch {}
 }
 
 export interface ApiRequestOptions extends RequestInit {

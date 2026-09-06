@@ -321,15 +321,6 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
         ...prev,
         [config.model.provider]: fallbackList
       }));
-      logApiFailure({
-        endpoint: '/api/models',
-        method: 'GET',
-        status: 404,
-        statusText: 'Client-side Exception in handleFetchModels',
-        error: e,
-        context: `Agent "${agentId}", Provider "${config.model.provider}"`,
-        fallbackAction: `Applied default ${isLocal ? "'local'" : "'generic'"} model list.`
-      });
     } finally {
       setIsFetchingModules(false);
     }
