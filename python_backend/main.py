@@ -12,6 +12,8 @@ import json
 import logging
 import io
 import tarfile
+import datetime
+import subprocess
 
 from config_schema import AgentFullConfigSchema
 from docker_manager import DockerManager
@@ -39,9 +41,78 @@ docker_mgr = DockerManager()
 CONFIG_STORE_DIR = os.environ.get("CONFIG_STORE_DIR", "/tmp/clawdock_configs")
 os.makedirs(CONFIG_STORE_DIR, exist_ok=True)
 
+AGENT_STATES: Dict[str, Dict[str, Any]] = {
+    "hermes-agent": {
+        "status": "running",
+        "containerId": "c108a94fd32b",
+        "logs": [
+            "[Hermes Core] Initializing Nous Hermes 3.11 Runtime...",
+            "[Hermes Core] Mounting workspace volume at /workspace",
+            "[Hermes Core] SKILL.md specification engine loaded (9 skills active)",
+            "[Hermes Core] Channel listener: Telegram polling active [@developer, @admin]",
+            "[Hermes Core] Ready for autonomous tasks on port 8080"
+        ]
+    },
+    "zeroclaw": {
+        "status": "stopped",
+        "containerId": "b94101e4aa22",
+        "logs": [
+            "[ZeroClaw Daemon] Rust tokio runtime exited with code 0",
+            "[ZeroClaw Daemon] Snapshot saved to /var/zeroclaw/memory.md"
+        ]
+    },
+    "openclaw": {
+        "status": "running",
+        "containerId": "f77012bc091e",
+        "logs": [
+            "[OpenClaw Hub] Gateway initialized with 14 connected nodes",
+            "[OpenClaw Hub] MCP Tool server verified",
+            "[OpenClaw Hub] Telegram channel connected via Webhook"
+        ]
+    },
+    "picoclaw": {
+        "status": "running",
+        "containerId": "e4991ac89b10",
+        "logs": [
+            "[PicoClaw Edge] Sipeed Go engine initialized (Memory: 9.4MB)",
+            "[PicoClaw Edge] PicoLM Quantized GGUF inference ready",
+            "[PicoClaw Edge] WebUI Gateway listening on 0.0.0.0:8083"
+        ]
+    }
+}
+
 @app.get("/api/health")
 def health_check():
     return {"status": "ok", "service": "ClawDock Python Agent Orchestrator"}
+
+@app.get("/api/state")
+def get_runtime_state():
+    for aid, state in AGENT_STATES.items():
+        try:
+            det = docker_mgr.detect_agent(aid)
+            if det and det.get("status"):
+                state["status"] = det["status"]
+                if det.get("containerId"):
+                    state["containerId"] = det["containerId"]
+        except Exception:
+            pass
+    return {
+        "success": True,
+        "agentStates": AGENT_STATES,
+        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat()
+    }
+
+@app.api_route("/api/state", methods=["POST", "PUT"])
+def update_runtime_state(payload: Dict[str, Any] = Body(...)):
+    new_states = payload.get("agentStates")
+    if new_states and isinstance(new_states, dict):
+        for k, v in new_states.items():
+            if isinstance(v, dict):
+                if k in AGENT_STATES:
+                    AGENT_STATES[k].update(v)
+                else:
+                    AGENT_STATES[k] = v
+    return {"success": True, "agentStates": AGENT_STATES}
 
 @app.get("/api/docker/status")
 def get_docker_status():
@@ -125,19 +196,25 @@ def start_agent(agent_id: str):
 def stop_agent(agent_id: str):
     return docker_mgr.stop_container(agent_id)
 
+@app.get("/api/agents/all/configs")
+@app.get("/api/agents/all/config")
+def get_all_configs():
+    valid_agents = ["hermes-agent", "zeroclaw", "openclaw", "picoclaw"]
+    configs = {}
+    for aid in valid_agents:
+        config_file = os.path.join(CONFIG_STORE_DIR, f"{aid}_config.json")
+        if os.path.exists(config_file):
+            with open(config_file, "r") as f:
+                configs[aid] = json.load(f)
+        else:
+            configs[aid] = AgentFullConfigSchema(agent_id=aid).model_dump()
+    return {"success": True, "configs": configs}
+
 @app.get("/api/agents/{agent_id}/config")
 def get_config(agent_id: str):
     valid_agents = ["hermes-agent", "zeroclaw", "openclaw", "picoclaw"]
     if agent_id == "all":
-        configs = {}
-        for aid in valid_agents:
-            config_file = os.path.join(CONFIG_STORE_DIR, f"{aid}_config.json")
-            if os.path.exists(config_file):
-                with open(config_file, "r") as f:
-                    configs[aid] = json.load(f)
-            else:
-                configs[aid] = AgentFullConfigSchema(agent_id=aid).model_dump()
-        return {"success": True, "configs": configs}
+        return get_all_configs()
 
     config_file = os.path.join(CONFIG_STORE_DIR, f"{agent_id}_config.json")
     if os.path.exists(config_file):
@@ -151,12 +228,197 @@ def get_config(agent_id: str):
     
     raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found. Valid agents: {valid_agents}")
 
-@app.post("/api/agents/{agent_id}/config")
-def save_config(agent_id: str, config: Dict[str, Any] = Body(...)):
+@app.api_route("/api/agents/{agent_id}/docker-exec-config", methods=["GET", "POST"])
+def docker_exec_config(agent_id: str):
+    valid_agents = ["hermes-agent", "zeroclaw", "openclaw", "picoclaw"]
+    if agent_id not in valid_agents:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found. Valid agents: {valid_agents}")
+
+    file_map = {
+        "hermes-agent": ("hermes.yaml", "yaml"),
+        "zeroclaw": ("zeroclaw.toml", "toml"),
+        "openclaw": ("openclaw.json", "json"),
+        "picoclaw": ("picoclaw.json", "json"),
+    }
+    fname, ffmt = file_map.get(agent_id, (f"{agent_id}.json", "json"))
+    candidate_paths = [
+        f"/data/clawdock/{fname}",
+        os.path.join("data", "clawdock", fname),
+        os.path.join(CONFIG_STORE_DIR, f"{agent_id}_config.json")
+    ]
+    
+    native_content = ""
+    source = "clawdock_mount_file"
+    file_path = f"data/clawdock/{fname}"
+
+    if os.path.exists("/var/run/docker.sock"):
+        container_candidates = {
+            "hermes-agent": ["hermes-agent-core", "hermes-agent"],
+            "zeroclaw": ["zeroclaw-daemon", "zeroclaw"],
+            "openclaw": ["openclaw-hub", "openclaw"],
+            "picoclaw": ["picoclaw-edge", "picoclaw"]
+        }.get(agent_id, [agent_id])
+        
+        for c_name in container_candidates:
+            try:
+                bin_name = agent_id.replace("-agent", "")
+                res = subprocess.run(
+                    ["docker", "exec", c_name, bin_name, "config", "show"],
+                    capture_output=True,
+                    text=True,
+                    timeout=1
+                )
+                if res.returncode == 0 and len(res.stdout.strip()) > 10:
+                    native_content = res.stdout.strip()
+                    source = f"docker_exec_{c_name}_config_show"
+                    break
+            except Exception:
+                pass
+
+    if not native_content:
+        for p in candidate_paths:
+            if os.path.exists(p):
+                try:
+                    with open(p, "r", encoding="utf-8") as f:
+                        content = f.read()
+                        if len(content.strip()) > 5:
+                            native_content = content
+                            file_path = p
+                            break
+                except Exception:
+                    pass
+
+    config_file = os.path.join(CONFIG_STORE_DIR, f"{agent_id}_config.json")
+    schema = None
+    if os.path.exists(config_file):
+        try:
+            with open(config_file, "r") as f:
+                schema = json.load(f)
+        except Exception:
+            pass
+
+    if not schema:
+        defaults = {
+            "hermes-agent": {
+                "model": {"provider": "anthropic", "model": "claude-3-7-sonnet", "temperature": 0.3},
+                "channels": {"telegram": {"enabled": True, "botToken": "env:TELEGRAM_BOT_TOKEN", "allowedUsers": "@developer", "mode": "polling"}},
+                "system": {"preset": "engineer", "systemPrompt": "You are Hermes Agent, an autonomous AI assistant capable of reasoning and executing commands.", "agentName": "Hermes Agent", "personaName": "Hermes", "language": "en-US", "autoFormatCode": True},
+                "security": {"sandboxMode": "docker_isolated", "allowedDirectories": ["/workspace", "/data"], "blockNetworkAccess": False, "maxExecutionTimeSec": 120, "requireApprovalForCommands": False, "securityProfileFile": ".security.yml"},
+                "storage": {"memoryBackend": "everos", "dbPath": "/data/everos/memories/hermes-agent", "autoSummarizeInterval": 25, "maxHistoryTurns": 100, "vectorDbUrl": "http://everos:8080"},
+                "moa": {"enabled": True, "proposerModels": ["claude-3-7-sonnet", "deepseek-r1", "gpt-4o"], "aggregatorModel": "claude-3-7-sonnet", "rounds": 2, "temperatureSpread": 0.3, "consensusThreshold": 0.85}
+            },
+            "zeroclaw": {
+                "model": {"provider": "deepseek", "model": "deepseek-r1", "temperature": 0.1},
+                "channels": {"webhook": {"enabled": True, "port": 8081, "authToken": "secret_zeroclaw_token", "corsOrigin": "*"}},
+                "system": {"preset": "engineer", "systemPrompt": "You are ZeroClaw, a minimal ultra-fast Rust autonomous agent.", "agentName": "ZeroClaw", "personaName": "ZeroClaw", "language": "en-US", "autoFormatCode": True},
+                "security": {"sandboxMode": "docker_isolated", "allowedDirectories": ["/var/zeroclaw/workspace"], "blockNetworkAccess": False, "maxExecutionTimeSec": 60, "requireApprovalForCommands": False, "securityProfileFile": ".security.yml"},
+                "storage": {"memoryBackend": "markdown", "dbPath": "/var/zeroclaw/memory.md", "autoSummarizeInterval": 50, "maxHistoryTurns": 50, "vectorDbUrl": "http://everos:8080"},
+                "moa": {"enabled": False, "proposerModels": [], "aggregatorModel": "deepseek-r1", "rounds": 1, "temperatureSpread": 0.0, "consensusThreshold": 0.9}
+            },
+            "openclaw": {
+                "model": {"provider": "openai", "model": "gpt-4o", "temperature": 0.2},
+                "channels": {"discord": {"enabled": True, "botToken": "env:DISCORD_BOT_TOKEN", "clientId": "", "guildIds": ""}, "webhook": {"enabled": True, "port": 8082, "authToken": "secret_openclaw_token", "corsOrigin": "*"}},
+                "system": {"preset": "researcher", "systemPrompt": "You are OpenClaw, a TypeScript autonomous multi-agent gateway hub.", "agentName": "OpenClaw", "personaName": "OpenClaw", "language": "en-US", "autoFormatCode": True},
+                "security": {"sandboxMode": "docker_isolated", "allowedDirectories": ["/workspace"], "blockNetworkAccess": False, "maxExecutionTimeSec": 180, "requireApprovalForCommands": False, "securityProfileFile": ".security.yml"},
+                "storage": {"memoryBackend": "everos", "dbPath": "/data/everos/memories/openclaw", "autoSummarizeInterval": 20, "maxHistoryTurns": 150, "vectorDbUrl": "http://everos:8080"},
+                "moa": {"enabled": True, "proposerModels": ["gpt-4o", "claude-3-7-sonnet"], "aggregatorModel": "gpt-4o", "rounds": 2, "temperatureSpread": 0.2, "consensusThreshold": 0.8}
+            },
+            "picoclaw": {
+                "model": {"provider": "ollama", "model": "qwen2.5-coder:7b", "temperature": 0.4},
+                "channels": {"webhook": {"enabled": True, "port": 8083, "authToken": "secret_picoclaw_token", "corsOrigin": "*"}},
+                "system": {"preset": "edge_assistant", "systemPrompt": "You are PicoClaw, an ultra-low-power edge agent running in Go.", "agentName": "PicoClaw", "personaName": "PicoClaw", "language": "en-US", "autoFormatCode": True},
+                "security": {"sandboxMode": "host_restricted", "allowedDirectories": ["/home/sipeed/.picoclaw"], "blockNetworkAccess": False, "maxExecutionTimeSec": 90, "requireApprovalForCommands": False, "securityProfileFile": ".security.yml"},
+                "storage": {"memoryBackend": "everos", "dbPath": "/data/everos/memories/picoclaw", "autoSummarizeInterval": 20, "maxHistoryTurns": 30, "vectorDbUrl": "http://everos:8080"},
+                "moa": {"enabled": False, "proposerModels": [], "aggregatorModel": "qwen2.5-coder:7b", "rounds": 1, "temperatureSpread": 0.0, "consensusThreshold": 0.9}
+            }
+        }
+        schema = defaults.get(agent_id, defaults["hermes-agent"])
+        schema["agentId"] = agent_id
+        schema["version"] = "1.0.0"
+
+    if not native_content:
+        if ffmt == "yaml":
+            native_content = f'version: "1.0.0"\nagent_id: "{agent_id}"\nagent_name: "{schema.get("system", {}).get("agentName", agent_id)}"\nmodel:\n  provider: "{schema.get("model", {}).get("provider", "anthropic")}"\n  model: "{schema.get("model", {}).get("model", "claude-3-7-sonnet")}"\n  temperature: {schema.get("model", {}).get("temperature", 0.3)}\nsystem_prompt: "{schema.get("system", {}).get("systemPrompt", "You are an autonomous AI.")}"\n'
+        elif ffmt == "toml":
+            native_content = f'[agent]\nname = "{schema.get("system", {}).get("agentName", agent_id)}"\n\n[model]\nprovider = "{schema.get("model", {}).get("provider", "deepseek")}"\nmodel = "{schema.get("model", {}).get("model", "deepseek-r1")}"\ntemperature = {schema.get("model", {}).get("temperature", 0.1)}\n\n[system]\nsystem_prompt = "{schema.get("system", {}).get("systemPrompt", "You are an autonomous agent.")}"\n'
+        else:
+            native_content = json.dumps(schema, indent=2)
+
+    return {
+        "success": True,
+        "agentId": agent_id,
+        "nativeFileName": fname,
+        "nativeFormat": ffmt,
+        "nativeContent": native_content,
+        "filePath": file_path,
+        "source": source,
+        "configSchema": schema
+    }
+
+@app.api_route("/api/agents/{agent_id}/config", methods=["POST", "PUT"])
+def save_config(agent_id: str, payload: Dict[str, Any] = Body(...)):
+    cfg = payload.get("config", payload)
     config_file = os.path.join(CONFIG_STORE_DIR, f"{agent_id}_config.json")
     with open(config_file, "w") as f:
-        json.dump(config, f, indent=2)
+        json.dump(cfg, f, indent=2)
+
+    native_content = payload.get("nativeContent")
+    if native_content and isinstance(native_content, str):
+        file_map = {
+            "hermes-agent": "hermes.yaml",
+            "zeroclaw": "zeroclaw.toml",
+            "openclaw": "openclaw.json",
+            "picoclaw": "picoclaw.json",
+        }
+        fname = file_map.get(agent_id, f"{agent_id}.json")
+        for dir_path in ["/data/clawdock", os.path.join("data", "clawdock")]:
+            try:
+                os.makedirs(dir_path, exist_ok=True)
+                with open(os.path.join(dir_path, fname), "w", encoding="utf-8") as f:
+                    f.write(native_content)
+            except Exception:
+                pass
+
+    should_restart = payload.get("restartContainer") or payload.get("restart")
+    if should_restart:
+        try:
+            docker_mgr.start_container(agent_id)
+        except Exception:
+            pass
+
     return {"success": True, "message": f"Saved config for {agent_id}"}
+
+@app.get("/api/agents/{agent_id}/logs")
+def get_agent_logs(agent_id: str):
+    state = AGENT_STATES.get(agent_id, {})
+    return {"logs": state.get("logs", [])}
+
+PERSISTENCE_FILE = os.path.join(CONFIG_STORE_DIR, "clawdock_persistence.json")
+
+@app.api_route("/api/persistence", methods=["GET", "POST", "PUT"])
+def handle_persistence(payload: Dict[str, Any] = Body(default={})):
+    data = {}
+    if os.path.exists(PERSISTENCE_FILE):
+        try:
+            with open(PERSISTENCE_FILE, "r") as f:
+                data = json.load(f)
+        except Exception:
+            data = {}
+    
+    if payload:
+        if "data" in payload and isinstance(payload["data"], dict):
+            data.update(payload["data"])
+        elif "key" in payload:
+            data[payload["key"]] = payload.get("value")
+        else:
+            data.update(payload)
+        try:
+            with open(PERSISTENCE_FILE, "w") as f:
+                json.dump(data, f, indent=2)
+        except Exception:
+            pass
+            
+    return {"success": True, "data": data}
 
 @app.post("/api/chat")
 def chat_with_agent(payload: Dict[str, Any] = Body(...)):

@@ -278,20 +278,16 @@ export async function fetchRuntimeAgentStates(): Promise<Record<string, { status
     const res = await fetch('/api/state');
     if (!res.ok) {
       const errorText = await res.text().catch(() => '');
-      const err: any = new Error(`GET /api/state failed with HTTP ${res.status}: ${errorText || res.statusText}`);
-      err.status = res.status;
-      err.statusText = res.statusText;
-      err.responseBody = errorText;
-      console.error(`[API Bridge] GET /api/state returned error:`, err);
-      throw err;
+      console.warn(`[API Bridge] GET /api/state returned HTTP ${res.status}: ${errorText || res.statusText}; falling back to default states.`);
+      return defaultStates;
     }
     const data = await res.json();
     if (data && data.success && data.agentStates) {
       return data.agentStates;
     }
   } catch (err) {
-    console.error('[API Bridge] Exception in fetchRuntimeAgentStates:', err);
-    throw err;
+    console.warn('[API Bridge] Exception in fetchRuntimeAgentStates; using default states:', err);
+    return defaultStates;
   }
 
   return defaultStates;

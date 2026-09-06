@@ -58,6 +58,46 @@ export function validateAgentConfig(data: any, expectedAgentId?: AgentId): Confi
     };
   }
 
+  // Normalize snake_case keys if present (e.g. from Python backend or native files)
+  if (data.agent_id && !data.agentId) {
+    data.agentId = data.agent_id;
+  }
+  if (data.system && typeof data.system === 'object') {
+    if (!data.system.systemPrompt && typeof data.system.system_prompt === 'string') {
+      data.system.systemPrompt = data.system.system_prompt;
+    }
+    if (!data.system.agentName && typeof data.system.agent_name === 'string') {
+      data.system.agentName = data.system.agent_name;
+    }
+    if (!data.system.personaName && typeof data.system.persona_name === 'string') {
+      data.system.personaName = data.system.persona_name;
+    }
+  }
+  if (data.security && typeof data.security === 'object') {
+    if (!data.security.sandboxMode && data.security.sandbox_mode) {
+      data.security.sandboxMode = data.security.sandbox_mode;
+    }
+    if (!data.security.allowedDirectories && data.security.allowed_directories) {
+      data.security.allowedDirectories = data.security.allowed_directories;
+    }
+  }
+  if (data.storage && typeof data.storage === 'object') {
+    if (!data.storage.memoryBackend && data.storage.memory_backend) {
+      data.storage.memoryBackend = data.storage.memory_backend;
+    }
+    if (!data.storage.dbPath && data.storage.db_path) {
+      data.storage.dbPath = data.storage.db_path;
+    }
+  }
+  if (data.moa && typeof data.moa === 'object') {
+    if (!data.moa.proposerModels && data.moa.proposer_models) {
+      data.moa.proposerModels = data.moa.proposer_models;
+    }
+    if (!data.moa.aggregatorModel && data.moa.aggregator_model) {
+      data.moa.aggregatorModel = data.moa.aggregator_model;
+    }
+  }
+
   // 1. Validate agentId
   if (data.agentId && !VALID_AGENT_IDS.includes(data.agentId)) {
     warnings.push(`Unrecognized agent ID "${data.agentId}". Expected one of: ${VALID_AGENT_IDS.join(', ')}.`);
