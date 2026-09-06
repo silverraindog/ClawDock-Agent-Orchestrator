@@ -364,16 +364,16 @@ export const DEFAULT_CONFIGS: Record<AgentId, AgentFullConfig> = {
     },
     channels: {
       telegram: {
-        enabled: true,
+        enabled: false,
         botToken: '',
         allowedUsers: '@sipeed_user',
         mode: 'polling',
       },
       discord: {
-        enabled: false,
-        botToken: '',
-        clientId: '',
-        guildIds: '',
+        enabled: true,
+        botToken: 'env:DISCORD_BOT_TOKEN',
+        clientId: 'env:DISCORD_CLIENT_ID',
+        guildIds: 'env:DISCORD_GUILD_ID',
       },
       slack: {
         enabled: false,
@@ -1058,10 +1058,16 @@ vector_db_url = "http://everos:8080"`
       },
       channels: {
         telegram: {
-          enabled: true,
+          enabled: false,
           botToken: "env:PICOCLAW_TELEGRAM_TOKEN",
           allowedUsers: ["@sipeed_user"],
           mode: "polling"
+        },
+        discord: {
+          enabled: true,
+          botToken: "env:DISCORD_BOT_TOKEN",
+          clientId: "env:DISCORD_CLIENT_ID",
+          guildIds: "env:DISCORD_GUILD_ID"
         },
         webhook: {
           enabled: true,

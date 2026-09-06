@@ -1,4 +1,4 @@
-import { AgentFullConfig, AgentId, LLMProvider, ModelConfig, MoAConfig } from '../types';
+import { AgentFullConfig, AgentId, ChannelConfig, LLMProvider, ModelConfig, MoAConfig } from '../types';
 import { mergeWithDefaultConfig } from './apiBridge';
 
 /**
@@ -81,6 +81,7 @@ export function parseNativeConfigToSchema(
   let parsedAggregatorModel: string | undefined;
   let parsedProposerModels: string[] | undefined;
   let parsedMoaEnabled: boolean | undefined;
+  let parsedChannels: Partial<ChannelConfig> | undefined;
 
   // 1. JSON Parsing
   if (detectedFormat === 'json') {
@@ -121,6 +122,47 @@ export function parseNativeConfigToSchema(
         }
         if (typeof json.moa.enabled === 'boolean') parsedMoaEnabled = json.moa.enabled;
       }
+
+      if (json.channels || json.channel || json.communication || json.discord || json.telegram) {
+        parsedChannels = {};
+        const ch = json.channels || {};
+        const prefersDiscord = json.channel === 'discord' || json.communication === 'discord' || agentId === 'picoclaw';
+
+        if (ch.discord || json.discord || prefersDiscord) {
+          const disc = ch.discord || json.discord || {};
+          parsedChannels.discord = {
+            enabled: disc.enabled !== undefined ? Boolean(disc.enabled) : true,
+            botToken: disc.bot_token || disc.botToken || 'env:DISCORD_BOT_TOKEN',
+            clientId: disc.client_id || disc.clientId || 'env:DISCORD_CLIENT_ID',
+            guildIds: disc.guild_ids || disc.guildIds || 'env:DISCORD_GUILD_ID'
+          };
+        }
+
+        if (ch.telegram || json.telegram) {
+          const tel = ch.telegram || json.telegram || {};
+          parsedChannels.telegram = {
+            enabled: tel.enabled !== undefined ? Boolean(tel.enabled) : !prefersDiscord,
+            botToken: tel.bot_token || tel.botToken || '',
+            allowedUsers: tel.allowed_users || tel.allowedUsers || '@developer',
+            mode: tel.mode || 'polling'
+          };
+        } else if (prefersDiscord) {
+          parsedChannels.telegram = {
+            enabled: false,
+            botToken: '',
+            allowedUsers: '@developer',
+            mode: 'polling'
+          };
+        }
+
+        if (ch.webhook) {
+          parsedChannels.webhook = {
+            enabled: Boolean(ch.webhook.enabled),
+            port: Number(ch.webhook.port || 8080),
+            authToken: ch.webhook.auth_token || ch.webhook.authToken || ''
+          };
+        }
+      }
     } catch {}
   } else if (detectedFormat === 'toml') {
     // 2. TOML Parsing
@@ -147,6 +189,45 @@ export function parseNativeConfigToSchema(
 
     const matchPrompt = nativeContent.match(/system_prompt\s*=\s*["']([^"']+)["']/);
     if (matchPrompt) parsedSystemPrompt = matchPrompt[1];
+
+    const discordMatch = nativeContent.match(/\[channels\.discord\]([\s\S]*?)(?=\n\[|$)/i);
+    const telegramMatch = nativeContent.match(/\[channels\.telegram\]([\s\S]*?)(?=\n\[|$)/i);
+    if (discordMatch || telegramMatch || agentId === 'picoclaw') {
+      parsedChannels = {};
+      const prefersDiscord = Boolean(discordMatch) || agentId === 'picoclaw';
+      if (discordMatch) {
+        const en = discordMatch[1].match(/enabled\s*=\s*(true|false)/i);
+        parsedChannels.discord = {
+          enabled: en ? en[1].toLowerCase() === 'true' : true,
+          botToken: 'env:DISCORD_BOT_TOKEN',
+          clientId: 'env:DISCORD_CLIENT_ID',
+          guildIds: 'env:DISCORD_GUILD_ID'
+        };
+      } else if (prefersDiscord) {
+        parsedChannels.discord = {
+          enabled: true,
+          botToken: 'env:DISCORD_BOT_TOKEN',
+          clientId: 'env:DISCORD_CLIENT_ID',
+          guildIds: 'env:DISCORD_GUILD_ID'
+        };
+      }
+      if (telegramMatch) {
+        const en = telegramMatch[1].match(/enabled\s*=\s*(true|false)/i);
+        parsedChannels.telegram = {
+          enabled: en ? en[1].toLowerCase() === 'true' : !prefersDiscord,
+          botToken: '',
+          allowedUsers: '@developer',
+          mode: 'polling'
+        };
+      } else if (prefersDiscord) {
+        parsedChannels.telegram = {
+          enabled: false,
+          botToken: '',
+          allowedUsers: '@developer',
+          mode: 'polling'
+        };
+      }
+    }
   } else {
     // 3. YAML Parsing
     const matchName = nativeContent.match(/agent_name:\s*"([^"]+)"|agent_name:\s*([^\n]+)/);
@@ -204,6 +285,53 @@ export function parseNativeConfigToSchema(
       if (aggMatch && aggMatch[1]) parsedAggregatorModel = aggMatch[1].trim();
       const enMatch = moaBlock.match(/enabled:\s*(true|false)/i);
       if (enMatch) parsedMoaEnabled = enMatch[1].toLowerCase() === 'true';
+    }
+
+    // Channels parsing in YAML
+    const channelsBlockMatch = nativeContent.match(/channels:\s*\n([\s\S]*?)(?=\n[a-z_]+:|$)/i);
+    const targetChannelsText = channelsBlockMatch ? channelsBlockMatch[1] : nativeContent;
+    const hasDiscord = targetChannelsText.includes('discord:') || agentId === 'picoclaw';
+    const hasTelegram = targetChannelsText.includes('telegram:');
+
+    if (hasDiscord || hasTelegram) {
+      parsedChannels = {};
+      const prefersDiscord = hasDiscord || agentId === 'picoclaw';
+      const discEnMatch = targetChannelsText.match(/discord:[\s\S]*?enabled:\s*(true|false)/i);
+      parsedChannels.discord = {
+        enabled: discEnMatch ? discEnMatch[1].toLowerCase() === 'true' : prefersDiscord,
+        botToken: 'env:DISCORD_BOT_TOKEN',
+        clientId: 'env:DISCORD_CLIENT_ID',
+        guildIds: 'env:DISCORD_GUILD_ID'
+      };
+
+      const telEnMatch = targetChannelsText.match(/telegram:[\s\S]*?enabled:\s*(true|false)/i);
+      parsedChannels.telegram = {
+        enabled: telEnMatch ? telEnMatch[1].toLowerCase() === 'true' : !prefersDiscord,
+        botToken: '',
+        allowedUsers: '@developer',
+        mode: 'polling'
+      };
+    }
+  }
+
+  // Sipeed / PicoClaw always defaults communication to Discord
+  if (agentId === 'picoclaw') {
+    if (!parsedChannels) parsedChannels = {};
+    if (!parsedChannels.discord) {
+      parsedChannels.discord = {
+        enabled: true,
+        botToken: 'env:DISCORD_BOT_TOKEN',
+        clientId: 'env:DISCORD_CLIENT_ID',
+        guildIds: 'env:DISCORD_GUILD_ID'
+      };
+    }
+    if (parsedChannels.telegram === undefined) {
+      parsedChannels.telegram = {
+        enabled: false,
+        botToken: '',
+        allowedUsers: '@sipeed_user',
+        mode: 'polling'
+      };
     }
   }
 
@@ -267,6 +395,10 @@ export function parseNativeConfigToSchema(
     result.moa = moaObj as MoAConfig;
   }
 
+  if (parsedChannels) {
+    result.channels = parsedChannels as ChannelConfig;
+  }
+
   return result;
 }
 
@@ -323,5 +455,21 @@ export function enhanceConfigWithNative(
     if (nativeParsed.system.preset) baseMerged.system.preset = nativeParsed.system.preset;
   }
 
-  return baseMerged;
-}
+  // Channel integration with Discord priority
+  if (nativeParsed.channels) {
+    if (nativeParsed.channels.discord) {
+      baseMerged.channels.discord = { ...baseMerged.channels.discord, ...nativeParsed.channels.discord };
+    }
+    if (nativeParsed.channels.telegram) {
+      baseMerged.channels.telegram = { ...baseMerged.channels.telegram, ...nativeParsed.channels.telegram };
+    }
+    if (nativeParsed.channels.slack) {
+      baseMerged.channels.slack = { ...baseMerged.channels.slack, ...nativeParsed.channels.slack };
+    }
+    if (nativeParsed.channels.webhook) {
+      baseMerged.channels.webhook = { ...baseMerged.channels.webhook, ...nativeParsed.channels.webhook };
+    }
+  } else if (agentId === 'picoclaw') {
+    baseMerged.channels.discord.enabled = true;
+    baseMerged.channels.telegram.enabled = false;
+  }
