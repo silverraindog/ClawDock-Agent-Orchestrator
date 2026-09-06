@@ -17,13 +17,45 @@ app.options('*', cors());
 
 app.use(express.json({ limit: '10mb' }));
 
+// Structured JSON log output to container console (stdout)
+function jsonConsoleLog(level: 'INFO' | 'WARN' | 'ERROR' | 'DEBUG', source: string, message: string, meta: Record<string, any> = {}) {
+  const record = {
+    timestamp: new Date().toISOString(),
+    level,
+    source,
+    message,
+    container: 'picoclaw-applet',
+    ...meta
+  };
+  console.log(JSON.stringify(record));
+}
+
 // Ring buffer for diagnostics log tracking
 const apiLogsBuffer: Array<{ method: string; url: string; status: number; timestamp: string }> = [];
 
 app.use((req, res, next) => {
   if (req.path.startsWith('/api/')) {
+    const startTime = Date.now();
     const origEnd = res.end;
     res.end = function (...args: any[]) {
+      const elapsedMs = Date.now() - startTime;
+      
+      // Output JSON log to container console
+      jsonConsoleLog(
+        res.statusCode >= 400 ? 'WARN' : 'INFO',
+        'express-api',
+        `${req.method} ${req.originalUrl || req.url} HTTP ${res.statusCode} (${elapsedMs}ms)`,
+        {
+          method: req.method,
+          url: req.originalUrl || req.url,
+          path: req.path,
+          status: res.statusCode,
+          elapsedMs,
+          userAgent: req.get('user-agent') || 'browser',
+          ip: req.ip || req.socket.remoteAddress
+        }
+      );
+
       if (req.path !== '/api/diagnostics/logs') {
         apiLogsBuffer.unshift({
           method: req.method,
@@ -195,6 +227,74 @@ app.get('/api/models', async (req, res) => {
     isLiveProbed: liveOllamaModels.length > 0,
     models
   });
+});
+
+// EverOS Memory Hub API Endpoints
+app.get('/api/everos/status', (req, res) => {
+  res.json({
+    status: 'online',
+    daemonVersion: 'v2.1.0',
+    backend: 'everos-vector-graph',
+    totalMemories: 1420,
+    activeBots: ['hermes-agent', 'openclaw', 'zeroclaw', 'picoclaw']
+  });
+});
+
+app.get('/api/everos/memories', (req, res) => {
+  res.json({
+    success: true,
+    count: 12,
+    memories: [
+      { id: 'mem-1', title: 'Cross-bot Architecture Sync', category: 'architecture', confidence: 0.98, timestamp: '2026-09-05T20:15:00Z', agentId: 'hermes-agent', tags: ['sync', 'shared-memory'] },
+      { id: 'mem-2', title: 'Sipeed RISC-V Hardware Pins', category: 'hardware', confidence: 0.95, timestamp: '2026-09-05T21:00:00Z', agentId: 'zeroclaw', tags: ['riscv', 'gpio'] }
+    ]
+  });
+});
+
+app.get('/api/everos/skills', (req, res) => {
+  res.json({
+    success: true,
+    count: 9,
+    skills: [
+      { id: 'skill-1', name: 'Docker Container Control', category: 'system', version: '1.2.0' },
+      { id: 'skill-2', name: 'LanceDB Vector Search', category: 'memory', version: '2.0.1' }
+    ]
+  });
+});
+
+app.get('/api/everos/tasks', (req, res) => {
+  res.json({
+    success: true,
+    count: 5,
+    tasks: [
+      { id: 'task-1', title: 'Consolidate Cross-Bot Trajectories', status: 'running', agentId: 'everos-daemon' },
+      { id: 'task-2', title: 'Prune Low-Confidence Memory Nodes', status: 'completed', agentId: 'everos-daemon' }
+    ]
+  });
+});
+
+app.get('/api/everos/relationships', (req, res) => {
+  res.json({
+    success: true,
+    count: 8,
+    nodes: [
+      { id: 'hermes-agent', name: 'Hermes Agent', type: 'agent' },
+      { id: 'zeroclaw', name: 'ZeroClaw', type: 'agent' },
+      { id: 'openclaw', name: 'OpenClaw', type: 'agent' },
+      { id: 'picoclaw', name: 'PicoClaw', type: 'agent' },
+      { id: 'everos-hub', name: 'EverOS Memory Hub', type: 'hub' }
+    ],
+    links: [
+      { source: 'hermes-agent', target: 'everos-hub', label: 'shared-memory' },
+      { source: 'zeroclaw', target: 'everos-hub', label: 'mrag-vector' },
+      { source: 'openclaw', target: 'everos-hub', label: 'trajectory-log' },
+      { source: 'picoclaw', target: 'everos-hub', label: 'edge-sync' }
+    ]
+  });
+});
+
+app.all('/api/everos/*', (req, res) => {
+  res.json({ success: true, count: 0, items: [] });
 });
 
 // In-memory runtime state for live preview interactivity
