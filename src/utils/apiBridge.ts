@@ -1,5 +1,6 @@
 import { AgentFullConfig, AgentId, AgentInfo } from '../types';
 import { DEFAULT_CONFIGS, DEFAULT_NATIVE_FILES, INITIAL_AGENTS } from '../data/defaults';
+import { enhanceConfigWithNative } from './configParser';
 
 // Client-Side Resilient Persistence & Config Bridge
 // Provides seamless operation in both Full-Stack Node mode and Static / LAN / Offline SPA mode
@@ -12,24 +13,56 @@ export function mergeWithDefaultConfig(agentId: AgentId, custom?: Partial<AgentF
   const base = DEFAULT_CONFIGS[agentId] || DEFAULT_CONFIGS['hermes-agent'];
   if (!custom) return JSON.parse(JSON.stringify(base));
 
+  const effectiveProvider = custom.model?.provider || base.model.provider;
+  const effectiveModel = (custom.model?.model && custom.model.model !== 'provider:') ? custom.model.model : base.model.model;
+  const effectiveBaseUrl = custom.model?.baseUrl ?? base.model.baseUrl;
+
+  const isLocalOrCustom = (
+    effectiveProvider === 'ollama' ||
+    effectiveProvider === 'custom' ||
+    (effectiveBaseUrl && (
+      effectiveBaseUrl.includes('11434') ||
+      effectiveBaseUrl.includes('192.168.') ||
+      effectiveBaseUrl.includes('10.') ||
+      effectiveBaseUrl.includes('localhost') ||
+      effectiveBaseUrl.includes('127.0.0.1')
+    )) ||
+    effectiveModel.includes('coder') ||
+    effectiveModel.includes('soul') ||
+    effectiveModel.includes('latest')
+  );
+
+  // Default aggregator model: if local, use active model instead of cloud-only Claude 3.7 Sonnet
+  let resolvedAggregator = custom.moa?.aggregatorModel;
+  if (!resolvedAggregator || (isLocalOrCustom && resolvedAggregator === 'claude-3-7-sonnet')) {
+    resolvedAggregator = isLocalOrCustom ? effectiveModel : base.moa.aggregatorModel;
+  }
+
+  let resolvedProposers = custom.moa?.proposerModels;
+  if (!resolvedProposers || resolvedProposers.length === 0 || (isLocalOrCustom && resolvedProposers.includes('claude-3-7-sonnet'))) {
+    resolvedProposers = isLocalOrCustom 
+      ? [effectiveModel, 'qwen2.5-coder:7b', 'deepseek-r1:8b'].filter((v, i, a) => a.indexOf(v) === i)
+      : base.moa.proposerModels;
+  }
+
   return {
     agentId,
     version: custom.version || base.version || '1.0.0',
     model: {
-      provider: custom.model?.provider || base.model.provider,
-      model: (custom.model?.model && custom.model.model !== 'provider:') ? custom.model.model : base.model.model,
+      provider: effectiveProvider,
+      model: effectiveModel,
       apiKey: custom.model?.apiKey ?? base.model.apiKey,
       temperature: typeof custom.model?.temperature === 'number' ? custom.model.temperature : base.model.temperature,
       reasoningEffort: custom.model?.reasoningEffort || base.model.reasoningEffort,
       maxTokens: custom.model?.maxTokens || base.model.maxTokens,
       contextWindow: custom.model?.contextWindow || base.model.contextWindow,
-      baseUrl: custom.model?.baseUrl ?? base.model.baseUrl,
+      baseUrl: effectiveBaseUrl,
       topP: typeof custom.model?.topP === 'number' ? custom.model.topP : base.model.topP,
     },
     moa: {
       enabled: custom.moa?.enabled ?? base.moa.enabled,
-      proposerModels: custom.moa?.proposerModels || base.moa.proposerModels,
-      aggregatorModel: custom.moa?.aggregatorModel || base.moa.aggregatorModel,
+      proposerModels: resolvedProposers,
+      aggregatorModel: resolvedAggregator,
       rounds: custom.moa?.rounds || base.moa.rounds,
       temperatureSpread: custom.moa?.temperatureSpread ?? base.moa.temperatureSpread,
       consensusThreshold: custom.moa?.consensusThreshold ?? base.moa.consensusThreshold,
@@ -220,10 +253,13 @@ export async function fetchAgentLiveConfig(agentId: AgentId): Promise<LiveConfig
 
   if (fetchedData) {
     const rawSchema = fetchedData.configSchema || fetchedData.config || (fetchedData.model ? fetchedData : null);
-    const schema = rawSchema ? mergeWithDefaultConfig(agentId, rawSchema) : fallbackConfig;
     const content = fetchedData.nativeContent || fallback.content;
     const fileName = fetchedData.nativeFileName || fallback.fileName;
     const format = fetchedData.nativeFormat || fallback.format;
+    let schema = rawSchema ? mergeWithDefaultConfig(agentId, rawSchema) : fallbackConfig;
+    if (content) {
+      schema = enhanceConfigWithNative(schema, content, format, agentId);
+    }
 
     verboseLogs.push(`[${new Date().toLocaleTimeString()}] [SCHEMA] Model: ${schema.model.provider}/${schema.model.model} (temp: ${schema.model.temperature})`);
     verboseLogs.push(`[${new Date().toLocaleTimeString()}] [SCHEMA] Channels: Telegram=${schema.channels.telegram.enabled}, Discord=${schema.channels.discord.enabled}, Webhook=${schema.channels.webhook.enabled}`);

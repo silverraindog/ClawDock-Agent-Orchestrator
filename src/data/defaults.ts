@@ -839,10 +839,14 @@ export const MODEL_OPTIONS = {
     { value: 'ministral-8b-latest', label: 'Ministral 8B (Compact edge)' },
   ],
   ollama: [
-    { value: 'llama3.3:70b', label: 'Llama 3.3 70B (Local)' },
+    { value: 'gemma4-soul:latest', label: 'Gemma 4 Soul Latest (Local Edge)' },
     { value: 'qwen2.5-coder:7b', label: 'Qwen 2.5 Coder 7B (Sipeed Edge)' },
+    { value: 'qwen2.5-coder:14b', label: 'Qwen 2.5 Coder 14B (Local)' },
+    { value: 'llama3.3:70b', label: 'Llama 3.3 70B (Local)' },
     { value: 'deepseek-r1:8b', label: 'DeepSeek R1 8B (Local reasoning)' },
     { value: 'mistral-nemo:12b', label: 'Mistral Nemo 12B (Local)' },
+    { value: 'llama3.2:3b', label: 'Llama 3.2 3B (Lightweight)' },
+    { value: 'phi4:14b', label: 'Phi-4 14B (Local)' },
   ],
   openrouter: [
     { value: 'anthropic/claude-3.7-sonnet', label: 'OpenRouter: Claude 3.7 Sonnet' },
@@ -850,6 +854,8 @@ export const MODEL_OPTIONS = {
     { value: 'meta-llama/llama-3.3-70b-instruct', label: 'OpenRouter: Llama 3.3 70B' },
   ],
   custom: [
+    { value: 'gemma4-soul:latest', label: 'gemma4-soul:latest (Ollama / Local)' },
+    { value: 'qwen2.5-coder:7b', label: 'qwen2.5-coder:7b (Local)' },
     { value: 'custom-model', label: 'Custom Model Name' }
   ]
 };

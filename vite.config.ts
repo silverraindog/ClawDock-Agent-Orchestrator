@@ -315,31 +315,58 @@ vector_db_url = "http://everos:8080"
   function parseConfigSchema(agentId: string, nativeContent: string, format: string) {
     let parsedAgentName = agentId;
     let parsedModelProvider = 'anthropic';
-    let parsedModelName = 'claude-3-7-sonnet';
+    let parsedModelName = '';
     let parsedTemperature = 0.3;
     let parsedSystemPrompt = 'Autonomous agent.';
     let parsedPreset = 'engineer';
+    let parsedBaseUrl = '';
+    let parsedContextLength = 128000;
+    let parsedMaxTokens = 4096;
+    let parsedApiKey = '';
+    let parsedAggregatorModel = '';
+    let parsedProposerModels: string[] | null = null;
+    let parsedMoaEnabled = agentId === 'hermes-agent';
 
     try {
       if (format === 'json') {
         const json = JSON.parse(nativeContent);
-        if (json.agent_name) parsedAgentName = json.agent_name;
+        if (json.agent_name || json.agentName) parsedAgentName = json.agent_name || json.agentName;
         if (json.model) {
-          if (json.model.provider) parsedModelProvider = json.model.provider;
-          if (json.model.model && json.model.model !== 'provider:') parsedModelName = json.model.model;
-          if (json.model.temperature !== undefined) parsedTemperature = Number(json.model.temperature);
+          const m = json.model;
+          if (m.provider) parsedModelProvider = m.provider;
+          const candidateModel = m.default || m.model || m.model_name || m.checkpoint;
+          if (candidateModel && candidateModel !== 'provider:') parsedModelName = candidateModel;
+          if (m.base_url || m.baseUrl || m.api_base) parsedBaseUrl = m.base_url || m.baseUrl || m.api_base;
+          if (m.context_length !== undefined) parsedContextLength = Number(m.context_length);
+          else if (m.num_ctx !== undefined) parsedContextLength = Number(m.num_ctx);
+          else if (m.context_window !== undefined) parsedContextLength = Number(m.context_window);
+          if (m.max_tokens !== undefined) parsedMaxTokens = Number(m.max_tokens);
+          else if (m.num_predict !== undefined) parsedMaxTokens = Number(m.num_predict);
+          if (m.temperature !== undefined) parsedTemperature = Number(m.temperature);
+          if (m.api_key || m.apiKey) parsedApiKey = m.api_key || m.apiKey;
         }
         if (json.system) {
-          if (json.system.system_prompt) parsedSystemPrompt = json.system.system_prompt;
+          if (json.system.system_prompt || json.system.systemPrompt) parsedSystemPrompt = json.system.system_prompt || json.system.systemPrompt;
           if (json.system.preset) parsedPreset = json.system.preset;
+        }
+        if (json.moa) {
+          if (json.moa.aggregator_model || json.moa.aggregatorModel) parsedAggregatorModel = json.moa.aggregator_model || json.moa.aggregatorModel;
+          if (json.moa.proposer_models || json.moa.proposerModels) parsedProposerModels = json.moa.proposer_models || json.moa.proposerModels;
+          if (typeof json.moa.enabled === 'boolean') parsedMoaEnabled = json.moa.enabled;
         }
       } else if (format === 'toml') {
         const matchName = nativeContent.match(/agent_name\s*=\s*["']([^"']+)["']/);
         if (matchName) parsedAgentName = matchName[1];
         const matchProv = nativeContent.match(/provider\s*=\s*["']([^"']+)["']/);
         if (matchProv) parsedModelProvider = matchProv[1];
-        const matchModel = nativeContent.match(/model\s*=\s*["']([^"']+)["']/);
+        const matchModel = nativeContent.match(/(?:default|model|model_name)\s*=\s*["']([^"']+)["']/);
         if (matchModel && matchModel[1] !== 'provider:') parsedModelName = matchModel[1];
+        const matchBase = nativeContent.match(/(?:base_url|baseUrl|api_base)\s*=\s*["']([^"']+)["']/);
+        if (matchBase) parsedBaseUrl = matchBase[1];
+        const matchCtx = nativeContent.match(/(?:context_length|num_ctx|context_window)\s*=\s*([0-9]+)/);
+        if (matchCtx) parsedContextLength = Number(matchCtx[1]);
+        const matchMax = nativeContent.match(/(?:max_tokens|num_predict)\s*=\s*([0-9]+)/);
+        if (matchMax) parsedMaxTokens = Number(matchMax[1]);
         const matchTemp = nativeContent.match(/temperature\s*=\s*([0-9.]+)/);
         if (matchTemp) parsedTemperature = Number(matchTemp[1]);
         const matchPrompt = nativeContent.match(/system_prompt\s*=\s*["']([^"']+)["']/);
@@ -352,43 +379,89 @@ vector_db_url = "http://everos:8080"
         if (matchName) parsedAgentName = (matchName[1] || matchName[2]).trim();
 
         const modelBlockMatch = nativeContent.match(/model:\s*\n([\s\S]*?)(?=\n[a-z_]+:|$)/i);
-        if (modelBlockMatch) {
-          const block = modelBlockMatch[1];
-          const pMatch = block.match(/provider:\s*["']?([^"'\s\n]+)["']?/);
-          if (pMatch && pMatch[1]) parsedModelProvider = pMatch[1].trim();
-          const mMatch = block.match(/model:\s*["']?([^"'\s\n]+)["']?/);
-          if (mMatch && mMatch[1] && mMatch[1] !== 'provider:') parsedModelName = mMatch[1].trim();
-          const tMatch = block.match(/temperature:\s*([0-9.]+)/);
-          if (tMatch) parsedTemperature = Number(tMatch[1]);
-        } else {
-          const matchProv = nativeContent.match(/provider:\s*"([^"]+)"|provider:\s*([^\s\n]+)/);
-          if (matchProv) parsedModelProvider = (matchProv[1] || matchProv[2]).trim();
-          const matchModel = nativeContent.match(/model:\s*"([^"]+)"|model:\s*([^\s\n]+)/);
-          if (matchModel && matchModel[1] !== 'provider:') parsedModelName = (matchModel[1] || matchModel[2]).trim();
+        const searchTarget = modelBlockMatch ? modelBlockMatch[1] : nativeContent;
+
+        const pMatch = searchTarget.match(/provider:\s*["']?([^"'\s\n#]+)["']?/);
+        if (pMatch && pMatch[1]) parsedModelProvider = pMatch[1].trim();
+
+        // Model name: match default:, model:, model_name:, checkpoint:
+        const defMatch = searchTarget.match(/default:\s*["']?([^"'\s\n#]+)["']?/);
+        const mMatch = searchTarget.match(/(?:model|model_name|checkpoint):\s*["']?([^"'\s\n#]+)["']?/);
+        if (defMatch && defMatch[1]) {
+          parsedModelName = defMatch[1].trim();
+        } else if (mMatch && mMatch[1] && mMatch[1] !== 'provider:') {
+          parsedModelName = mMatch[1].trim();
         }
 
-        const matchPrompt = nativeContent.match(/system_prompt:\s*"([^"]+)"/);
-        if (matchPrompt) parsedSystemPrompt = matchPrompt[1];
+        const bMatch = searchTarget.match(/(?:base_url|baseUrl|api_base):\s*["']?([^"'\s\n#]+)["']?/);
+        if (bMatch && bMatch[1]) parsedBaseUrl = bMatch[1].trim();
+
+        const cMatch = searchTarget.match(/(?:context_length|num_ctx|context_window):\s*([0-9]+)/);
+        if (cMatch && cMatch[1]) parsedContextLength = Number(cMatch[1]);
+
+        const maxMatch = searchTarget.match(/(?:max_tokens|num_predict):\s*([0-9]+)/);
+        if (maxMatch && maxMatch[1]) parsedMaxTokens = Number(maxMatch[1]);
+
+        const tMatch = searchTarget.match(/temperature:\s*([0-9.]+)/);
+        if (tMatch) parsedTemperature = Number(tMatch[1]);
+
+        const keyMatch = searchTarget.match(/(?:api_key|apiKey):\s*["']?([^"'\s\n#]+)["']?/);
+        if (keyMatch && keyMatch[1]) parsedApiKey = keyMatch[1].trim();
+
+        const matchPrompt = nativeContent.match(/system_prompt:\s*"([^"]+)"|system_prompt:\s*([^\n]+)/);
+        if (matchPrompt) parsedSystemPrompt = (matchPrompt[1] || matchPrompt[2]).trim();
         const matchPreset = nativeContent.match(/system_preset:\s*"([^"]+)"|system_preset:\s*([^\n]+)/);
         if (matchPreset) parsedPreset = (matchPreset[1] || matchPreset[2]).trim();
+
+        const moaBlockMatch = nativeContent.match(/moa:\s*\n([\s\S]*?)(?=\n[a-z_]+:|$)/i);
+        if (moaBlockMatch) {
+          const moaBlock = moaBlockMatch[1];
+          const aggMatch = moaBlock.match(/(?:aggregator_model|aggregatorModel):\s*["']?([^"'\s\n#]+)["']?/);
+          if (aggMatch && aggMatch[1]) parsedAggregatorModel = aggMatch[1].trim();
+          const enMatch = moaBlock.match(/enabled:\s*(true|false)/i);
+          if (enMatch) parsedMoaEnabled = enMatch[1].toLowerCase() === 'true';
+        }
       }
 
-      if (parsedModelName === 'provider:' || !parsedModelName) {
+      if (!parsedModelName || parsedModelName === 'provider:') {
         parsedModelName = agentId === 'zeroclaw' ? 'deepseek-r1' : agentId === 'openclaw' ? 'gpt-4o' : agentId === 'picoclaw' ? 'qwen2.5-coder:7b' : 'claude-3-7-sonnet';
       }
     } catch {}
+
+    const isLocal = (
+      parsedModelProvider === 'ollama' ||
+      parsedModelProvider === 'custom' ||
+      (parsedBaseUrl && (
+        parsedBaseUrl.includes('11434') ||
+        parsedBaseUrl.includes('192.168.') ||
+        parsedBaseUrl.includes('10.') ||
+        parsedBaseUrl.includes('localhost') ||
+        parsedBaseUrl.includes('127.0.0.1')
+      )) ||
+      parsedModelName.includes('coder') ||
+      parsedModelName.includes('soul') ||
+      parsedModelName.includes('latest')
+    );
+
+    const defaultAggregator = isLocal ? parsedModelName : 'claude-3-7-sonnet';
+    const finalAggregator = parsedAggregatorModel || defaultAggregator;
+    const defaultProposers = isLocal 
+      ? [parsedModelName, 'qwen2.5-coder:7b', 'deepseek-r1:8b']
+      : ['claude-3-7-sonnet', 'deepseek-r1', 'gpt-4o'];
+    const finalProposers = parsedProposerModels || defaultProposers;
 
     return {
       agentId,
       version: '1.0.0',
       model: {
-        provider: parsedModelProvider,
+        provider: parsedModelProvider as any,
         model: parsedModelName,
-        apiKey: '',
+        apiKey: parsedApiKey,
+        baseUrl: parsedBaseUrl,
         temperature: parsedTemperature,
         reasoningEffort: 'high',
-        maxTokens: 4096,
-        contextWindow: 128000,
+        maxTokens: parsedMaxTokens,
+        contextWindow: parsedContextLength,
         topP: 0.95
       },
       channels: {
@@ -428,9 +501,9 @@ vector_db_url = "http://everos:8080"
         vectorDbUrl: 'http://everos:8080'
       },
       moa: {
-        enabled: agentId === 'hermes-agent',
-        proposerModels: ['claude-3-7-sonnet', 'deepseek-r1', 'gpt-4o'],
-        aggregatorModel: parsedModelName,
+        enabled: parsedMoaEnabled,
+        proposerModels: finalProposers,
+        aggregatorModel: finalAggregator,
         rounds: 2,
         temperatureSpread: 0.3,
         consensusThreshold: 0.85

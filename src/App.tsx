@@ -60,6 +60,7 @@ import {
   SchemaValidationError, 
   NetworkTransportError 
 } from './utils/configValidator';
+import { enhanceConfigWithNative } from './utils/configParser';
 
 type MainTab = 'dashboard' | 'config' | 'everos' | 'skills' | 'mcp' | 'docker' | 'console' | 'export' | 'updates' | 'diagnostics';
 
@@ -232,17 +233,39 @@ export default function App() {
 
       const endpoint = `/api/agents/${agentId}/docker-exec-config`;
       verboseLogs.push(`[${new Date().toLocaleTimeString()}] [HTTP] Requesting container exec config from ${endpoint}...`);
+      
+      // Output complete request payload to browser console
+      console.log('[fetchAndInjectConfig] Complete Request Payload:', {
+        agentId,
+        endpoint,
+        method: 'POST',
+        headers: { 'Accept': 'application/json' },
+        body: null,
+        timestamp: new Date().toISOString()
+      });
+
       let res: Response;
       try {
         res = await fetch(endpoint, { method: 'POST' });
         if (res.status === 405) {
           verboseLogs.push(`[${new Date().toLocaleTimeString()}] [WARN] POST returned 405 Method Not Allowed. Retrying with GET...`);
           console.warn(`[Config Injection] POST ${endpoint} returned 405 Method Not Allowed. Falling back to GET...`);
+          console.log('[fetchAndInjectConfig] Complete Request Payload (Fallback Retry):', {
+            agentId,
+            endpoint,
+            method: 'GET',
+            headers: { 'Accept': 'application/json' }
+          });
           res = await fetch(endpoint, { method: 'GET' });
         }
       } catch (netErr: any) {
         try {
           verboseLogs.push(`[${new Date().toLocaleTimeString()}] [RETRY] Network retry with GET ${endpoint}...`);
+          console.log('[fetchAndInjectConfig] Complete Request Payload (Network Retry):', {
+            agentId,
+            endpoint,
+            method: 'GET'
+          });
           res = await fetch(endpoint, { method: 'GET' });
         } catch {
           throw new NetworkTransportError(
@@ -254,6 +277,8 @@ export default function App() {
         }
       }
 
+      // Output response status to browser console
+      console.log('[fetchAndInjectConfig] Response Status:', res.status, res.statusText, 'from', endpoint);
       verboseLogs.push(`[${new Date().toLocaleTimeString()}] [HTTP] ${endpoint} responded with HTTP ${res.status} ${res.statusText}`);
 
       if (!res.ok) {
@@ -276,6 +301,8 @@ export default function App() {
         );
       }
 
+      // Output full JSON body to browser console
+      console.log('[fetchAndInjectConfig] Full JSON Body:', data);
       verboseLogs.push(`[${new Date().toLocaleTimeString()}] [PARSE] JSON response successfully parsed (keys: ${Object.keys(data).join(', ')})`);
 
       if (!data || !data.success) {
@@ -287,13 +314,18 @@ export default function App() {
         );
       }
 
-      const candidateConfig = data.configSchema || data.config || (data.model ? data : null);
+      let candidateConfig = data.configSchema || data.config || (data.model ? data : null);
       if (!candidateConfig) {
         throw new SchemaValidationError(
           'No valid configuration schema object found in response payload.',
           ['Payload is missing "configSchema", "config", and root schema object.'],
           agentId
         );
+      }
+
+      if (data.nativeContent) {
+        candidateConfig = enhanceConfigWithNative(candidateConfig, data.nativeContent, data.nativeFormat || 'yaml', agentId);
+        verboseLogs.push(`[${new Date().toLocaleTimeString()}] [NATIVE_SYNC] Synced native configuration file: Model=${candidateConfig.model.model} (${candidateConfig.model.provider}), BaseURL=${candidateConfig.model.baseUrl || 'none'}, Context=${candidateConfig.model.contextWindow}, MoA Aggregator=${candidateConfig.moa.aggregatorModel}`);
       }
 
       verboseLogs.push(`[${new Date().toLocaleTimeString()}] [SOURCE] Detected source: "${data.source || 'docker_exec'}", Path: "${data.filePath || 'container'}"`);

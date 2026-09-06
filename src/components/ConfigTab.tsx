@@ -552,6 +552,20 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
                   </select>
                   <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-3 pointer-events-none" />
                 </div>
+                {(config.model.model === 'custom' || config.model.provider === 'custom' || !currentModelList.some(m => m.value === config.model.model)) && (
+                  <div className="pt-1">
+                    <input
+                      type="text"
+                      placeholder="e.g. gemma4-soul:latest or qwen2.5-coder:7b"
+                      value={config.model.model === 'custom' ? '' : config.model.model}
+                      onChange={(e) => onChangeConfig({
+                        ...config,
+                        model: { ...config.model, model: e.target.value }
+                      })}
+                      className="w-full px-3.5 py-2 rounded-xl bg-slate-800 border border-indigo-500/50 text-slate-100 text-xs focus:outline-none focus:border-indigo-400 font-mono"
+                    />
+                  </div>
+                )}
                 <p className="text-[11px] text-slate-400">
                   Pre-configured models for {config.model.provider}.
                 </p>
@@ -600,10 +614,17 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
                     })}
                     className="w-full appearance-none px-3.5 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-slate-100 text-xs focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-colors pr-10 font-mono"
                   >
+                    {!([4096, 8192, 16384, 32768, 64000, 65536, 128000, 200000, 1000000, 2000000].includes(config.model.contextWindow)) && (
+                      <option value={config.model.contextWindow}>
+                        {config.model.contextWindow.toLocaleString()} tokens (Custom)
+                      </option>
+                    )}
+                    <option value={4096}>4,096 tokens (Compact Edge)</option>
                     <option value={8192}>8,192 tokens (~6,000 words)</option>
                     <option value={16384}>16,384 tokens (~12,000 words)</option>
                     <option value={32768}>32,768 tokens (Edge / Raspberry Pi)</option>
                     <option value={64000}>64,000 tokens (Standard)</option>
+                    <option value={65536}>65,536 tokens (Ollama / Local 64k)</option>
                     <option value={128000}>128,000 tokens (OpenAI 128k)</option>
                     <option value={200000}>200,000 tokens (Anthropic Claude 200k)</option>
                     <option value={1000000}>1,000,000 tokens (Gemini 1M)</option>
@@ -713,106 +734,239 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
         )}
 
         {/* ================= MIXTURE-OF-AGENTS (MoA) ================= */}
-        {activeSection === 'moa' && (
-          <div className="space-y-6">
-            <div className="border-b border-slate-800 pb-4 flex items-center justify-between">
-              <div>
-                <h3 className="text-sm font-semibold text-white flex items-center gap-2">
-                  <Cpu className="w-4 h-4 text-indigo-400" />
-                  Mixture-of-Agents (MoA) Cooperative Reasoning
-                </h3>
-                <p className="text-xs text-slate-400 mt-1">
-                  Multi-model collaborative proposal and aggregation pipeline (specifically optimized for Hermes Agent).
-                </p>
-              </div>
-              <label className="relative inline-flex items-center cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={config.moa?.enabled ?? true}
-                  onChange={(e) => onChangeConfig({
-                    ...config,
-                    moa: {
-                      ...(config.moa || { proposerModels: [], aggregatorModel: 'claude-3-7-sonnet', rounds: 2, temperatureSpread: 0.3, consensusThreshold: 0.85 }),
-                      enabled: e.target.checked
-                    }
-                  })}
-                  className="sr-only peer"
-                />
-                <div className="w-9 h-5 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
-              </label>
-            </div>
+        {activeSection === 'moa' && (() => {
+          const isLocalAgent = (
+            config.model.provider === 'ollama' ||
+            config.model.provider === 'custom' ||
+            Boolean(config.model.baseUrl && (
+              config.model.baseUrl.includes('11434') ||
+              config.model.baseUrl.includes('192.168.') ||
+              config.model.baseUrl.includes('10.') ||
+              config.model.baseUrl.includes('localhost') ||
+              config.model.baseUrl.includes('127.0.0.1')
+            )) ||
+            config.model.model.includes('coder') ||
+            config.model.model.includes('soul') ||
+            config.model.model.includes('latest')
+          );
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="space-y-2">
-                <label className="block text-xs font-semibold text-slate-200">
-                  Aggregator Model (Final Synthesis)
+          const fallbackAggregator = (config.model.model && config.model.model !== 'provider:')
+            ? config.model.model
+            : (isLocalAgent ? 'qwen2.5-coder:7b' : 'claude-3-7-sonnet');
+
+          const currentAggregator = config.moa?.aggregatorModel || fallbackAggregator;
+          const defaultLocalProposers = [fallbackAggregator, 'qwen2.5-coder:7b', 'deepseek-r1:8b'].filter((v, i, a) => a.indexOf(v) === i);
+          const defaultCloudProposers = ['claude-3-7-sonnet', 'deepseek-r1', 'gpt-4o'];
+          const effectiveProposers = (config.moa?.proposerModels && config.moa.proposerModels.length > 0)
+            ? config.moa.proposerModels
+            : (isLocalAgent ? defaultLocalProposers : defaultCloudProposers);
+
+          const knownAggregators = [
+            config.model.model,
+            'gemma4-soul:latest',
+            'qwen2.5-coder:7b',
+            'qwen2.5-coder:14b',
+            'deepseek-r1:8b',
+            'llama3.3:70b',
+            'mistral-nemo:12b',
+            'claude-3-7-sonnet',
+            'gpt-4o',
+            'deepseek-r1',
+            'gemini-2.5-pro'
+          ].filter(Boolean);
+
+          return (
+            <div className="space-y-6">
+              <div className="border-b border-slate-800 pb-4 flex items-center justify-between">
+                <div>
+                  <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+                    <Cpu className="w-4 h-4 text-indigo-400" />
+                    Mixture-of-Agents (MoA) Cooperative Reasoning
+                    {isLocalAgent && (
+                      <span className="text-[10px] text-emerald-400 font-normal px-2 py-0.5 rounded bg-emerald-950/60 border border-emerald-500/30">
+                        Local / Edge Optimized
+                      </span>
+                    )}
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-1">
+                    Multi-model collaborative proposal and aggregation pipeline (supports both local Ollama clusters and cloud frontier LLMs).
+                  </p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={config.moa?.enabled ?? true}
+                    onChange={(e) => onChangeConfig({
+                      ...config,
+                      moa: {
+                        ...(config.moa || { proposerModels: effectiveProposers, aggregatorModel: fallbackAggregator, rounds: 2, temperatureSpread: 0.3, consensusThreshold: 0.85 }),
+                        enabled: e.target.checked
+                      }
+                    })}
+                    className="sr-only peer"
+                  />
+                  <div className="w-9 h-5 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
                 </label>
-                <select
-                  value={config.moa?.aggregatorModel || 'claude-3-7-sonnet'}
-                  onChange={(e) => onChangeConfig({
-                    ...config,
-                    moa: {
-                      ...(config.moa || { enabled: true, proposerModels: [], rounds: 2, temperatureSpread: 0.3, consensusThreshold: 0.85 }),
-                      aggregatorModel: e.target.value
-                    }
-                  })}
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-slate-100 text-xs focus:outline-none focus:border-indigo-500 font-mono"
-                >
-                  <option value="claude-3-7-sonnet">Claude 3.7 Sonnet (Recommended)</option>
-                  <option value="gpt-4o">GPT-4o (OpenAI)</option>
-                  <option value="deepseek-r1">DeepSeek-R1</option>
-                  <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
-                </select>
-                <p className="text-[11px] text-slate-400">Model that aggregates and synthesizes proposals from proposer agents.</p>
               </div>
 
-              <div className="space-y-2">
-                <label className="block text-xs font-semibold text-slate-200">
-                  Collaboration Rounds ({config.moa?.rounds || 2} rounds)
-                </label>
-                <input
-                  type="range"
-                  min="1"
-                  max="5"
-                  step="1"
-                  value={config.moa?.rounds || 2}
-                  onChange={(e) => onChangeConfig({
-                    ...config,
-                    moa: {
-                      ...(config.moa || { enabled: true, proposerModels: [], aggregatorModel: 'claude-3-7-sonnet', temperatureSpread: 0.3, consensusThreshold: 0.85 }),
-                      rounds: parseInt(e.target.value, 10)
-                    }
-                  })}
-                  className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-500 mt-3"
-                />
-                <div className="flex justify-between text-[10px] text-slate-500 font-mono">
-                  <span>1 Round</span>
-                  <span>2 Rounds</span>
-                  <span>5 Rounds</span>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-xs font-semibold text-slate-200">
+                      Aggregator Model (Final Synthesis)
+                    </label>
+                    {config.model.model && currentAggregator !== config.model.model && (
+                      <button
+                        type="button"
+                        onClick={() => onChangeConfig({
+                          ...config,
+                          moa: {
+                            ...(config.moa || { enabled: true, proposerModels: effectiveProposers, rounds: 2, temperatureSpread: 0.3, consensusThreshold: 0.85 }),
+                            aggregatorModel: config.model.model
+                          }
+                        })}
+                        className="text-[10px] text-indigo-400 hover:text-indigo-300 underline font-medium"
+                        title="Set aggregator model to match primary active model"
+                      >
+                        Use Active ({config.model.model})
+                      </button>
+                    )}
+                  </div>
+                  <div className="relative">
+                    <select
+                      id="aggregator-model-select"
+                      value={currentAggregator}
+                      onChange={(e) => onChangeConfig({
+                        ...config,
+                        moa: {
+                          ...(config.moa || { enabled: true, proposerModels: effectiveProposers, rounds: 2, temperatureSpread: 0.3, consensusThreshold: 0.85 }),
+                          aggregatorModel: e.target.value
+                        }
+                      })}
+                      className="w-full appearance-none px-3.5 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-slate-100 text-xs focus:outline-none focus:border-indigo-500 font-mono pr-10"
+                    >
+                      {/* Active Model Option */}
+                      {config.model.model && (
+                        <option value={config.model.model}>
+                          {config.model.model} (Active Agent Model {isLocalAgent ? '• Local Ollama' : ''})
+                        </option>
+                      )}
+
+                      {/* Local / Ollama Group */}
+                      <optgroup label="Local Ollama & Edge Models">
+                        <option value="gemma4-soul:latest">gemma4-soul:latest (Local Gemma)</option>
+                        <option value="qwen2.5-coder:7b">qwen2.5-coder:7b (Edge Coder 7B)</option>
+                        <option value="qwen2.5-coder:14b">qwen2.5-coder:14b (Local Coder 14B)</option>
+                        <option value="deepseek-r1:8b">deepseek-r1:8b (Local Reasoning 8B)</option>
+                        <option value="llama3.3:70b">llama3.3:70b (Local Llama 70B)</option>
+                        <option value="mistral-nemo:12b">mistral-nemo:12b (Local Mistral 12B)</option>
+                      </optgroup>
+
+                      {/* Cloud Providers Group */}
+                      <optgroup label="Cloud Frontier Models">
+                        <option value="claude-3-7-sonnet">Claude 3.7 Sonnet (Anthropic)</option>
+                        <option value="gpt-4o">GPT-4o (OpenAI)</option>
+                        <option value="deepseek-r1">DeepSeek-R1 (DeepSeek Cloud)</option>
+                        <option value="gemini-2.5-pro">Gemini 2.5 Pro (Google)</option>
+                      </optgroup>
+
+                      {/* Custom Option */}
+                      {!knownAggregators.includes(currentAggregator) && (
+                        <option value={currentAggregator}>
+                          {currentAggregator} (Custom Aggregator)
+                        </option>
+                      )}
+                    </select>
+                    <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-3 pointer-events-none" />
+                  </div>
+                  <p className="text-[11px] text-slate-400 flex items-center justify-between">
+                    <span>Synthesizes and delivers the final answer.</span>
+                    {isLocalAgent && (
+                      <span className="text-emerald-400 text-[10px] font-mono">
+                        Active: {currentAggregator}
+                      </span>
+                    )}
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="block text-xs font-semibold text-slate-200">
+                    Collaboration Rounds ({config.moa?.rounds || 2} rounds)
+                  </label>
+                  <input
+                    type="range"
+                    min="1"
+                    max="5"
+                    step="1"
+                    value={config.moa?.rounds || 2}
+                    onChange={(e) => onChangeConfig({
+                      ...config,
+                      moa: {
+                        ...(config.moa || { enabled: true, proposerModels: effectiveProposers, aggregatorModel: fallbackAggregator, temperatureSpread: 0.3, consensusThreshold: 0.85 }),
+                        rounds: parseInt(e.target.value, 10)
+                      }
+                    })}
+                    className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-500 mt-3"
+                  />
+                  <div className="flex justify-between text-[10px] text-slate-500 font-mono">
+                    <span>1 Round (Fast)</span>
+                    <span>2 Rounds (Balanced)</span>
+                    <span>5 Rounds (Deep)</span>
+                  </div>
+                </div>
+
+                <div className="space-y-2 md:col-span-2">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-xs font-semibold text-slate-200">
+                      Proposer Models (Comma separated)
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => onChangeConfig({
+                          ...config,
+                          moa: {
+                            ...(config.moa || { enabled: true, aggregatorModel: fallbackAggregator, rounds: 2, temperatureSpread: 0.3, consensusThreshold: 0.85 }),
+                            proposerModels: defaultLocalProposers
+                          }
+                        })}
+                        className="px-2 py-0.5 rounded bg-emerald-950/60 hover:bg-emerald-900/60 border border-emerald-500/30 text-emerald-300 text-[10px] font-medium transition-colors"
+                      >
+                        Set Local Stack
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onChangeConfig({
+                          ...config,
+                          moa: {
+                            ...(config.moa || { enabled: true, aggregatorModel: fallbackAggregator, rounds: 2, temperatureSpread: 0.3, consensusThreshold: 0.85 }),
+                            proposerModels: defaultCloudProposers
+                          }
+                        })}
+                        className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 text-[10px] font-medium transition-colors"
+                      >
+                        Set Cloud Stack
+                      </button>
+                    </div>
+                  </div>
+                  <input
+                    type="text"
+                    value={effectiveProposers.join(', ')}
+                    onChange={(e) => onChangeConfig({
+                      ...config,
+                      moa: {
+                        ...(config.moa || { enabled: true, aggregatorModel: fallbackAggregator, rounds: 2, temperatureSpread: 0.3, consensusThreshold: 0.85 }),
+                        proposerModels: e.target.value.split(',').map(s => s.trim()).filter(Boolean)
+                      }
+                    })}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-slate-100 text-xs font-mono focus:outline-none focus:border-indigo-500"
+                  />
+                  <p className="text-[11px] text-slate-400">Models participating in parallel first-pass proposal generation before final aggregation.</p>
                 </div>
               </div>
-
-              <div className="space-y-2 md:col-span-2">
-                <label className="block text-xs font-semibold text-slate-200">
-                  Proposer Models (Comma separated)
-                </label>
-                <input
-                  type="text"
-                  value={(config.moa?.proposerModels || ['claude-3-7-sonnet', 'deepseek-r1', 'gpt-4o']).join(', ')}
-                  onChange={(e) => onChangeConfig({
-                    ...config,
-                    moa: {
-                      ...(config.moa || { enabled: true, aggregatorModel: 'claude-3-7-sonnet', rounds: 2, temperatureSpread: 0.3, consensusThreshold: 0.85 }),
-                      proposerModels: e.target.value.split(',').map(s => s.trim()).filter(Boolean)
-                    }
-                  })}
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-slate-100 text-xs font-mono"
-                />
-                <p className="text-[11px] text-slate-400">Models participating in parallel first-pass proposal generation.</p>
-              </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {/* ================= COMMUNICATION CHANNELS ================= */}
         {activeSection === 'channels' && (
