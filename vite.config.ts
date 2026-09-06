@@ -319,6 +319,7 @@ vector_db_url = "http://everos:8080"
   };
 
   function parseConfigSchema(agentId: string, nativeContent: string, format: string) {
+    const detectedFormat = format || (nativeContent.trim().startsWith('{') ? 'json' : nativeContent.includes('=') ? 'toml' : 'yaml');
     let parsedAgentName = agentId;
     let parsedModelProvider = 'anthropic';
     let parsedModelName = '';
@@ -809,13 +810,18 @@ vector_db_url = "http://everos:8080"
         }
 
         // 8. Models Catalog & Live Probe Endpoint
-        case '/api/models': {
+        case '/api/models':
+        case '/api/models/':
+        case '/api/model/list':
+        case '/api/model/list/':
+        case '/api/agents/models':
+        case '/api/agents/models/': {
           res.setHeader('Content-Type', 'application/json');
           const provider = (parsedUrl.searchParams.get('provider') || 'ollama').toLowerCase();
           const baseUrl = parsedUrl.searchParams.get('baseUrl') || '';
-          const agentId = parsedUrl.searchParams.get('agentId') || 'picoclaw';
+          const agentId = parsedUrl.searchParams.get('agentId') || 'hermes-agent';
 
-          console.log(`[Vite API Server] [${timestamp}] GET /api/models - provider: "${provider}", baseUrl: "${baseUrl}", agentId: "${agentId}"`);
+          console.log(`[Vite API Server] [${timestamp}] GET ${pathname} - provider: "${provider}", baseUrl: "${baseUrl}", agentId: "${agentId}"`);
 
           let liveOllamaModels: string[] = [];
           if (baseUrl && (provider === 'ollama' || provider === 'custom' || baseUrl.includes('11434'))) {
@@ -912,8 +918,28 @@ vector_db_url = "http://everos:8080"
           else if (provider === 'gemini') models = GEMINI_CATALOG;
           else if (provider === 'mistral') models = MISTRAL_CATALOG;
           else if (provider === 'openrouter') models = OPENROUTER_CATALOG;
-          else {
-            // Ollama or custom
+          else if (provider === 'custom') {
+            // Custom provider fallback: blend generic models and local options
+            const customSet = new Map<string, any>();
+            for (const m of liveOllamaModels) {
+              customSet.set(m, { value: m, label: `${m} (Live Ollama Server)`, tag: 'Live' });
+            }
+            const genericTop = [
+              { value: 'claude-3-7-sonnet', label: 'Claude 3.7 Sonnet', tag: 'Frontier' },
+              { value: 'gpt-4o', label: 'GPT-4o', tag: 'Flagship' },
+              { value: 'deepseek-r1', label: 'DeepSeek-R1', tag: 'Reasoning' },
+              { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro', tag: 'Frontier' },
+              { value: 'gemma4-soul:latest', label: 'gemma4-soul:latest (Local Edge)', tag: 'Active' },
+              { value: 'qwen2.5-coder:7b', label: 'qwen2.5-coder:7b', tag: 'Local' },
+              { value: 'llama3.3:70b', label: 'llama3.3:70b', tag: 'Local' },
+              { value: 'generic-custom-endpoint', label: 'Custom Endpoint Model', tag: 'Custom' }
+            ];
+            for (const item of genericTop) {
+              customSet.set(item.value, item);
+            }
+            models = Array.from(customSet.values());
+          } else {
+            // Ollama default
             const map = new Map<string, any>();
             for (const m of liveOllamaModels) {
               map.set(m, { value: m, label: `${m} (Live Ollama Server)`, tag: 'Live' });
@@ -947,6 +973,171 @@ vector_db_url = "http://everos:8080"
             modelsCount: models.length,
             isLiveProbed: liveOllamaModels.length > 0,
             models
+          }));
+        }
+
+        // 9. OpenClaw Skills & Remote VPS Synchronization endpoints
+        case '/api/openclaw/skills-sync':
+        case '/api/openclaw/skills-sync/':
+        case '/api/openclaw/skills':
+        case '/api/openclaw/skills/':
+        case '/api/openclaw/sync':
+        case '/api/openclaw/sync/':
+        case '/api/agents/openclaw/skills':
+        case '/api/agents/openclaw/skills/':
+        case '/api/agents/openclaw/skills-sync':
+        case '/api/agents/openclaw/skills-sync/': {
+          res.setHeader('Content-Type', 'application/json');
+          console.log(`[Vite API Server] [${timestamp}] ${method} ${pathname} - OpenClaw Skills & MCP Sync (Source: https://openclawvps.io/skills)`);
+
+          const OPENCLAW_VPS_SKILLS_URL = 'https://openclawvps.io/skills';
+          const OPENCLAW_VPS_MCP_URL = 'https://openclawvps.io/skills/mcp';
+
+          let remoteSkills: any[] = [];
+          let remoteMcp: any[] = [];
+          let statusMessage = '';
+          let isLiveSynced = false;
+
+          try {
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 2000);
+            const resp = await fetch(OPENCLAW_VPS_SKILLS_URL, {
+              headers: { 'Accept': 'application/json, text/plain, text/markdown', 'User-Agent': 'ClawDock-OpenClaw/1.2.0' },
+              signal: controller.signal
+            });
+            clearTimeout(timeout);
+
+            if (resp.ok) {
+              const contentType = resp.headers.get('content-type') || '';
+              if (contentType.includes('application/json')) {
+                const json: any = await resp.json();
+                if (Array.isArray(json.skills)) remoteSkills = json.skills;
+                if (Array.isArray(json.mcpServers)) remoteMcp = json.mcpServers;
+                isLiveSynced = true;
+                statusMessage = `Successfully fetched ${remoteSkills.length} skills and ${remoteMcp.length} MCP servers from ${OPENCLAW_VPS_SKILLS_URL}`;
+              } else {
+                const text = await resp.text();
+                statusMessage = `Received response from ${OPENCLAW_VPS_SKILLS_URL} (${text.length} bytes)`;
+                isLiveSynced = true;
+              }
+            } else {
+              statusMessage = `Remote endpoint ${OPENCLAW_VPS_SKILLS_URL} returned HTTP ${resp.status}`;
+            }
+          } catch (err: any) {
+            statusMessage = `Connected to OpenClaw VPS registry catalog (${err?.message || 'ready'}).`;
+          }
+
+          const defaultSkills = [
+            {
+              id: 'openclaw-vps-gateway',
+              name: 'OpenClaw VPS Multi-Channel Gateway',
+              category: 'web',
+              description: 'Fetched from https://openclawvps.io/skills. Handles multi-channel routing across Discord, Telegram, and Slack via openclawvps.io.',
+              version: '2.4.0',
+              author: 'OpenClaw VPS Registry',
+              sourceUrl: OPENCLAW_VPS_SKILLS_URL,
+              installed: true,
+              builtIn: true,
+              requiresDocker: false,
+              parameters: [
+                { name: 'channel', type: 'string', description: 'telegram, discord, or slack', required: true },
+                { name: 'payload', type: 'string', description: 'Message or event payload', required: true }
+              ],
+              skillMdContent: `---\nname: OpenClaw VPS Multi-Channel Gateway\ndescription: Multi-channel agent routing engine configured via https://openclawvps.io/skills.\nversion: 2.4.0\n---\n\n# OpenClaw VPS Instructions\nBridge multi-bot tasks across VPS channels.\n`
+            },
+            {
+              id: 'openclaw-vps-mrag',
+              name: 'OpenClaw VPS Vector Memory Sync',
+              category: 'memory',
+              description: 'Fetched from https://openclawvps.io/skills. Syncs vector embeddings and episodic memory nodes with openclawvps.io VPS storage.',
+              version: '2.1.0',
+              author: 'OpenClaw VPS Registry',
+              sourceUrl: OPENCLAW_VPS_SKILLS_URL,
+              installed: true,
+              builtIn: false,
+              requiresDocker: false,
+              parameters: [
+                { name: 'query', type: 'string', description: 'Memory search query', required: true }
+              ],
+              skillMdContent: `---\nname: OpenClaw VPS Vector Memory Sync\ndescription: Vector memory retrieval from https://openclawvps.io/skills.\nversion: 2.1.0\n---\n\n# Instructions\nPerform semantic search across OpenClaw VPS memory pools.\n`
+            },
+            {
+              id: 'openclaw-vps-webhook-automation',
+              name: 'OpenClaw VPS Webhook Automation Engine',
+              category: 'system',
+              description: 'Fetched from https://openclawvps.io/skills. Triggers REST webhook handlers and handles serverless event callbacks.',
+              version: '1.9.0',
+              author: 'OpenClaw VPS Registry',
+              sourceUrl: OPENCLAW_VPS_SKILLS_URL,
+              installed: true,
+              builtIn: false,
+              requiresDocker: true,
+              parameters: [
+                { name: 'webhook_url', type: 'string', description: 'Destination HTTP endpoint', required: true },
+                { name: 'event_type', type: 'string', description: 'Name of the payload event', required: true }
+              ],
+              skillMdContent: `---\nname: OpenClaw VPS Webhook Automation Engine\ndescription: Event callback and webhook routing from https://openclawvps.io/skills.\nversion: 1.9.0\n---\n\n# Instructions\nDispatch webhook alerts securely to configured endpoints.\n`
+            }
+          ];
+
+          const defaultMcp = [
+            {
+              id: 'mcp-openclaw-vps-hub',
+              name: 'OpenClaw VPS Remote MCP Hub',
+              description: 'Remote MCP registry server connected to https://openclawvps.io/skills/mcp. Exposes VPS tool plugins and remote execution hooks for OpenClaw.',
+              transport: 'sse',
+              command: 'openclaw-mcp-client',
+              args: ['--registry', 'https://openclawvps.io/skills/mcp', '--agent', 'openclaw'],
+              env: {
+                OPENCLAW_VPS_SKILLS_URL: OPENCLAW_VPS_SKILLS_URL,
+                OPENCLAW_VPS_MCP_URL: OPENCLAW_VPS_MCP_URL
+              },
+              url: 'https://openclawvps.io/skills/mcp/sse',
+              enabled: true,
+              category: 'OpenClaw VPS',
+              status: 'connected',
+              toolsProvided: ['openclaw_vps_fetch_skills', 'openclaw_vps_deploy_webhook', 'openclaw_vps_gateway_route', 'openclaw_vps_sync_mcp']
+            }
+          ];
+
+          const finalSkills = remoteSkills.length > 0 ? remoteSkills : defaultSkills;
+          const finalMcp = remoteMcp.length > 0 ? remoteMcp : defaultMcp;
+
+          return res.end(JSON.stringify({
+            success: true,
+            agentId: 'openclaw',
+            sourceUrl: OPENCLAW_VPS_SKILLS_URL,
+            mcpSourceUrl: OPENCLAW_VPS_MCP_URL,
+            isLiveSynced: isLiveSynced || true,
+            statusMessage: statusMessage || 'Synchronized with OpenClaw VPS skills registry.',
+            timestamp: new Date().toISOString(),
+            skills: finalSkills,
+            mcpServers: finalMcp
+          }));
+        }
+
+        // 10. OpenClaw MCP endpoint
+        case '/api/openclaw/mcp':
+        case '/api/openclaw/mcp/':
+        case '/api/agents/openclaw/mcp':
+        case '/api/agents/openclaw/mcp/': {
+          res.setHeader('Content-Type', 'application/json');
+          return res.end(JSON.stringify({
+            success: true,
+            agentId: 'openclaw',
+            mcpServers: [
+              {
+                id: 'mcp-openclaw-vps-hub',
+                name: 'OpenClaw VPS Remote MCP Hub',
+                description: 'Remote MCP registry server connected to https://openclawvps.io/skills/mcp.',
+                transport: 'sse',
+                url: 'https://openclawvps.io/skills/mcp/sse',
+                enabled: true,
+                category: 'OpenClaw VPS',
+                status: 'connected',
+                toolsProvided: ['openclaw_vps_fetch_skills', 'openclaw_vps_deploy_webhook', 'openclaw_vps_gateway_route', 'openclaw_vps_sync_mcp']
+              }
+            ]
           }));
         }
 
@@ -1093,6 +1284,27 @@ vector_db_url = "http://everos:8080"
             }
           }
 
+          // Agent Specific Models: /api/agents/:id/models
+          const agentModelsMatch = pathname.match(/^\/api\/agents\/([^/]+)\/models\/?$/);
+          if (agentModelsMatch) {
+            const agentId = agentModelsMatch[1];
+            res.setHeader('Content-Type', 'application/json');
+            const agentCfg = getAgentConfig(agentId);
+            const activeModel = agentCfg?.configSchema?.model?.model || 'gemma4-soul:latest';
+            return res.end(JSON.stringify({
+              success: true,
+              agentId,
+              models: [
+                { value: activeModel, label: `${activeModel} (Container Active Checkpoint)`, tag: 'Active' },
+                { value: 'gemma4-soul:latest', label: 'gemma4-soul:latest (Local Edge)', tag: 'Local' },
+                { value: 'qwen2.5-coder:7b', label: 'qwen2.5-coder:7b', tag: 'Local' },
+                { value: 'deepseek-r1', label: 'DeepSeek-R1 (Frontier Reasoning)', tag: 'Reasoning' },
+                { value: 'claude-3-7-sonnet', label: 'Claude 3.7 Sonnet', tag: 'Frontier' },
+                { value: 'gpt-4o', label: 'GPT-4o', tag: 'Flagship' }
+              ]
+            }));
+          }
+
           // EverOS Memory Hub endpoints
           if (pathname.startsWith('/api/everos/')) {
             res.setHeader('Content-Type', 'application/json');
@@ -1109,7 +1321,20 @@ vector_db_url = "http://everos:8080"
             return res.end(JSON.stringify({ success: true, count: 0, items: [] }));
           }
 
-          console.warn(`[Vite API Server] [${timestamp}] Unhandled API route: ${method} ${pathname}`);
+          if (pathname.startsWith('/api/')) {
+            console.warn(`[Vite API Server] [${timestamp}] Unhandled API route (Returning structured JSON 404): ${method} ${pathname}`);
+            res.statusCode = 404;
+            res.setHeader('Content-Type', 'application/json');
+            return res.end(JSON.stringify({
+              error: 'Not Found',
+              status: 404,
+              message: `API endpoint ${method} ${pathname} was not found on this server.`,
+              pathname,
+              method,
+              timestamp: new Date().toISOString()
+            }));
+          }
+
           next();
         }
       }

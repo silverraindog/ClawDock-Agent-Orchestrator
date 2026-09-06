@@ -5,6 +5,223 @@ import { enhanceConfigWithNative } from './configParser';
 // Client-Side Resilient Persistence & Config Bridge
 // Provides seamless operation in both Full-Stack Node mode and Static / LAN / Offline SPA mode
 
+export interface ApiFailureLogParams {
+  endpoint: string;
+  method?: string;
+  status?: number;
+  statusText?: string;
+  responseBody?: any;
+  context?: string;
+  fallbackAction?: string;
+  error?: any;
+}
+
+/**
+ * Robust, structured logging mechanism for 404 responses and failed API calls.
+ * Displays detailed debug telemetry in the UI developer console with badges
+ * without crashing or throwing unhandled exceptions in the application state.
+ */
+export function logApiFailure({
+  endpoint,
+  method = 'GET',
+  status = 404,
+  statusText = 'Not Found',
+  responseBody,
+  context,
+  fallbackAction,
+  error
+}: ApiFailureLogParams): void {
+  const is404 = status === 404;
+  const badgeColor = is404 ? '#f59e0b' : '#ef4444';
+  const timestamp = new Date().toISOString();
+
+  // Print grouped diagnostic payload in browser console
+  try {
+    console.groupCollapsed(
+      `%c[ClawDock API Bridge] HTTP ${status} ${statusText} | ${method} ${endpoint}`,
+      `background: ${badgeColor}; color: #0f172a; font-weight: bold; padding: 2px 6px; border-radius: 4px;`
+    );
+
+    console.log(`%cTimestamp:%c ${timestamp}`, 'font-weight: bold; color: #94a3b8;', 'color: #f1f5f9;');
+    console.log(`%cEndpoint:%c ${method} ${endpoint}`, 'font-weight: bold; color: #94a3b8;', 'color: #38bdf8;');
+    console.log(`%cHTTP Status:%c ${status} (${statusText})`, 'font-weight: bold; color: #94a3b8;', is404 ? 'color: #f59e0b; font-weight: bold;' : 'color: #f87171;');
+
+    if (context) {
+      console.log(`%cContext / Agent:%c ${context}`, 'font-weight: bold; color: #94a3b8;', 'color: #a78bfa;');
+    }
+
+    if (responseBody) {
+      console.log('%cResponse Body / Payload:%c', 'font-weight: bold; color: #94a3b8;', '', responseBody);
+    }
+
+    if (error) {
+      console.log('%cUnderlying Exception:%c', 'font-weight: bold; color: #94a3b8;', '', error?.message || error);
+    }
+
+    const fallbackDesc = fallbackAction || 'Retained local state safely; default fallback data applied.';
+    console.info(
+      `%c[Graceful Fallback Engaged]:%c ${fallbackDesc} Application state remained fully intact.`,
+      'font-weight: bold; color: #10b981;',
+      'color: #34d399;'
+    );
+
+    console.groupEnd();
+  } catch {
+    // Fallback simple warning if console grouping is unavailable
+    console.warn(`[ClawDock API Bridge] ${status} ${statusText} on ${method} ${endpoint}. Fallback: ${fallbackAction || 'Default catalog applied.'}`);
+  }
+}
+
+export interface ModelOptionItem {
+  value: string;
+  label: string;
+  tag?: string;
+}
+
+export const DEFAULT_LOCAL_MODELS: ModelOptionItem[] = [
+  { value: 'gemma4-soul:latest', label: 'gemma4-soul:latest (Local Edge / Active)', tag: 'Active' },
+  { value: 'qwen2.5-coder:7b', label: 'qwen2.5-coder:7b (Edge Coding)', tag: 'Sipeed' },
+  { value: 'qwen2.5-coder:14b', label: 'qwen2.5-coder:14b (Deep Coding)', tag: 'Local' },
+  { value: 'qwen2.5-coder:32b', label: 'qwen2.5-coder:32b (Heavy Coding)', tag: 'Local' },
+  { value: 'deepseek-r1:8b', label: 'deepseek-r1:8b (Local Reasoning)', tag: 'Reasoning' },
+  { value: 'deepseek-r1:14b', label: 'deepseek-r1:14b (Mid Reasoning)', tag: 'Reasoning' },
+  { value: 'deepseek-r1:32b', label: 'deepseek-r1:32b (Full Reasoning)', tag: 'Reasoning' },
+  { value: 'deepseek-r1:70b', label: 'deepseek-r1:70b (Max Reasoning)', tag: 'Reasoning' },
+  { value: 'llama3.3:70b', label: 'llama3.3:70b (High Capability)', tag: 'Local' },
+  { value: 'llama3.2:3b', label: 'llama3.2:3b (Ultra-light)', tag: 'Edge' },
+  { value: 'llama3.2:1b', label: 'llama3.2:1b (Nano Edge)', tag: 'Edge' },
+  { value: 'mistral-nemo:12b', label: 'mistral-nemo:12b (Balanced 128k)', tag: 'Local' },
+  { value: 'phi4:14b', label: 'phi4:14b (Microsoft Reasoning)', tag: 'Local' },
+  { value: 'codellama:7b', label: 'codellama:7b (Meta Code)', tag: 'Local' },
+  { value: 'codellama:13b', label: 'codellama:13b (Meta Code 13B)', tag: 'Local' },
+  { value: 'starcoder2:7b', label: 'starcoder2:7b (BigCode)', tag: 'Local' },
+  { value: 'command-r:35b', label: 'command-r:35b (Cohere Local)', tag: 'Local' }
+];
+
+export const DEFAULT_GENERIC_MODELS: ModelOptionItem[] = [
+  { value: 'claude-3-7-sonnet', label: 'Claude 3.7 Sonnet (Hybrid Reasoning)', tag: 'Frontier' },
+  { value: 'claude-3-5-sonnet', label: 'Claude 3.5 Sonnet (Benchmark Standard)', tag: 'Recommended' },
+  { value: 'claude-3-5-haiku', label: 'Claude 3.5 Haiku (Ultra-fast)', tag: 'Fast' },
+  { value: 'gpt-4o', label: 'GPT-4o (Omni Flagship)', tag: 'Recommended' },
+  { value: 'gpt-4o-mini', label: 'GPT-4o Mini (Fast & Cheap)', tag: 'Fast' },
+  { value: 'o1', label: 'o1 (Deep Reasoning)', tag: 'Reasoning' },
+  { value: 'o3-mini', label: 'o3-mini (High-speed Reasoning)', tag: 'Reasoning' },
+  { value: 'deepseek-r1', label: 'DeepSeek-R1 (Frontier Reasoning)', tag: 'Reasoning' },
+  { value: 'deepseek-v3', label: 'DeepSeek-V3 (Multi-token General)', tag: 'Flagship' },
+  { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro (State-of-the-art coding)', tag: 'Frontier' },
+  { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash (State-of-the-art speed)', tag: 'Fast' },
+  { value: 'llama-3.3-70b-versatile', label: 'Llama 3.3 70B (Ultra-fast)', tag: 'Fast' },
+  { value: 'mistral-large-latest', label: 'Mistral Large 2 (Flagship)', tag: 'Flagship' },
+  { value: 'generic-model', label: 'Generic / Custom Model', tag: 'Generic' }
+];
+
+/**
+ * Robust model list fetcher with multi-tier fallback mechanism.
+ * When remote fetch returns 404, or fails due to network/timeout,
+ * it provides a default 'local' or 'generic' model list without crashing.
+ */
+export async function fetchModelsWithFallback(
+  provider: string = 'ollama',
+  baseUrl: string = '',
+  agentId: string = 'hermes-agent',
+  currentModel?: string
+): Promise<{ models: ModelOptionItem[]; isFallback: boolean; isLocalFallback: boolean; source: string }> {
+  const normProvider = (provider || 'ollama').toLowerCase();
+  const isLocalTarget = (
+    normProvider === 'ollama' ||
+    normProvider === 'custom' ||
+    agentId === 'picoclaw' ||
+    agentId === 'zeroclaw' ||
+    (baseUrl && (
+      baseUrl.includes('11434') ||
+      baseUrl.includes('192.168.') ||
+      baseUrl.includes('10.') ||
+      baseUrl.includes('127.0.0.1') ||
+      baseUrl.includes('localhost')
+    ))
+  );
+
+  const fallbackCatalog = isLocalTarget ? [...DEFAULT_LOCAL_MODELS] : [...DEFAULT_GENERIC_MODELS];
+
+  // If a current model is configured, ensure it exists in the catalog marked Active
+  if (currentModel && !fallbackCatalog.some(m => m.value === currentModel)) {
+    fallbackCatalog.unshift({
+      value: currentModel,
+      label: `${currentModel} (Active Model)`,
+      tag: 'Active'
+    });
+  }
+
+  const timestamp = Date.now();
+  const params = new URLSearchParams({
+    provider: normProvider,
+    baseUrl: baseUrl || '',
+    agentId: agentId || 'hermes-agent',
+    t: String(timestamp)
+  });
+  const endpointUrl = `/api/models?${params.toString()}`;
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3000);
+    const res = await fetch(endpointUrl, { signal: controller.signal });
+    clearTimeout(timeout);
+
+    if (res.ok) {
+      const data = await res.json();
+      if (data && Array.isArray(data.models) && data.models.length > 0) {
+        return {
+          models: data.models,
+          isFallback: false,
+          isLocalFallback: false,
+          source: data.isLiveProbed ? 'live_probe' : 'api_catalog'
+        };
+      }
+    }
+
+    // Capture non-200 (including 404) with rich debug logging
+    let errorText = '';
+    try {
+      errorText = await res.text();
+    } catch {}
+
+    logApiFailure({
+      endpoint: endpointUrl,
+      method: 'GET',
+      status: res.status,
+      statusText: res.statusText,
+      responseBody: errorText,
+      context: `Model Fetch: Agent "${agentId}", Provider "${normProvider}", BaseUrl "${baseUrl || 'default'}"`,
+      fallbackAction: `Returned default ${isLocalTarget ? "'local'" : "'generic'"} model list (${fallbackCatalog.length} models)`
+    });
+
+    return {
+      models: fallbackCatalog,
+      isFallback: true,
+      isLocalFallback: isLocalTarget,
+      source: isLocalTarget ? 'fallback_local' : 'fallback_generic'
+    };
+  } catch (err: any) {
+    // Network error, abort, or offline
+    logApiFailure({
+      endpoint: endpointUrl,
+      method: 'GET',
+      status: 404,
+      statusText: 'Client-side Fetch Timeout / Route Unavailable',
+      error: err,
+      context: `Model Fetch: Agent "${agentId}", Provider "${normProvider}", BaseUrl "${baseUrl || 'default'}"`,
+      fallbackAction: `Returned default ${isLocalTarget ? "'local'" : "'generic'"} model list (${fallbackCatalog.length} models)`
+    });
+
+    return {
+      models: fallbackCatalog,
+      isFallback: true,
+      isLocalFallback: isLocalTarget,
+      source: isLocalTarget ? 'fallback_local' : 'fallback_generic'
+    };
+  }
+}
+
 const LOCAL_PERSISTENCE_KEY = 'clawdock_persistence_v2';
 const LOCAL_CONFIGS_KEY = 'clawdock_agent_configs_v2';
 const LOCAL_STATES_KEY = 'clawdock_agent_states_v2';
@@ -163,17 +380,35 @@ export async function fetchAllAgentConfigs(): Promise<Record<AgentId, AgentFullC
   
   await Promise.allSettled(
     AGENT_IDS.map(async (id) => {
+      const ep = `/api/agents/${id}/config`;
       try {
-        const res = await fetch(`/api/agents/${id}/config`);
+        const res = await fetch(ep);
         if (res.ok) {
           const data = await res.json();
           const schema = data?.configSchema || data?.config || (data?.model ? data : null);
           if (schema) {
             merged[id] = mergeWithDefaultConfig(id, schema);
           }
+        } else {
+          logApiFailure({
+            endpoint: ep,
+            method: 'GET',
+            status: res.status,
+            statusText: res.statusText,
+            context: `Agent Config Fetch: "${id}"`,
+            fallbackAction: `Loaded default schema and localStorage for agent "${id}".`
+          });
         }
-      } catch (e) {
-        // Fallback to merged defaults
+      } catch (e: any) {
+        logApiFailure({
+          endpoint: ep,
+          method: 'GET',
+          status: 404,
+          statusText: 'Network / Route Unreachable',
+          error: e,
+          context: `Agent Config Fetch: "${id}"`,
+          fallbackAction: `Loaded default schema and localStorage for agent "${id}".`
+        });
       }
     })
   );
@@ -234,9 +469,26 @@ export async function fetchAgentLiveConfig(agentId: AgentId): Promise<LiveConfig
         break;
       } else {
         verboseLogs.push(`[${new Date().toLocaleTimeString()}] [WARN] Endpoint ${ep.url} returned non-200 status: ${res.status}`);
+        logApiFailure({
+          endpoint: ep.url,
+          method: ep.method,
+          status: res.status,
+          statusText: res.statusText,
+          context: `Live Config Fetch for "${agentId}"`,
+          fallbackAction: 'Trying next endpoint candidate or loading client-side native fallback.'
+        });
       }
     } catch (err: any) {
       verboseLogs.push(`[${new Date().toLocaleTimeString()}] [ERROR] Request to ${ep.url} failed: ${err?.message || err}`);
+      logApiFailure({
+        endpoint: ep.url,
+        method: ep.method,
+        status: 404,
+        statusText: 'Network / Route Unreachable',
+        error: err,
+        context: `Live Config Fetch for "${agentId}"`,
+        fallbackAction: 'Proceeding with next candidate.'
+      });
     }
   }
 
@@ -348,8 +600,28 @@ export async function saveAgentConfigToBackend(
         restartContainer: restart
       })
     });
+    if (!res.ok) {
+      logApiFailure({
+        endpoint: `/api/agents/${agentId}/config`,
+        method: 'PUT',
+        status: res.status,
+        statusText: res.statusText,
+        context: `Save Config for "${agentId}"`,
+        fallbackAction: 'Settings saved safely in browser local persistence.'
+      });
+    }
     return res.ok;
-  } catch {}
+  } catch (err: any) {
+    logApiFailure({
+      endpoint: `/api/agents/${agentId}/config`,
+      method: 'PUT',
+      status: 404,
+      statusText: 'Route / Host Unavailable',
+      error: err,
+      context: `Save Config for "${agentId}"`,
+      fallbackAction: 'Settings preserved safely in browser local persistence.'
+    });
+  }
 
   return true;
 }
@@ -398,15 +670,31 @@ export async function fetchRuntimeAgentStates(): Promise<Record<string, { status
     const res = await fetch('/api/state');
     if (!res.ok) {
       const errorText = await res.text().catch(() => '');
-      console.warn(`[API Bridge] GET /api/state returned HTTP ${res.status}: ${errorText || res.statusText}; falling back to default states.`);
+      logApiFailure({
+        endpoint: '/api/state',
+        method: 'GET',
+        status: res.status,
+        statusText: res.statusText,
+        responseBody: errorText,
+        context: 'Container Runtime States',
+        fallbackAction: 'Loaded default active agent runtime states without crashing application.'
+      });
       return defaultStates;
     }
     const data = await res.json();
     if (data && data.success && data.agentStates) {
       return data.agentStates;
     }
-  } catch (err) {
-    console.warn('[API Bridge] Exception in fetchRuntimeAgentStates; using default states:', err);
+  } catch (err: any) {
+    logApiFailure({
+      endpoint: '/api/state',
+      method: 'GET',
+      status: 404,
+      statusText: 'Network / Route Unreachable',
+      error: err,
+      context: 'Container Runtime States',
+      fallbackAction: 'Loaded default active agent runtime states without crashing application.'
+    });
     return defaultStates;
   }
 

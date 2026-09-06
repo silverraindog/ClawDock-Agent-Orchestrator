@@ -38,7 +38,14 @@ import {
   MemoryBackend 
 } from '../types';
 import { MODEL_OPTIONS, DEFAULT_CONFIGS, DEFAULT_NATIVE_FILES } from '../data/defaults';
-import { fetchAgentLiveConfig, saveAgentConfigToBackend } from '../utils/apiBridge';
+import { 
+  fetchAgentLiveConfig, 
+  saveAgentConfigToBackend, 
+  fetchModelsWithFallback, 
+  logApiFailure, 
+  DEFAULT_LOCAL_MODELS, 
+  DEFAULT_GENERIC_MODELS 
+} from '../utils/apiBridge';
 import { ConfigInjectionAlert, InjectionStatusInfo } from './ConfigInjectionAlert';
 import { VerboseLogInspector, VerboseLogData } from './VerboseLogInspector';
 import { validateAgentConfig } from '../utils/configValidator';
@@ -278,30 +285,73 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
   const handleFetchModels = async () => {
     setIsFetchingModules(true);
     try {
-      const timestamp = Date.now();
-      const params = new URLSearchParams({
-        provider: config.model.provider,
-        baseUrl: config.model.baseUrl || '',
-        agentId: agentId,
-        t: String(timestamp)
-      });
-      const url = `/api/models?${params.toString()}`;
-      console.log(`[Model Dropdown] Initiating fetch request to ${url}`);
-      const res = await fetch(url);
-      if (res.ok) {
-        const data = await res.json();
-        console.log('[Model Dropdown] /api/models fetch result:', data);
-        if (data && Array.isArray(data.models)) {
-          setFetchedModelsMap(prev => ({
-            ...prev,
-            [config.model.provider]: data.models
-          }));
+      // Execute resilient model fetch with automatic 404 fallback to default 'local' or 'generic' model list
+      const result = await fetchModelsWithFallback(
+        config.model.provider,
+        config.model.baseUrl,
+        agentId,
+        config.model.model
+      );
+
+      let fetchedModels = result.models;
+
+      // If backend was not reached or returned 404, check direct local Ollama baseUrl if applicable
+      if (result.isFallback && config.model.baseUrl && (config.model.provider === 'ollama' || config.model.provider === 'custom' || config.model.baseUrl.includes('11434'))) {
+        try {
+          const cleanBase = config.model.baseUrl.replace(/\/v1\/?$/, '').replace(/\/+$/, '');
+          console.log(`[Model Dropdown] Probing local endpoint directly at ${cleanBase}/api/tags`);
+          const directRes = await fetch(`${cleanBase}/api/tags`, { signal: AbortSignal.timeout(1800) });
+          if (directRes.ok) {
+            const tagData = await directRes.json();
+            if (Array.isArray(tagData.models) && tagData.models.length > 0) {
+              const directModels = tagData.models.map((m: any) => ({
+                value: m.name || m.model,
+                label: `${m.name || m.model} (Live Ollama)`,
+                tag: 'Live'
+              }));
+              // Merge discovered direct models with local catalog
+              const combined = [...directModels];
+              for (const m of fetchedModels) {
+                if (!combined.some(c => c.value === m.value)) {
+                  combined.push(m);
+                }
+              }
+              fetchedModels = combined;
+              console.log(`[Model Dropdown] Direct probe discovered ${directModels.length} models.`);
+            }
+          }
+        } catch {
+          // Direct probe silent fallback, already has robust default 'local' or 'generic' list
         }
-      } else {
-        console.warn(`[Model Dropdown] /api/models responded with HTTP ${res.status}`);
       }
+
+      // Ensure active model is tagged
+      const formattedModels = fetchedModels.map(opt => ({
+        ...opt,
+        tag: opt.value === config.model.model ? (opt.tag || 'Active') : opt.tag
+      }));
+
+      setFetchedModelsMap(prev => ({
+        ...prev,
+        [config.model.provider]: formattedModels
+      }));
     } catch (e: any) {
-      console.error('[Model Dropdown] Error fetching /api/models:', e);
+      // Graceful fallback to default 'local' or 'generic' list if any exception occurs
+      const isLocal = config.model.provider === 'ollama' || config.model.provider === 'custom' || agentId === 'picoclaw';
+      const fallbackList = isLocal ? DEFAULT_LOCAL_MODELS : DEFAULT_GENERIC_MODELS;
+      setFetchedModelsMap(prev => ({
+        ...prev,
+        [config.model.provider]: fallbackList
+      }));
+      logApiFailure({
+        endpoint: '/api/models',
+        method: 'GET',
+        status: 404,
+        statusText: 'Client-side Exception in handleFetchModels',
+        error: e,
+        context: `Agent "${agentId}", Provider "${config.model.provider}"`,
+        fallbackAction: `Applied default ${isLocal ? "'local'" : "'generic'"} model list.`
+      });
     } finally {
       setIsFetchingModules(false);
     }

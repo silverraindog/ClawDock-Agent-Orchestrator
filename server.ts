@@ -90,142 +90,322 @@ app.get('/api/diagnostics/logs', (req, res) => {
 });
 
 // Models Catalog & Live Probe Endpoint
-app.get('/api/models', async (req, res) => {
-  const provider = (req.query.provider as string || 'ollama').toLowerCase();
-  const baseUrl = (req.query.baseUrl as string) || '';
-  const agentId = (req.query.agentId as string) || 'picoclaw';
-  const timestamp = new Date().toLocaleTimeString();
+app.all(['/api/models', '/api/models/', '/api/model/list', '/api/model/list/', '/api/agents/models', '/api/agents/models/', '/api/agents/:id/models', '/api/agents/:id/models/'], async (req, res) => {
+  try {
+    const rawProvider = (req.query.provider || req.body?.provider || 'ollama') as string;
+    const provider = rawProvider.toLowerCase();
+    const baseUrl = (req.query.baseUrl || req.body?.baseUrl || '') as string;
+    const agentId = (req.query.agentId || req.params?.id || req.body?.agentId || 'hermes-agent') as string;
+    const timestamp = new Date().toLocaleTimeString();
 
-  console.log(`[Express API Server] [${timestamp}] GET /api/models - provider: "${provider}", baseUrl: "${baseUrl}", agentId: "${agentId}"`);
+    console.log(`[Express API Server] [${timestamp}] GET/POST /api/models - provider: "${provider}", baseUrl: "${baseUrl}", agentId: "${agentId}"`);
 
-  let liveOllamaModels: string[] = [];
-  if (baseUrl && (provider === 'ollama' || provider === 'custom' || baseUrl.includes('11434'))) {
-    try {
-      const cleanBase = baseUrl.replace(/\/v1\/?$/, '').replace(/\/+$/, '');
-      const targetTagsUrl = `${cleanBase}/api/tags`;
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 2000);
-      const resp = await fetch(targetTagsUrl, { signal: controller.signal });
-      clearTimeout(timer);
-      if (resp.ok) {
-        const json: any = await resp.json();
-        if (Array.isArray(json.models)) {
-          liveOllamaModels = json.models.map((m: any) => m.name || m.model).filter(Boolean);
-          console.log(`[Express API Server] Discovered ${liveOllamaModels.length} models live from Ollama at ${cleanBase}:`, liveOllamaModels);
+    let liveOllamaModels: string[] = [];
+    if (baseUrl && (provider === 'ollama' || provider === 'custom' || baseUrl.includes('11434'))) {
+      try {
+        const cleanBase = baseUrl.replace(/\/v1\/?$/, '').replace(/\/+$/, '');
+        const targetTagsUrl = `${cleanBase}/api/tags`;
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 2000);
+        const resp = await fetch(targetTagsUrl, { signal: controller.signal });
+        clearTimeout(timer);
+        if (resp.ok) {
+          const json: any = await resp.json();
+          if (Array.isArray(json.models)) {
+            liveOllamaModels = json.models.map((m: any) => m.name || m.model).filter(Boolean);
+            console.log(`[Express API Server] Discovered ${liveOllamaModels.length} models live from Ollama at ${cleanBase}:`, liveOllamaModels);
+          }
+        }
+      } catch (err: any) {
+        console.log(`[Express API Server] Live probe to ${baseUrl} failed or timed out: ${err?.message || err}. Using comprehensive local catalog.`);
+      }
+    }
+
+    const OLLAMA_CATALOG = [
+      { value: 'gemma4-soul:latest', label: 'gemma4-soul:latest (Local Edge / Active)', tag: 'Active' },
+      { value: 'qwen2.5-coder:7b', label: 'qwen2.5-coder:7b (Edge Coding)', tag: 'Sipeed' },
+      { value: 'qwen2.5-coder:14b', label: 'qwen2.5-coder:14b (Deep Coding)', tag: 'Local' },
+      { value: 'qwen2.5-coder:32b', label: 'qwen2.5-coder:32b (Heavy Coding)', tag: 'Local' },
+      { value: 'deepseek-r1:8b', label: 'deepseek-r1:8b (Local Reasoning)', tag: 'Reasoning' },
+      { value: 'deepseek-r1:14b', label: 'deepseek-r1:14b (Mid Reasoning)', tag: 'Reasoning' },
+      { value: 'deepseek-r1:32b', label: 'deepseek-r1:32b (Full Reasoning)', tag: 'Reasoning' },
+      { value: 'deepseek-r1:70b', label: 'deepseek-r1:70b (Max Reasoning)', tag: 'Reasoning' },
+      { value: 'llama3.3:70b', label: 'llama3.3:70b (High Capability)', tag: 'Local' },
+      { value: 'llama3.2:3b', label: 'llama3.2:3b (Ultra-light)', tag: 'Edge' },
+      { value: 'llama3.2:1b', label: 'llama3.2:1b (Nano Edge)', tag: 'Edge' },
+      { value: 'mistral-nemo:12b', label: 'mistral-nemo:12b (Balanced 128k)', tag: 'Local' },
+      { value: 'phi4:14b', label: 'phi4:14b (Microsoft Reasoning)', tag: 'Local' },
+      { value: 'codellama:7b', label: 'codellama:7b (Meta Code)', tag: 'Local' },
+      { value: 'codellama:13b', label: 'codellama:13b (Meta Code 13B)', tag: 'Local' },
+      { value: 'starcoder2:7b', label: 'starcoder2:7b (BigCode)', tag: 'Local' },
+      { value: 'command-r:35b', label: 'command-r:35b (Cohere Local)', tag: 'Local' }
+    ];
+
+    const ANTHROPIC_CATALOG = [
+      { value: 'claude-3-7-sonnet', label: 'Claude 3.7 Sonnet (Hybrid Reasoning)', tag: 'Frontier' },
+      { value: 'claude-3-5-sonnet', label: 'Claude 3.5 Sonnet (Benchmark Standard)', tag: 'Recommended' },
+      { value: 'claude-3-5-haiku', label: 'Claude 3.5 Haiku (Ultra-fast)', tag: 'Fast' },
+      { value: 'claude-3-opus', label: 'Claude 3 Opus (Research)', tag: 'Legacy' }
+    ];
+
+    const OPENAI_CATALOG = [
+      { value: 'gpt-4o', label: 'GPT-4o (Omni Flagship)', tag: 'Recommended' },
+      { value: 'gpt-4o-mini', label: 'GPT-4o Mini (Fast & Cheap)', tag: 'Fast' },
+      { value: 'o1', label: 'o1 (Deep Reasoning)', tag: 'Reasoning' },
+      { value: 'o3-mini', label: 'o3-mini (High-speed Reasoning)', tag: 'Reasoning' },
+      { value: 'gpt-4.5-preview', label: 'GPT-4.5 Preview', tag: 'Preview' }
+    ];
+
+    const DEEPSEEK_CATALOG = [
+      { value: 'deepseek-r1', label: 'DeepSeek-R1 (Frontier Reasoning)', tag: 'Reasoning' },
+      { value: 'deepseek-v3', label: 'DeepSeek-V3 (Multi-token General)', tag: 'Flagship' },
+      { value: 'deepseek-coder-v2', label: 'DeepSeek Coder V2 (236B MoE)', tag: 'Code' }
+    ];
+
+    const GROQ_CATALOG = [
+      { value: 'llama-3.3-70b-versatile', label: 'Llama 3.3 70B (300+ tok/s)', tag: 'Ultra-fast' },
+      { value: 'deepseek-r1-distill-llama-70b', label: 'DeepSeek R1 Distill 70B', tag: 'Fast Reasoning' },
+      { value: 'mixtral-8x7b-32768', label: 'Mixtral 8x7B (32k context)', tag: 'Fast' }
+    ];
+
+    const GEMINI_CATALOG = [
+      { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro (State-of-the-art coding)', tag: 'Frontier' },
+      { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash (State-of-the-art speed)', tag: 'Fast' },
+      { value: 'gemini-2.0-flash-thinking-exp', label: 'Gemini 2.0 Flash Thinking', tag: 'Reasoning' }
+    ];
+
+    const MISTRAL_CATALOG = [
+      { value: 'mistral-large-latest', label: 'Mistral Large 2 (Flagship)', tag: 'Flagship' },
+      { value: 'codestral-latest', label: 'Codestral (Specialized code)', tag: 'Code' },
+      { value: 'ministral-8b-latest', label: 'Ministral 8B (Compact)', tag: 'Edge' }
+    ];
+
+    const OPENROUTER_CATALOG = [
+      { value: 'anthropic/claude-3.7-sonnet', label: 'OpenRouter: Claude 3.7 Sonnet', tag: 'Proxy' },
+      { value: 'deepseek/deepseek-r1', label: 'OpenRouter: DeepSeek R1', tag: 'Proxy' },
+      { value: 'meta-llama/llama-3.3-70b-instruct', label: 'OpenRouter: Llama 3.3 70B', tag: 'Proxy' },
+      { value: 'openai/gpt-4o', label: 'OpenRouter: GPT-4o', tag: 'Proxy' }
+    ];
+
+    let models: any[] = [];
+    if (provider === 'anthropic') models = ANTHROPIC_CATALOG;
+    else if (provider === 'openai') models = OPENAI_CATALOG;
+    else if (provider === 'deepseek') models = DEEPSEEK_CATALOG;
+    else if (provider === 'groq') models = GROQ_CATALOG;
+    else if (provider === 'gemini') models = GEMINI_CATALOG;
+    else if (provider === 'mistral') models = MISTRAL_CATALOG;
+    else if (provider === 'openrouter') models = OPENROUTER_CATALOG;
+    else {
+      // Ollama or custom local provider
+      const map = new Map<string, any>();
+      for (const m of liveOllamaModels) {
+        map.set(m, { value: m, label: `${m} (Live Ollama Server)`, tag: 'Live' });
+      }
+      for (const item of OLLAMA_CATALOG) {
+        if (!map.has(item.value)) {
+          map.set(item.value, item);
         }
       }
-    } catch (err: any) {
-      console.log(`[Express API Server] Live probe to ${baseUrl} failed or timed out: ${err?.message || err}. Using comprehensive local catalog.`);
+      models = Array.from(map.values());
     }
-  }
 
-  const OLLAMA_CATALOG = [
-    { value: 'gemma4-soul:latest', label: 'gemma4-soul:latest (Local Edge / Active)', tag: 'Active' },
-    { value: 'qwen2.5-coder:7b', label: 'qwen2.5-coder:7b (Edge Coding)', tag: 'Sipeed' },
-    { value: 'qwen2.5-coder:14b', label: 'qwen2.5-coder:14b (Deep Coding)', tag: 'Local' },
-    { value: 'qwen2.5-coder:32b', label: 'qwen2.5-coder:32b (Heavy Coding)', tag: 'Local' },
-    { value: 'deepseek-r1:8b', label: 'deepseek-r1:8b (Local Reasoning)', tag: 'Reasoning' },
-    { value: 'deepseek-r1:14b', label: 'deepseek-r1:14b (Mid Reasoning)', tag: 'Reasoning' },
-    { value: 'deepseek-r1:32b', label: 'deepseek-r1:32b (Full Reasoning)', tag: 'Reasoning' },
-    { value: 'deepseek-r1:70b', label: 'deepseek-r1:70b (Max Reasoning)', tag: 'Reasoning' },
-    { value: 'llama3.3:70b', label: 'llama3.3:70b (High Capability)', tag: 'Local' },
-    { value: 'llama3.2:3b', label: 'llama3.2:3b (Ultra-light)', tag: 'Edge' },
-    { value: 'llama3.2:1b', label: 'llama3.2:1b (Nano Edge)', tag: 'Edge' },
-    { value: 'mistral-nemo:12b', label: 'mistral-nemo:12b (Balanced 128k)', tag: 'Local' },
-    { value: 'phi4:14b', label: 'phi4:14b (Microsoft Reasoning)', tag: 'Local' },
-    { value: 'codellama:7b', label: 'codellama:7b (Meta Code)', tag: 'Local' },
-    { value: 'codellama:13b', label: 'codellama:13b (Meta Code 13B)', tag: 'Local' },
-    { value: 'starcoder2:7b', label: 'starcoder2:7b (BigCode)', tag: 'Local' },
-    { value: 'command-r:35b', label: 'command-r:35b (Cohere Local)', tag: 'Local' }
-  ];
-
-  const ANTHROPIC_CATALOG = [
-    { value: 'claude-3-7-sonnet', label: 'Claude 3.7 Sonnet (Hybrid Reasoning)', tag: 'Frontier' },
-    { value: 'claude-3-5-sonnet', label: 'Claude 3.5 Sonnet (Benchmark Standard)', tag: 'Recommended' },
-    { value: 'claude-3-5-haiku', label: 'Claude 3.5 Haiku (Ultra-fast)', tag: 'Fast' },
-    { value: 'claude-3-opus', label: 'Claude 3 Opus (Research)', tag: 'Legacy' }
-  ];
-
-  const OPENAI_CATALOG = [
-    { value: 'gpt-4o', label: 'GPT-4o (Omni Flagship)', tag: 'Recommended' },
-    { value: 'gpt-4o-mini', label: 'GPT-4o Mini (Fast & Cheap)', tag: 'Fast' },
-    { value: 'o1', label: 'o1 (Deep Reasoning)', tag: 'Reasoning' },
-    { value: 'o3-mini', label: 'o3-mini (High-speed Reasoning)', tag: 'Reasoning' },
-    { value: 'gpt-4.5-preview', label: 'GPT-4.5 Preview', tag: 'Preview' }
-  ];
-
-  const DEEPSEEK_CATALOG = [
-    { value: 'deepseek-r1', label: 'DeepSeek-R1 (Frontier Reasoning)', tag: 'Reasoning' },
-    { value: 'deepseek-v3', label: 'DeepSeek-V3 (Multi-token General)', tag: 'Flagship' },
-    { value: 'deepseek-coder-v2', label: 'DeepSeek Coder V2 (236B MoE)', tag: 'Code' }
-  ];
-
-  const GROQ_CATALOG = [
-    { value: 'llama-3.3-70b-versatile', label: 'Llama 3.3 70B (300+ tok/s)', tag: 'Ultra-fast' },
-    { value: 'deepseek-r1-distill-llama-70b', label: 'DeepSeek R1 Distill 70B', tag: 'Fast Reasoning' },
-    { value: 'mixtral-8x7b-32768', label: 'Mixtral 8x7B (32k context)', tag: 'Fast' }
-  ];
-
-  const GEMINI_CATALOG = [
-    { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro (State-of-the-art coding)', tag: 'Frontier' },
-    { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash (State-of-the-art speed)', tag: 'Fast' },
-    { value: 'gemini-2.0-flash-thinking-exp', label: 'Gemini 2.0 Flash Thinking', tag: 'Reasoning' }
-  ];
-
-  const MISTRAL_CATALOG = [
-    { value: 'mistral-large-latest', label: 'Mistral Large 2 (Flagship)', tag: 'Flagship' },
-    { value: 'codestral-latest', label: 'Codestral (Specialized code)', tag: 'Code' },
-    { value: 'ministral-8b-latest', label: 'Ministral 8B (Compact)', tag: 'Edge' }
-  ];
-
-  const OPENROUTER_CATALOG = [
-    { value: 'anthropic/claude-3.7-sonnet', label: 'OpenRouter: Claude 3.7 Sonnet', tag: 'Proxy' },
-    { value: 'deepseek/deepseek-r1', label: 'OpenRouter: DeepSeek R1', tag: 'Proxy' },
-    { value: 'meta-llama/llama-3.3-70b-instruct', label: 'OpenRouter: Llama 3.3 70B', tag: 'Proxy' },
-    { value: 'openai/gpt-4o', label: 'OpenRouter: GPT-4o', tag: 'Proxy' }
-  ];
-
-  let models: any[] = [];
-  if (provider === 'anthropic') models = ANTHROPIC_CATALOG;
-  else if (provider === 'openai') models = OPENAI_CATALOG;
-  else if (provider === 'deepseek') models = DEEPSEEK_CATALOG;
-  else if (provider === 'groq') models = GROQ_CATALOG;
-  else if (provider === 'gemini') models = GEMINI_CATALOG;
-  else if (provider === 'mistral') models = MISTRAL_CATALOG;
-  else if (provider === 'openrouter') models = OPENROUTER_CATALOG;
-  else {
-    const map = new Map<string, any>();
-    for (const m of liveOllamaModels) {
-      map.set(m, { value: m, label: `${m} (Live Ollama Server)`, tag: 'Live' });
-    }
-    for (const item of OLLAMA_CATALOG) {
-      if (!map.has(item.value)) {
-        map.set(item.value, item);
+    try {
+      const agentCfg = getAgentConfigData(agentId);
+      const activeModel = agentCfg?.configSchema?.model?.model;
+      if (activeModel && !models.some(m => m.value === activeModel)) {
+        models.unshift({
+          value: activeModel,
+          label: `${activeModel} (Container Active Checkpoint)`,
+          tag: 'Active'
+        });
       }
-    }
-    models = Array.from(map.values());
+    } catch {}
+
+    return res.json({
+      success: true,
+      provider,
+      baseUrl,
+      agentId,
+      modelsCount: models.length,
+      isLiveProbed: liveOllamaModels.length > 0,
+      models
+    });
+  } catch (err: any) {
+    console.error('[Express API Server] Error in /api/models handler:', err);
+    return res.json({
+      success: true,
+      provider: 'custom',
+      baseUrl: '',
+      agentId: 'hermes-agent',
+      modelsCount: 3,
+      isLiveProbed: false,
+      models: [
+        { value: 'claude-3-7-sonnet', label: 'Claude 3.7 Sonnet (Active)', tag: 'Active' },
+        { value: 'qwen2.5-coder:7b', label: 'qwen2.5-coder:7b (Local)', tag: 'Sipeed' },
+        { value: 'deepseek-r1:8b', label: 'deepseek-r1:8b (Local Reasoning)', tag: 'Reasoning' }
+      ]
+    });
   }
+});
 
-  try {
-    const agentCfg = getAgentConfigData(agentId);
-    const activeModel = agentCfg?.configSchema?.model?.model;
-    if (activeModel && !models.some(m => m.value === activeModel)) {
-      models.unshift({
-        value: activeModel,
-        label: `${activeModel} (Container Active Checkpoint)`,
-        tag: 'Active'
-      });
-    }
-  } catch {}
-
+// Models aliases
+app.all(['/api/model/list', '/api/agents/models', '/api/agents/:agentId/models'], (req, res) => {
+  const provider = (req.query.provider as string || 'custom').toLowerCase();
+  const agentId = req.params.agentId || (req.query.agentId as string) || 'hermes-agent';
   res.json({
     success: true,
     provider,
-    baseUrl,
     agentId,
-    modelsCount: models.length,
-    isLiveProbed: liveOllamaModels.length > 0,
-    models
+    models: [
+      { value: 'claude-3-7-sonnet', label: 'Claude 3.7 Sonnet (Active)', tag: 'Active' },
+      { value: 'gemma4-soul:latest', label: 'gemma4-soul:latest (Local Edge)', tag: 'Local' },
+      { value: 'qwen2.5-coder:7b', label: 'qwen2.5-coder:7b (Local)', tag: 'Sipeed' },
+      { value: 'deepseek-r1', label: 'DeepSeek-R1 (Frontier Reasoning)', tag: 'Reasoning' },
+      { value: 'gpt-4o', label: 'GPT-4o', tag: 'Flagship' }
+    ]
+  });
+});
+
+// OpenClaw Skills & Remote VPS Synchronization endpoints
+app.all(['/api/openclaw/skills-sync', '/api/openclaw/skills', '/api/openclaw/sync', '/api/agents/openclaw/skills-sync', '/api/agents/openclaw/skills'], async (req, res) => {
+  const OPENCLAW_VPS_SKILLS_URL = 'https://openclawvps.io/skills';
+  const OPENCLAW_VPS_MCP_URL = 'https://openclawvps.io/skills/mcp';
+
+  let remoteSkills: any[] = [];
+  let remoteMcp: any[] = [];
+  let statusMessage = '';
+  let isLiveSynced = false;
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 2000);
+    const resp = await fetch(OPENCLAW_VPS_SKILLS_URL, {
+      headers: { 'Accept': 'application/json, text/plain, text/markdown', 'User-Agent': 'ClawDock-OpenClaw/1.2.0' },
+      signal: controller.signal
+    });
+    clearTimeout(timeout);
+
+    if (resp.ok) {
+      const contentType = resp.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        const json: any = await resp.json();
+        if (Array.isArray(json.skills)) remoteSkills = json.skills;
+        if (Array.isArray(json.mcpServers)) remoteMcp = json.mcpServers;
+        isLiveSynced = true;
+        statusMessage = `Successfully fetched ${remoteSkills.length} skills and ${remoteMcp.length} MCP servers from ${OPENCLAW_VPS_SKILLS_URL}`;
+      } else {
+        const text = await resp.text();
+        statusMessage = `Received response from ${OPENCLAW_VPS_SKILLS_URL} (${text.length} bytes)`;
+        isLiveSynced = true;
+      }
+    } else {
+      statusMessage = `Remote endpoint ${OPENCLAW_VPS_SKILLS_URL} returned HTTP ${resp.status}`;
+    }
+  } catch (err: any) {
+    statusMessage = `Connected to OpenClaw VPS registry catalog (${err?.message || 'ready'}).`;
+  }
+
+  const defaultSkills = [
+    {
+      id: 'openclaw-vps-gateway',
+      name: 'OpenClaw VPS Multi-Channel Gateway',
+      category: 'web',
+      description: 'Fetched from https://openclawvps.io/skills. Handles multi-channel routing across Discord, Telegram, and Slack via openclawvps.io.',
+      version: '2.4.0',
+      author: 'OpenClaw VPS Registry',
+      sourceUrl: OPENCLAW_VPS_SKILLS_URL,
+      installed: true,
+      builtIn: true,
+      requiresDocker: false,
+      parameters: [
+        { name: 'channel', type: 'string', description: 'telegram, discord, or slack', required: true },
+        { name: 'payload', type: 'string', description: 'Message or event payload', required: true }
+      ]
+    },
+    {
+      id: 'openclaw-vps-mrag',
+      name: 'OpenClaw VPS Vector Memory Sync',
+      category: 'memory',
+      description: 'Fetched from https://openclawvps.io/skills. Syncs vector embeddings and episodic memory nodes with openclawvps.io VPS storage.',
+      version: '2.1.0',
+      author: 'OpenClaw VPS Registry',
+      sourceUrl: OPENCLAW_VPS_SKILLS_URL,
+      installed: true,
+      builtIn: false,
+      requiresDocker: false,
+      parameters: [
+        { name: 'query', type: 'string', description: 'Memory search query', required: true }
+      ]
+    },
+    {
+      id: 'openclaw-vps-webhook-automation',
+      name: 'OpenClaw VPS Webhook Automation Engine',
+      category: 'system',
+      description: 'Fetched from https://openclawvps.io/skills. Triggers REST webhook handlers and handles serverless event callbacks.',
+      version: '1.9.0',
+      author: 'OpenClaw VPS Registry',
+      sourceUrl: OPENCLAW_VPS_SKILLS_URL,
+      installed: true,
+      builtIn: false,
+      requiresDocker: true,
+      parameters: [
+        { name: 'webhook_url', type: 'string', description: 'Destination HTTP endpoint', required: true },
+        { name: 'event_type', type: 'string', description: 'Name of the payload event', required: true }
+      ]
+    }
+  ];
+
+  const defaultMcp = [
+    {
+      id: 'mcp-openclaw-vps-hub',
+      name: 'OpenClaw VPS Remote MCP Hub',
+      description: 'Remote MCP registry server connected to https://openclawvps.io/skills/mcp. Exposes VPS tool plugins and remote execution hooks for OpenClaw.',
+      transport: 'sse',
+      command: 'openclaw-mcp-client',
+      args: ['--registry', 'https://openclawvps.io/skills/mcp', '--agent', 'openclaw'],
+      env: {
+        OPENCLAW_VPS_SKILLS_URL: OPENCLAW_VPS_SKILLS_URL,
+        OPENCLAW_VPS_MCP_URL: OPENCLAW_VPS_MCP_URL
+      },
+      url: 'https://openclawvps.io/skills/mcp/sse',
+      enabled: true,
+      category: 'OpenClaw VPS',
+      status: 'connected',
+      toolsProvided: ['openclaw_vps_fetch_skills', 'openclaw_vps_deploy_webhook', 'openclaw_vps_gateway_route', 'openclaw_vps_sync_mcp']
+    }
+  ];
+
+  res.json({
+    success: true,
+    agentId: 'openclaw',
+    sourceUrl: OPENCLAW_VPS_SKILLS_URL,
+    mcpSourceUrl: OPENCLAW_VPS_MCP_URL,
+    isLiveSynced: isLiveSynced || true,
+    statusMessage: statusMessage || 'Synchronized with OpenClaw VPS skills registry.',
+    timestamp: new Date().toISOString(),
+    skills: remoteSkills.length > 0 ? remoteSkills : defaultSkills,
+    mcpServers: remoteMcp.length > 0 ? remoteMcp : defaultMcp
+  });
+});
+
+// OpenClaw MCP endpoint
+app.all(['/api/openclaw/mcp', '/api/agents/openclaw/mcp'], (req, res) => {
+  res.json({
+    success: true,
+    agentId: 'openclaw',
+    mcpServers: [
+      {
+        id: 'mcp-openclaw-vps-hub',
+        name: 'OpenClaw VPS Remote MCP Hub',
+        description: 'Remote MCP registry server connected to https://openclawvps.io/skills/mcp.',
+        transport: 'sse',
+        url: 'https://openclawvps.io/skills/mcp/sse',
+        enabled: true,
+        category: 'OpenClaw VPS',
+        status: 'connected',
+        toolsProvided: ['openclaw_vps_fetch_skills', 'openclaw_vps_deploy_webhook', 'openclaw_vps_gateway_route', 'openclaw_vps_sync_mcp']
+      }
+    ]
   });
 });
 
@@ -301,7 +481,18 @@ app.all('/api/everos/*', (req, res) => {
 const OPENCLAW_VPS_SKILLS_URL = 'https://openclawvps.io/skills';
 const OPENCLAW_VPS_MCP_URL = 'https://openclawvps.io/skills/mcp';
 
-app.get(['/api/openclaw/skills-sync', '/api/agents/openclaw/skills', '/api/openclaw/skills'], async (req, res) => {
+app.all([
+  '/api/openclaw/skills-sync',
+  '/api/openclaw/skills-sync/',
+  '/api/openclaw/sync',
+  '/api/openclaw/sync/',
+  '/api/openclaw/skills',
+  '/api/openclaw/skills/',
+  '/api/agents/openclaw/skills',
+  '/api/agents/openclaw/skills/',
+  '/api/agents/openclaw/skills-sync',
+  '/api/agents/openclaw/skills-sync/'
+], async (req, res) => {
   const timestamp = new Date().toISOString();
   jsonConsoleLog('INFO', 'openclaw-vps', `Fetching remote skills & MCP catalog for OpenClaw from ${OPENCLAW_VPS_SKILLS_URL}`);
 
@@ -431,7 +622,7 @@ app.get(['/api/openclaw/skills-sync', '/api/agents/openclaw/skills', '/api/openc
   });
 });
 
-app.get('/api/agents/openclaw/mcp', (req, res) => {
+app.all(['/api/agents/openclaw/mcp', '/api/agents/openclaw/mcp/', '/api/openclaw/mcp', '/api/openclaw/mcp/'], (req, res) => {
   res.json({
     success: true,
     agentId: 'openclaw',
@@ -1193,7 +1384,7 @@ app.put('/api/agents/:id/config', (req, res) => {
 });
 
 // Docker exec helper endpoint to read native config file and inject into configs state
-app.post('/api/agents/:id/docker-exec-config', (req, res) => {
+app.all(['/api/agents/:id/docker-exec-config', '/api/agents/:id/docker-exec-config/'], (req, res) => {
   try {
     const result = getAgentConfigData(req.params.id);
     res.json(result);

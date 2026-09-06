@@ -159,7 +159,8 @@ export function parseNativeConfigToSchema(
           parsedChannels.webhook = {
             enabled: Boolean(ch.webhook.enabled),
             port: Number(ch.webhook.port || 8080),
-            authToken: ch.webhook.auth_token || ch.webhook.authToken || ''
+            authToken: ch.webhook.auth_token || ch.webhook.authToken || '',
+            corsOrigin: ch.webhook.cors_origin || ch.webhook.corsOrigin || '*'
           };
         }
       }
@@ -290,12 +291,12 @@ export function parseNativeConfigToSchema(
     // Channels parsing in YAML
     const channelsBlockMatch = nativeContent.match(/channels:\s*\n([\s\S]*?)(?=\n[a-z_]+:|$)/i);
     const targetChannelsText = channelsBlockMatch ? channelsBlockMatch[1] : nativeContent;
-    const hasDiscord = targetChannelsText.includes('discord:') || agentId === 'picoclaw';
+    const hasDiscord = targetChannelsText.includes('discord:') || (agentId as string) === 'picoclaw';
     const hasTelegram = targetChannelsText.includes('telegram:');
 
     if (hasDiscord || hasTelegram) {
       parsedChannels = {};
-      const prefersDiscord = hasDiscord || agentId === 'picoclaw';
+      const prefersDiscord = hasDiscord || (agentId as string) === 'picoclaw';
       const discEnMatch = targetChannelsText.match(/discord:[\s\S]*?enabled:\s*(true|false)/i);
       parsedChannels.discord = {
         enabled: discEnMatch ? discEnMatch[1].toLowerCase() === 'true' : prefersDiscord,

@@ -925,9 +925,20 @@ export const MODEL_OPTIONS = {
     { value: 'meta-llama/llama-3.3-70b-instruct', label: 'OpenRouter: Llama 3.3 70B' },
   ],
   custom: [
-    { value: 'gemma4-soul:latest', label: 'gemma4-soul:latest (Ollama / Local)' },
-    { value: 'qwen2.5-coder:7b', label: 'qwen2.5-coder:7b (Local)' },
-    { value: 'custom-model', label: 'Custom Model Name' }
+    { value: 'claude-3-7-sonnet', label: 'Claude 3.7 Sonnet (Hybrid Reasoning)' },
+    { value: 'gemma4-soul:latest', label: 'gemma4-soul:latest (Local Edge / Active)' },
+    { value: 'qwen2.5-coder:7b', label: 'qwen2.5-coder:7b (Edge Coding)' },
+    { value: 'qwen2.5-coder:14b', label: 'qwen2.5-coder:14b (Deep Coding)' },
+    { value: 'qwen2.5-coder:32b', label: 'qwen2.5-coder:32b (Heavy Coding)' },
+    { value: 'deepseek-r1:8b', label: 'deepseek-r1:8b (Local Reasoning)' },
+    { value: 'deepseek-r1:14b', label: 'deepseek-r1:14b (Mid Reasoning)' },
+    { value: 'deepseek-r1:32b', label: 'deepseek-r1:32b (Full Reasoning)' },
+    { value: 'deepseek-r1:70b', label: 'deepseek-r1:70b (Max Reasoning)' },
+    { value: 'llama3.3:70b', label: 'llama3.3:70b (High Capability)' },
+    { value: 'llama3.2:3b', label: 'llama3.2:3b (Ultra-light)' },
+    { value: 'mistral-nemo:12b', label: 'mistral-nemo:12b (Balanced 128k)' },
+    { value: 'phi4:14b', label: 'phi4:14b (Microsoft Reasoning)' },
+    { value: 'custom-model', label: 'Custom Model Name (Manual entry)' }
   ]
 };
 

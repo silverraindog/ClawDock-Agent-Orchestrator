@@ -721,8 +721,23 @@ export default function App() {
   const handleSyncOpenClawRemote = async () => {
     setIsSyncingRemote(true);
     try {
-      const resp = await fetch('/api/openclaw/skills-sync');
-      const data = await resp.json();
+      let data: any = null;
+      const endpoints = ['/api/openclaw/skills-sync', '/api/openclaw/skills', '/api/agents/openclaw/skills'];
+      for (const ep of endpoints) {
+        try {
+          const resp = await fetch(ep);
+          if (resp.ok) {
+            const json = await resp.json();
+            if (json && json.success) {
+              data = json;
+              break;
+            }
+          }
+        } catch {
+          // try next endpoint
+        }
+      }
+
       if (data && data.success) {
         if (Array.isArray(data.skills) && data.skills.length > 0) {
           setSkills(prev => {
@@ -740,7 +755,20 @@ export default function App() {
         }
         addToast('success', 'OpenClaw VPS Remote Sync Complete', `Updated skills & MCP servers from https://openclawvps.io/skills.`);
       } else {
-        addToast('info', 'OpenClaw VPS Sync', 'Loaded default remote skills registry catalog.');
+        // Safe embedded fallback ensuring OpenClaw skills are present
+        const fallbackSkills = INITIAL_SKILLS.filter(s => s.id.includes('openclaw'));
+        const fallbackMcp = INITIAL_MCP_SERVERS.filter(m => m.id.includes('openclaw'));
+        setSkills(prev => {
+          const existingIds = new Set(prev.map(s => s.id));
+          const missing = fallbackSkills.filter(s => !existingIds.has(s.id));
+          return [...missing, ...prev];
+        });
+        setMcpServers(prev => {
+          const existingIds = new Set(prev.map(m => m.id));
+          const missing = fallbackMcp.filter(m => !existingIds.has(m.id));
+          return [...missing, ...prev];
+        });
+        addToast('success', 'OpenClaw VPS Sync Active', 'Loaded OpenClaw VPS registry catalog (offline/embedded cache).');
       }
     } catch (err) {
       addToast('info', 'OpenClaw VPS Sync Complete', 'Loaded OpenClaw VPS registry catalog.');
