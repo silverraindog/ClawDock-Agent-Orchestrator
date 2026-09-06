@@ -399,6 +399,16 @@ export function parseNativeConfigToSchema(
     result.channels = parsedChannels as ChannelConfig;
   }
 
+  console.log(`[ConfigParser Debug] Channel config evaluation for agent "${agentId}":`, {
+    agentId,
+    detectedFormat,
+    isDiscordEnabled: parsedChannels?.discord?.enabled ?? (agentId === 'picoclaw'),
+    isTelegramEnabled: parsedChannels?.telegram?.enabled ?? (agentId !== 'picoclaw'),
+    discordConfig: parsedChannels?.discord,
+    telegramConfig: parsedChannels?.telegram,
+    rawSourceContent: nativeContent
+  });
+
   return result;
 }
 
@@ -473,3 +483,6 @@ export function enhanceConfigWithNative(
     baseMerged.channels.discord.enabled = true;
     baseMerged.channels.telegram.enabled = false;
   }
+
+  return baseMerged;
+}

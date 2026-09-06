@@ -458,26 +458,55 @@ vector_db_url = "http://everos:8080"
 
     let isDiscordEnabled = agentId === 'picoclaw';
     let isTelegramEnabled = agentId !== 'picoclaw';
+
+    const parseBoolVal = (val: any, fallback: boolean): boolean => {
+      if (typeof val === 'boolean') return val;
+      if (typeof val === 'string') {
+        const lower = val.trim().toLowerCase();
+        if (lower === 'true' || lower === '1' || lower === 'yes') return true;
+        if (lower === 'false' || lower === '0' || lower === 'no') return false;
+      }
+      return fallback;
+    };
+
     try {
-      if (nativeContent.includes('discord:')) {
-        const discMatch = nativeContent.match(/discord:[\s\S]*?enabled:\s*(true|false)/i);
-        if (discMatch) isDiscordEnabled = discMatch[1].toLowerCase() === 'true';
-        else isDiscordEnabled = true;
+      if (detectedFormat === 'json') {
+        const json = JSON.parse(nativeContent);
+        const ch = json.channels || json.channel || {};
+        const disc = ch.discord || json.discord;
+        const tel = ch.telegram || json.telegram;
+        if (disc && disc.enabled !== undefined) {
+          isDiscordEnabled = parseBoolVal(disc.enabled, isDiscordEnabled);
+        }
+        if (tel && tel.enabled !== undefined) {
+          isTelegramEnabled = parseBoolVal(tel.enabled, isTelegramEnabled);
+        }
+      } else {
+        // YAML / TOML regex fallback
+        if (nativeContent.includes('discord')) {
+          const discMatch = nativeContent.match(/discord[\s\S]*?enabled[:=]\s*["']?(true|false|1|0|yes|no)["']?/i);
+          if (discMatch) {
+            isDiscordEnabled = parseBoolVal(discMatch[1], isDiscordEnabled);
+          }
+        }
+        if (nativeContent.includes('telegram')) {
+          const telMatch = nativeContent.match(/telegram[\s\S]*?enabled[:=]\s*["']?(true|false|1|0|yes|no)["']?/i);
+          if (telMatch) {
+            isTelegramEnabled = parseBoolVal(telMatch[1], isTelegramEnabled);
+          }
+        }
       }
-      if (nativeContent.includes('"discord"')) {
-        const jsonMatch = nativeContent.match(/"discord"\s*:\s*\{[^}]*"enabled"\s*:\s*(true|false)/i);
-        if (jsonMatch) isDiscordEnabled = jsonMatch[1].toLowerCase() === 'true';
-        else isDiscordEnabled = true;
-      }
-      if (nativeContent.includes('telegram:')) {
-        const telMatch = nativeContent.match(/telegram:[\s\S]*?enabled:\s*(true|false)/i);
-        if (telMatch) isTelegramEnabled = telMatch[1].toLowerCase() === 'true';
-      }
-      if (nativeContent.includes('"telegram"')) {
-        const jsonMatch = nativeContent.match(/"telegram"\s*:\s*\{[^}]*"enabled"\s*:\s*(true|false)/i);
-        if (jsonMatch) isTelegramEnabled = jsonMatch[1].toLowerCase() === 'true';
-      }
-    } catch {}
+    } catch (e: any) {
+      console.warn(`[vite.config parseConfigSchema] Channel flag parse error for "${agentId}":`, e);
+    }
+
+    console.log(`[ConfigParser Debug] Raw source content & channel evaluation for "${agentId}":`, {
+      agentId,
+      detectedFormat,
+      isDiscordEnabled,
+      isTelegramEnabled,
+      rawContent: nativeContent
+    });
 
     return {
       agentId,

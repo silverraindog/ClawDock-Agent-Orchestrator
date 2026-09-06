@@ -162,15 +162,45 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
   };
 
   const [isFetchingModules, setIsFetchingModules] = useState(false);
+  const [fetchedModelsMap, setFetchedModelsMap] = useState<Record<string, { value: string; label: string; tag?: string }[]>>({});
 
-  const handleFetchModules = () => {
+  const handleFetchModels = async () => {
     setIsFetchingModules(true);
-    setTimeout(() => {
+    try {
+      const timestamp = Date.now();
+      const params = new URLSearchParams({
+        provider: config.model.provider,
+        baseUrl: config.model.baseUrl || '',
+        agentId: agentId,
+        t: String(timestamp)
+      });
+      const url = `/api/models?${params.toString()}`;
+      console.log(`[Model Dropdown] Initiating fetch request to ${url}`);
+      const res = await fetch(url);
+      if (res.ok) {
+        const data = await res.json();
+        console.log('[Model Dropdown] /api/models fetch result:', data);
+        if (data && Array.isArray(data.models)) {
+          setFetchedModelsMap(prev => ({
+            ...prev,
+            [config.model.provider]: data.models
+          }));
+        }
+      } else {
+        console.warn(`[Model Dropdown] /api/models responded with HTTP ${res.status}`);
+      }
+    } catch (e: any) {
+      console.error('[Model Dropdown] Error fetching /api/models:', e);
+    } finally {
       setIsFetchingModules(false);
-      const count = MODEL_OPTIONS[config.model.provider]?.length || 5;
-      alert(`Successfully synchronized ${count} active model modules & checkpoints for provider: ${config.model.provider}`);
-    }, 700);
+    }
   };
+
+  const handleFetchModules = handleFetchModels;
+
+  useEffect(() => {
+    handleFetchModels();
+  }, [config.model.provider, config.model.baseUrl, agentId]);
   const handleProviderChange = (provider: LLMProvider) => {
     const available = MODEL_OPTIONS[provider] || [];
     const defaultModel = available[0]?.value || 'custom-model';
@@ -230,7 +260,14 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
     setTimeout(() => setCopiedRaw(false), 2000);
   };
 
-  const currentModelList = MODEL_OPTIONS[config.model.provider] || [];
+  const rawProviderList = fetchedModelsMap[config.model.provider] || MODEL_OPTIONS[config.model.provider] || [];
+  const currentModelList = [...rawProviderList];
+  if (config.model.model && !currentModelList.some((m) => m.value === config.model.model)) {
+    currentModelList.unshift({
+      value: config.model.model,
+      label: `${config.model.model} (Active Checkpoint)`
+    });
+  }
 
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
