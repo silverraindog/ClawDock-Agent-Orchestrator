@@ -57,6 +57,146 @@ app.get('/api/diagnostics/logs', (req, res) => {
   });
 });
 
+// Models Catalog & Live Probe Endpoint
+app.get('/api/models', async (req, res) => {
+  const provider = (req.query.provider as string || 'ollama').toLowerCase();
+  const baseUrl = (req.query.baseUrl as string) || '';
+  const agentId = (req.query.agentId as string) || 'picoclaw';
+  const timestamp = new Date().toLocaleTimeString();
+
+  console.log(`[Express API Server] [${timestamp}] GET /api/models - provider: "${provider}", baseUrl: "${baseUrl}", agentId: "${agentId}"`);
+
+  let liveOllamaModels: string[] = [];
+  if (baseUrl && (provider === 'ollama' || provider === 'custom' || baseUrl.includes('11434'))) {
+    try {
+      const cleanBase = baseUrl.replace(/\/v1\/?$/, '').replace(/\/+$/, '');
+      const targetTagsUrl = `${cleanBase}/api/tags`;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 2000);
+      const resp = await fetch(targetTagsUrl, { signal: controller.signal });
+      clearTimeout(timer);
+      if (resp.ok) {
+        const json: any = await resp.json();
+        if (Array.isArray(json.models)) {
+          liveOllamaModels = json.models.map((m: any) => m.name || m.model).filter(Boolean);
+          console.log(`[Express API Server] Discovered ${liveOllamaModels.length} models live from Ollama at ${cleanBase}:`, liveOllamaModels);
+        }
+      }
+    } catch (err: any) {
+      console.log(`[Express API Server] Live probe to ${baseUrl} failed or timed out: ${err?.message || err}. Using comprehensive local catalog.`);
+    }
+  }
+
+  const OLLAMA_CATALOG = [
+    { value: 'gemma4-soul:latest', label: 'gemma4-soul:latest (Local Edge / Active)', tag: 'Active' },
+    { value: 'qwen2.5-coder:7b', label: 'qwen2.5-coder:7b (Edge Coding)', tag: 'Sipeed' },
+    { value: 'qwen2.5-coder:14b', label: 'qwen2.5-coder:14b (Deep Coding)', tag: 'Local' },
+    { value: 'qwen2.5-coder:32b', label: 'qwen2.5-coder:32b (Heavy Coding)', tag: 'Local' },
+    { value: 'deepseek-r1:8b', label: 'deepseek-r1:8b (Local Reasoning)', tag: 'Reasoning' },
+    { value: 'deepseek-r1:14b', label: 'deepseek-r1:14b (Mid Reasoning)', tag: 'Reasoning' },
+    { value: 'deepseek-r1:32b', label: 'deepseek-r1:32b (Full Reasoning)', tag: 'Reasoning' },
+    { value: 'deepseek-r1:70b', label: 'deepseek-r1:70b (Max Reasoning)', tag: 'Reasoning' },
+    { value: 'llama3.3:70b', label: 'llama3.3:70b (High Capability)', tag: 'Local' },
+    { value: 'llama3.2:3b', label: 'llama3.2:3b (Ultra-light)', tag: 'Edge' },
+    { value: 'llama3.2:1b', label: 'llama3.2:1b (Nano Edge)', tag: 'Edge' },
+    { value: 'mistral-nemo:12b', label: 'mistral-nemo:12b (Balanced 128k)', tag: 'Local' },
+    { value: 'phi4:14b', label: 'phi4:14b (Microsoft Reasoning)', tag: 'Local' },
+    { value: 'codellama:7b', label: 'codellama:7b (Meta Code)', tag: 'Local' },
+    { value: 'codellama:13b', label: 'codellama:13b (Meta Code 13B)', tag: 'Local' },
+    { value: 'starcoder2:7b', label: 'starcoder2:7b (BigCode)', tag: 'Local' },
+    { value: 'command-r:35b', label: 'command-r:35b (Cohere Local)', tag: 'Local' }
+  ];
+
+  const ANTHROPIC_CATALOG = [
+    { value: 'claude-3-7-sonnet', label: 'Claude 3.7 Sonnet (Hybrid Reasoning)', tag: 'Frontier' },
+    { value: 'claude-3-5-sonnet', label: 'Claude 3.5 Sonnet (Benchmark Standard)', tag: 'Recommended' },
+    { value: 'claude-3-5-haiku', label: 'Claude 3.5 Haiku (Ultra-fast)', tag: 'Fast' },
+    { value: 'claude-3-opus', label: 'Claude 3 Opus (Research)', tag: 'Legacy' }
+  ];
+
+  const OPENAI_CATALOG = [
+    { value: 'gpt-4o', label: 'GPT-4o (Omni Flagship)', tag: 'Recommended' },
+    { value: 'gpt-4o-mini', label: 'GPT-4o Mini (Fast & Cheap)', tag: 'Fast' },
+    { value: 'o1', label: 'o1 (Deep Reasoning)', tag: 'Reasoning' },
+    { value: 'o3-mini', label: 'o3-mini (High-speed Reasoning)', tag: 'Reasoning' },
+    { value: 'gpt-4.5-preview', label: 'GPT-4.5 Preview', tag: 'Preview' }
+  ];
+
+  const DEEPSEEK_CATALOG = [
+    { value: 'deepseek-r1', label: 'DeepSeek-R1 (Frontier Reasoning)', tag: 'Reasoning' },
+    { value: 'deepseek-v3', label: 'DeepSeek-V3 (Multi-token General)', tag: 'Flagship' },
+    { value: 'deepseek-coder-v2', label: 'DeepSeek Coder V2 (236B MoE)', tag: 'Code' }
+  ];
+
+  const GROQ_CATALOG = [
+    { value: 'llama-3.3-70b-versatile', label: 'Llama 3.3 70B (300+ tok/s)', tag: 'Ultra-fast' },
+    { value: 'deepseek-r1-distill-llama-70b', label: 'DeepSeek R1 Distill 70B', tag: 'Fast Reasoning' },
+    { value: 'mixtral-8x7b-32768', label: 'Mixtral 8x7B (32k context)', tag: 'Fast' }
+  ];
+
+  const GEMINI_CATALOG = [
+    { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro (State-of-the-art coding)', tag: 'Frontier' },
+    { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash (State-of-the-art speed)', tag: 'Fast' },
+    { value: 'gemini-2.0-flash-thinking-exp', label: 'Gemini 2.0 Flash Thinking', tag: 'Reasoning' }
+  ];
+
+  const MISTRAL_CATALOG = [
+    { value: 'mistral-large-latest', label: 'Mistral Large 2 (Flagship)', tag: 'Flagship' },
+    { value: 'codestral-latest', label: 'Codestral (Specialized code)', tag: 'Code' },
+    { value: 'ministral-8b-latest', label: 'Ministral 8B (Compact)', tag: 'Edge' }
+  ];
+
+  const OPENROUTER_CATALOG = [
+    { value: 'anthropic/claude-3.7-sonnet', label: 'OpenRouter: Claude 3.7 Sonnet', tag: 'Proxy' },
+    { value: 'deepseek/deepseek-r1', label: 'OpenRouter: DeepSeek R1', tag: 'Proxy' },
+    { value: 'meta-llama/llama-3.3-70b-instruct', label: 'OpenRouter: Llama 3.3 70B', tag: 'Proxy' },
+    { value: 'openai/gpt-4o', label: 'OpenRouter: GPT-4o', tag: 'Proxy' }
+  ];
+
+  let models: any[] = [];
+  if (provider === 'anthropic') models = ANTHROPIC_CATALOG;
+  else if (provider === 'openai') models = OPENAI_CATALOG;
+  else if (provider === 'deepseek') models = DEEPSEEK_CATALOG;
+  else if (provider === 'groq') models = GROQ_CATALOG;
+  else if (provider === 'gemini') models = GEMINI_CATALOG;
+  else if (provider === 'mistral') models = MISTRAL_CATALOG;
+  else if (provider === 'openrouter') models = OPENROUTER_CATALOG;
+  else {
+    const map = new Map<string, any>();
+    for (const m of liveOllamaModels) {
+      map.set(m, { value: m, label: `${m} (Live Ollama Server)`, tag: 'Live' });
+    }
+    for (const item of OLLAMA_CATALOG) {
+      if (!map.has(item.value)) {
+        map.set(item.value, item);
+      }
+    }
+    models = Array.from(map.values());
+  }
+
+  try {
+    const agentCfg = getAgentConfigData(agentId);
+    const activeModel = agentCfg?.configSchema?.model?.model;
+    if (activeModel && !models.some(m => m.value === activeModel)) {
+      models.unshift({
+        value: activeModel,
+        label: `${activeModel} (Container Active Checkpoint)`,
+        tag: 'Active'
+      });
+    }
+  } catch {}
+
+  res.json({
+    success: true,
+    provider,
+    baseUrl,
+    agentId,
+    modelsCount: models.length,
+    isLiveProbed: liveOllamaModels.length > 0,
+    models
+  });
+});
+
 // In-memory runtime state for live preview interactivity
 let agentStates: Record<string, { status: string; containerId: string; logs: string[] }> = {
   'hermes-agent': {

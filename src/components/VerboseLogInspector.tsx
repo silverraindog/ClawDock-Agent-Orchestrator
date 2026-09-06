@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { 
   Terminal, 
   FileCode2, 
@@ -40,7 +40,7 @@ export const VerboseLogInspector: React.FC<VerboseLogInspectorProps> = ({ data, 
   const isError = data.status === 'error';
   const isSuccess = data.status !== 'error';
 
-  const jsonString = React.useMemo(() => {
+  const jsonString = useMemo(() => {
     try {
       return JSON.stringify(data.rawJson, null, 2);
     } catch {
