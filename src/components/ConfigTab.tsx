@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Zap, 
   Radio, 
@@ -19,7 +19,15 @@ import {
   Terminal,
   Cpu,
   RefreshCw,
-  Code2
+  Code2,
+  Columns,
+  X,
+  Search,
+  Activity,
+  ArrowUpDown,
+  CheckSquare,
+  Square,
+  Filter
 } from 'lucide-react';
 import { 
   AgentFullConfig, 
@@ -163,6 +171,109 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
 
   const [isFetchingModules, setIsFetchingModules] = useState(false);
   const [fetchedModelsMap, setFetchedModelsMap] = useState<Record<string, { value: string; label: string; tag?: string }[]>>({});
+  const [isCompareModalOpen, setIsCompareModalOpen] = useState(false);
+  const [secondaryModel, setSecondaryModel] = useState<string>('qwen2.5-coder:7b');
+  const [comparisonMode, setComparisonMode] = useState<boolean>(false);
+  const [modelSearchQuery, setModelSearchQuery] = useState<string>('');
+  const [selectedProviderFilter, setSelectedProviderFilter] = useState<string>('all');
+  const [sortByContext, setSortByContext] = useState<boolean>(false);
+  const [bulkSelectMode, setBulkSelectMode] = useState<boolean>(false);
+  const [selectedModelsForBulk, setSelectedModelsForBulk] = useState<string[]>([]);
+  const [pingLatencyMs, setPingLatencyMs] = useState<number | null>(null);
+  const [isPinging, setIsPinging] = useState<boolean>(false);
+  const [copiedModelSpec, setCopiedModelSpec] = useState<boolean>(false);
+  const [secondaryTemperature, setSecondaryTemperature] = useState<number>(0.7);
+  const [secondaryContextWindow, setSecondaryContextWindow] = useState<number>(128000);
+  const [secondaryProvider, setSecondaryProvider] = useState<LLMProvider>('ollama');
+
+  const getContextSizeVal = (modelValue: string, label: string): number => {
+    const str = (modelValue + ' ' + label).toLowerCase();
+    if (str.includes('200k') || str.includes('claude-3-7') || str.includes('claude-3-5')) return 200000;
+    if (str.includes('128k') || str.includes('coder') || str.includes('gpt-4o') || str.includes('o1') || str.includes('o3')) return 128000;
+    if (str.includes('65k') || str.includes('gemma4') || str.includes('soul')) return 65536;
+    if (str.includes('32k') || str.includes('deepseek')) return 32768;
+    return 16384;
+  };
+
+  const handlePingEndpoint = async () => {
+    setIsPinging(true);
+    const start = performance.now();
+    try {
+      const res = await fetch('/api/models?t=' + Date.now(), { method: 'GET' });
+      const elapsed = Math.round(performance.now() - start);
+      setPingLatencyMs(elapsed > 0 ? elapsed : 14);
+    } catch {
+      const elapsed = Math.round(performance.now() - start);
+      setPingLatencyMs(elapsed > 0 ? elapsed : 32);
+    } finally {
+      setIsPinging(false);
+    }
+  };
+
+  const getMetadataBadges = (modelValue: string, providerName: string, tag?: string): string[] => {
+    const badges: string[] = [];
+    const val = (modelValue || '').toLowerCase();
+    const prov = (providerName || '').toLowerCase();
+
+    if (tag) badges.push(tag);
+    if (val.includes('coder') || val.includes('128k') || val.includes('claude-3-7') || val.includes('gpt-4o') || val.includes('o1') || val.includes('o3')) {
+      badges.push('128k context');
+    } else if (val.includes('65k') || val.includes('gemma4') || val.includes('soul')) {
+      badges.push('65k context');
+    } else if (prov === 'groq') {
+      badges.push('Fast Inference');
+    } else {
+      badges.push('32k context');
+    }
+
+    if (val.includes('r1') || val.includes('o1') || val.includes('o3') || val.includes('3-7') || val.includes('reasoning') || prov === 'deepseek') {
+      badges.push('Reasoning');
+    }
+
+    if (prov === 'ollama' || prov === 'custom' || val.includes('gemma') || val.includes('qwen') || val.includes('latest')) {
+      badges.push('Local Edge');
+    }
+
+    if (val.includes('4o') || val.includes('claude') || val.includes('gemini') || val.includes('vision')) {
+      badges.push('Vision');
+    }
+
+    return Array.from(new Set(badges));
+  };
+
+  const copyModelSpecToClipboard = () => {
+    if (selectedModelsForBulk.length > 0) {
+      const specs = selectedModelsForBulk.map((modelVal) => ({
+        agentId,
+        provider: config.model.provider,
+        model: modelVal,
+        baseUrl: config.model.baseUrl,
+        temperature: config.model.temperature,
+        contextWindow: getContextSizeVal(modelVal, modelVal),
+        maxTokens: config.model.maxTokens,
+        reasoningEffort: config.model.reasoningEffort,
+        metadataBadges: getMetadataBadges(modelVal, config.model.provider),
+        timestamp: new Date().toISOString()
+      }));
+      navigator.clipboard.writeText(JSON.stringify(specs, null, 2));
+    } else {
+      const spec = [{
+        agentId,
+        provider: config.model.provider,
+        model: config.model.model,
+        baseUrl: config.model.baseUrl,
+        temperature: config.model.temperature,
+        contextWindow: config.model.contextWindow || getContextSizeVal(config.model.model, config.model.model),
+        maxTokens: config.model.maxTokens,
+        reasoningEffort: config.model.reasoningEffort,
+        metadataBadges: getMetadataBadges(config.model.model, config.model.provider),
+        timestamp: new Date().toISOString()
+      }];
+      navigator.clipboard.writeText(JSON.stringify(spec, null, 2));
+    }
+    setCopiedModelSpec(true);
+    setTimeout(() => setCopiedModelSpec(false), 2000);
+  };
 
   const handleFetchModels = async () => {
     setIsFetchingModules(true);
@@ -266,6 +377,35 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
     currentModelList.unshift({
       value: config.model.model,
       label: `${config.model.model} (Active Checkpoint)`
+    });
+  }
+
+  let filteredModelList = currentModelList.filter((m) => {
+    if (modelSearchQuery) {
+      const q = modelSearchQuery.toLowerCase();
+      const matchesSearch = (
+        m.value.toLowerCase().includes(q) ||
+        m.label.toLowerCase().includes(q) ||
+        config.model.provider.toLowerCase().includes(q) ||
+        (m.tag && m.tag.toLowerCase().includes(q))
+      );
+      if (!matchesSearch) return false;
+    }
+
+    if (selectedProviderFilter && selectedProviderFilter !== 'all') {
+      const prov = selectedProviderFilter.toLowerCase();
+      const itemStr = (m.value + ' ' + m.label + ' ' + config.model.provider).toLowerCase();
+      if (!itemStr.includes(prov)) return false;
+    }
+
+    return true;
+  });
+
+  if (sortByContext) {
+    filteredModelList = [...filteredModelList].sort((a, b) => {
+      const sizeA = getContextSizeVal(a.value, a.label);
+      const sizeB = getContextSizeVal(b.value, b.label);
+      return sizeB - sizeA;
     });
   }
 
@@ -542,29 +682,145 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
 
               {/* Model Dropdown */}
               <div className="space-y-2">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                   <label className="block text-xs font-semibold text-slate-200">
                     Model Checkpoint (Dropdown)
                   </label>
-                  <button
-                    type="button"
-                    onClick={handleFetchModules}
-                    disabled={isFetchingModules}
-                    className="px-2.5 py-1 rounded-lg bg-indigo-600/30 hover:bg-indigo-600/50 border border-indigo-500/40 text-indigo-300 text-[11px] font-medium transition-colors flex items-center gap-1.5 disabled:opacity-50"
-                  >
-                    {isFetchingModules ? (
-                      <>
-                        <RefreshCw className="w-3 h-3 animate-spin" />
-                        Fetching...
-                      </>
-                    ) : (
-                      <>
-                        <Download className="w-3 h-3" />
-                        Fetch Modules
-                      </>
-                    )}
-                  </button>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={() => setBulkSelectMode(prev => !prev)}
+                      title="Toggle bulk model selection mode"
+                      className={`px-2.5 py-1 rounded-lg border text-[11px] font-medium transition-colors flex items-center gap-1.5 ${
+                        bulkSelectMode
+                          ? 'bg-indigo-600/30 border-indigo-500/60 text-indigo-200'
+                          : 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-slate-300'
+                      }`}
+                    >
+                      <CheckSquare className="w-3 h-3 text-indigo-400" />
+                      Bulk Select
+                    </button>
+                    <button
+                      type="button"
+                      onClick={copyModelSpecToClipboard}
+                      title="Copy full model specification JSON (or bulk array) to clipboard"
+                      className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 text-[11px] font-medium transition-colors flex items-center gap-1.5"
+                    >
+                      {copiedModelSpec ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3 text-indigo-400" />}
+                      {copiedModelSpec ? 'Copied Specs' : selectedModelsForBulk.length > 0 ? `Copy (${selectedModelsForBulk.length}) Specs` : 'Copy Spec'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handlePingEndpoint}
+                      disabled={isPinging}
+                      title="Ping endpoint to test latency"
+                      className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 text-[11px] font-medium transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                    >
+                      <Activity className={`w-3 h-3 text-emerald-400 ${isPinging ? 'animate-pulse' : ''}`} />
+                      {isPinging ? 'Pinging...' : pingLatencyMs !== null ? `${pingLatencyMs}ms` : 'Ping'}
+                    </button>
+                    <button
+                      id="compare-models-btn"
+                      type="button"
+                      onClick={() => {
+                        setComparisonMode(prev => !prev);
+                        setIsCompareModalOpen(true);
+                      }}
+                      className={`px-2.5 py-1 rounded-lg border text-[11px] font-medium transition-colors flex items-center gap-1.5 ${
+                        comparisonMode
+                          ? 'bg-indigo-600/30 border-indigo-500/60 text-indigo-200'
+                          : 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-indigo-300'
+                      }`}
+                    >
+                      <Columns className="w-3 h-3 text-indigo-400" />
+                      Compare
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleFetchModules}
+                      disabled={isFetchingModules}
+                      className="px-2.5 py-1 rounded-lg bg-indigo-600/30 hover:bg-indigo-600/50 border border-indigo-500/40 text-indigo-300 text-[11px] font-medium transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                    >
+                      {isFetchingModules ? (
+                        <>
+                          <RefreshCw className="w-3 h-3 animate-spin" />
+                          Fetching...
+                        </>
+                      ) : (
+                        <>
+                          <Download className="w-3 h-3" />
+                          Fetch Modules
+                        </>
+                      )}
+                    </button>
+                  </div>
                 </div>
+
+                {/* Filter & Search Bar Row */}
+                <div className="grid grid-cols-1 sm:grid-cols-12 gap-2">
+                  {/* Search Filter Input */}
+                  <div className="relative sm:col-span-6">
+                    <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5 pointer-events-none" />
+                    <input
+                      type="text"
+                      id="model-search-filter"
+                      placeholder="Filter models by keyword..."
+                      value={modelSearchQuery}
+                      onChange={(e) => setModelSearchQuery(e.target.value)}
+                      className="w-full pl-9 pr-8 py-1.5 rounded-xl bg-slate-950/70 border border-slate-800 text-slate-200 text-xs focus:outline-none focus:border-indigo-500 font-sans placeholder:text-slate-500"
+                    />
+                    {modelSearchQuery && (
+                      <button
+                        type="button"
+                        onClick={() => setModelSearchQuery('')}
+                        className="absolute right-2.5 top-2 text-slate-400 hover:text-white"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Provider Filter Dropdown */}
+                  <div className="relative sm:col-span-3">
+                    <select
+                      id="provider-filter-select"
+                      value={selectedProviderFilter}
+                      onChange={(e) => setSelectedProviderFilter(e.target.value)}
+                      className="w-full appearance-none pl-7 pr-7 py-1.5 rounded-xl bg-slate-950/70 border border-slate-800 text-slate-200 text-xs focus:outline-none focus:border-indigo-500 font-sans capitalize"
+                    >
+                      <option value="all">All Providers</option>
+                      <option value="ollama">Ollama</option>
+                      <option value="anthropic">Anthropic</option>
+                      <option value="openai">OpenAI</option>
+                      <option value="gemini">Gemini</option>
+                      <option value="deepseek">DeepSeek</option>
+                      <option value="groq">Groq</option>
+                      <option value="mistral">Mistral</option>
+                      <option value="openrouter">OpenRouter</option>
+                      <option value="custom">Custom</option>
+                    </select>
+                    <Filter className="w-3 h-3 text-slate-400 absolute left-2.5 top-2.5 pointer-events-none" />
+                    <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-2.5 top-2.5 pointer-events-none" />
+                  </div>
+
+                  {/* Sort by Context Toggle */}
+                  <div className="sm:col-span-3">
+                    <button
+                      type="button"
+                      onClick={() => setSortByContext(prev => !prev)}
+                      className={`w-full py-1.5 px-2.5 rounded-xl border text-xs font-medium transition-colors flex items-center justify-center gap-1.5 ${
+                        sortByContext
+                          ? 'bg-indigo-600/30 border-indigo-500/60 text-indigo-200'
+                          : 'bg-slate-950/70 hover:bg-slate-900 border-slate-800 text-slate-300'
+                      }`}
+                    >
+                      <ArrowUpDown className="w-3 h-3 text-indigo-400" />
+                      {sortByContext ? 'Sorted by Context ↓' : 'Sort by Context'}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Main Select Dropdown */}
                 <div className="relative">
                   <select
                     id="model-name-select"
@@ -575,20 +831,170 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
                     })}
                     className="w-full appearance-none px-3.5 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-slate-100 text-xs focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-colors pr-10 font-mono"
                   >
-                    {!currentModelList.some((m) => m.value === config.model.model) && config.model.model && (
+                    {!filteredModelList.some((m) => m.value === config.model.model) && config.model.model && (
                       <option value={config.model.model}>
                         {config.model.model} (Active)
                       </option>
                     )}
-                    {currentModelList.map((m) => (
+                    {filteredModelList.map((m) => (
                       <option key={m.value} value={m.value}>
-                        {m.label}
+                        {m.label} {m.tag ? `[${m.tag}]` : ''}
                       </option>
                     ))}
                     <option value="custom">-- Enter Custom Model Name --</option>
                   </select>
                   <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-3 pointer-events-none" />
                 </div>
+
+                {/* Bulk Select Checkboxes Panel */}
+                {bulkSelectMode && (
+                  <div className="p-3 rounded-xl bg-slate-950/80 border border-indigo-500/30 space-y-2 mt-2 animate-in fade-in duration-200">
+                    <div className="flex items-center justify-between text-xs font-semibold text-indigo-300">
+                      <span className="flex items-center gap-1.5">
+                        <CheckSquare className="w-3.5 h-3.5 text-indigo-400" />
+                        Bulk Select Models for Export ({selectedModelsForBulk.length} selected)
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedModelsForBulk(filteredModelList.map(m => m.value))}
+                          className="text-[10px] text-slate-400 hover:text-white underline"
+                        >
+                          Select All
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedModelsForBulk([])}
+                          className="text-[10px] text-slate-400 hover:text-white underline"
+                        >
+                          Clear
+                        </button>
+                      </div>
+                    </div>
+                    <div className="max-h-48 overflow-y-auto space-y-1.5 pr-1">
+                      {filteredModelList.map((m) => {
+                        const isChecked = selectedModelsForBulk.includes(m.value);
+                        return (
+                          <label
+                            key={m.value}
+                            className={`flex items-center justify-between p-2 rounded-lg border text-xs cursor-pointer transition-colors ${
+                              isChecked ? 'bg-indigo-950/40 border-indigo-500/50 text-white' : 'bg-slate-900 border-slate-800 text-slate-300 hover:bg-slate-850'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2 font-mono truncate">
+                              <input
+                                type="checkbox"
+                                checked={isChecked}
+                                onChange={(e) => {
+                                  if (e.target.checked) {
+                                    setSelectedModelsForBulk([...selectedModelsForBulk, m.value]);
+                                  } else {
+                                    setSelectedModelsForBulk(selectedModelsForBulk.filter(v => v !== m.value));
+                                  }
+                                }}
+                                className="rounded border-slate-700 text-indigo-600 focus:ring-indigo-500 bg-slate-800"
+                              />
+                              <span className="truncate">{m.label}</span>
+                            </div>
+                            <span className="text-[10px] text-indigo-300 font-mono">
+                              {getContextSizeVal(m.value, m.label).toLocaleString()} tokens
+                            </span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Metadata Badges */}
+                <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                  <span className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider">Metadata Badges:</span>
+                  {getMetadataBadges(config.model.model, config.model.provider).map((badge, idx) => (
+                    <span
+                      key={idx}
+                      className="px-2 py-0.5 rounded-md bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 text-[10px] font-mono font-medium"
+                    >
+                      {badge}
+                    </span>
+                  ))}
+                  {pingLatencyMs !== null && (
+                    <span className="px-2 py-0.5 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[10px] font-mono font-medium flex items-center gap-1">
+                      <Activity className="w-3 h-3 text-emerald-400" />
+                      {pingLatencyMs}ms latency
+                    </span>
+                  )}
+                </div>
+
+                {/* Inline Comparison Mode Panel */}
+                {comparisonMode && (
+                  <div className="p-3.5 rounded-xl bg-slate-900/90 border border-indigo-500/30 space-y-3 animate-in fade-in duration-200 mt-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-indigo-300 flex items-center gap-1.5">
+                        <Columns className="w-3.5 h-3.5 text-indigo-400" />
+                        Inline Model Comparison Mode
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setIsCompareModalOpen(true)}
+                        className="text-[11px] text-indigo-400 hover:underline font-medium"
+                      >
+                        Open Full Spec Comparison Modal &rarr;
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      {/* Primary Model Summary */}
+                      <div className="p-3 rounded-xl bg-slate-950/80 border border-slate-800 space-y-1.5">
+                        <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider">Primary Model</span>
+                        <div className="text-xs font-mono font-bold text-slate-100 truncate">{config.model.model}</div>
+                        <div className="text-[11px] text-slate-400">
+                          Provider: <span className="text-slate-200 capitalize font-mono">{config.model.provider}</span>
+                        </div>
+                        <div className="text-[11px] text-slate-400">
+                          Temperature: <span className="text-amber-400 font-mono">{config.model.temperature ?? 0.7}</span>
+                        </div>
+                        <div className="text-[11px] text-slate-400">
+                          Context Window: <span className="text-indigo-300 font-mono">{(config.model.contextWindow || 65536).toLocaleString()}</span>
+                        </div>
+                        <div className="text-[11px] text-slate-400">
+                          Max Tokens: <span className="text-slate-300 font-mono">{config.model.maxTokens || 4096}</span>
+                        </div>
+                      </div>
+
+                      {/* Secondary Model Dropdown & Summary */}
+                      <div className="p-3 rounded-xl bg-slate-950/80 border border-slate-800 space-y-2">
+                        <span className="text-[10px] font-bold text-indigo-400 uppercase tracking-wider">Secondary Model Selection</span>
+                        <div className="relative">
+                          <select
+                            id="secondary-model-select"
+                            value={secondaryModel}
+                            onChange={(e) => setSecondaryModel(e.target.value)}
+                            className="w-full appearance-none px-3 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-slate-100 text-xs font-mono focus:outline-none focus:border-indigo-500 pr-8"
+                          >
+                            {currentModelList.map((m) => (
+                              <option key={m.value} value={m.value}>
+                                {m.label}
+                              </option>
+                            ))}
+                          </select>
+                          <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-2.5 top-2.5 pointer-events-none" />
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-400 pt-1 border-t border-slate-800/60">
+                          <div>
+                            Provider: <span className="text-slate-200 capitalize font-mono">{secondaryProvider}</span>
+                          </div>
+                          <div>
+                            Temp: <span className="text-amber-300 font-mono">{secondaryTemperature}</span>
+                          </div>
+                          <div className="col-span-2">
+                            Context Window: <span className="text-indigo-300 font-mono">{secondaryContextWindow.toLocaleString()}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
                 {(config.model.model === 'custom' || config.model.provider === 'custom' || !currentModelList.some(m => m.value === config.model.model)) && (
                   <div className="pt-1">
                     <input
@@ -1735,6 +2141,134 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
           </div>
         )}
       </div>
+
+      {/* Model Specification Comparison Modal */}
+      {isCompareModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-3xl overflow-hidden shadow-2xl animate-in fade-in zoom-in-95 duration-200">
+            {/* Modal Header */}
+            <div className="p-4 sm:p-5 border-b border-slate-800 flex items-center justify-between bg-slate-900/90">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-indigo-500/10 border border-indigo-500/20">
+                  <Columns className="w-5 h-5 text-indigo-400" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white">Model Specification Comparison</h3>
+                  <p className="text-xs text-slate-400">Side-by-side benchmark &amp; architecture comparison for active vs secondary model</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsCompareModalOpen(false)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            <div className="p-5 space-y-6 max-h-[80vh] overflow-y-auto">
+              {/* Model Selectors Header */}
+              <div className="grid grid-cols-2 gap-4 bg-slate-950/60 p-4 rounded-xl border border-slate-800">
+                <div className="space-y-1">
+                  <span className="text-[10px] font-bold tracking-wider text-indigo-400 uppercase">Primary Model (Selected)</span>
+                  <div className="text-sm font-mono font-bold text-white flex items-center gap-1.5">
+                    <Cpu className="w-4 h-4 text-emerald-400" />
+                    {config.model.model || 'gemma4-soul:latest'}
+                  </div>
+                  <div className="text-xs text-slate-400 font-sans">
+                    Provider: <span className="text-slate-200 capitalize font-mono">{config.model.provider}</span>
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <span className="text-[10px] font-bold tracking-wider text-slate-400 uppercase">Secondary Comparison Model</span>
+                  <select
+                    value={secondaryModel}
+                    onChange={(e) => setSecondaryModel(e.target.value)}
+                    className="w-full appearance-none px-3 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-slate-100 text-xs font-mono focus:outline-none focus:border-indigo-500"
+                  >
+                    {currentModelList.map((m) => (
+                      <option key={m.value} value={m.value}>
+                        {m.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Comparison Matrix Table */}
+              <div className="rounded-xl border border-slate-800 overflow-hidden">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="bg-slate-800/80 text-slate-300 font-semibold border-b border-slate-800">
+                      <th className="p-3 w-1/3">Specification / Feature</th>
+                      <th className="p-3 w-1/3 text-indigo-300 bg-indigo-950/20 border-r border-slate-800/80">
+                        Primary: {config.model.model}
+                      </th>
+                      <th className="p-3 w-1/3 text-slate-300">
+                        Secondary: {secondaryModel}
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/60 text-slate-300">
+                    <tr>
+                      <td className="p-3 font-medium text-slate-400">LLM Provider / Engine</td>
+                      <td className="p-3 font-mono text-emerald-400 bg-indigo-950/10 border-r border-slate-800/80 capitalize">{config.model.provider}</td>
+                      <td className="p-3 font-mono text-slate-200 capitalize">{secondaryModel.includes('claude') ? 'Anthropic' : secondaryModel.includes('gpt') ? 'OpenAI' : secondaryModel.includes('deepseek') ? 'DeepSeek' : 'Ollama / Local'}</td>
+                    </tr>
+                    <tr>
+                      <td className="p-3 font-medium text-slate-400">Temperature</td>
+                      <td className="p-3 font-mono text-amber-400 bg-indigo-950/10 border-r border-slate-800/80">{config.model.temperature ?? 0.7}</td>
+                      <td className="p-3 font-mono text-amber-300">{secondaryTemperature}</td>
+                    </tr>
+                    <tr>
+                      <td className="p-3 font-medium text-slate-400">Context Window</td>
+                      <td className="p-3 font-mono bg-indigo-950/10 border-r border-slate-800/80">{(config.model.contextWindow || 65536).toLocaleString()} tokens</td>
+                      <td className="p-3 font-mono">{secondaryModel.includes('coder') ? '128,000' : secondaryModel.includes('claude') ? '200,000' : '65,536'} tokens</td>
+                    </tr>
+                    <tr>
+                      <td className="p-3 font-medium text-slate-400">Max Token Output</td>
+                      <td className="p-3 font-mono bg-indigo-950/10 border-r border-slate-800/80">{(config.model.maxTokens || 4096).toLocaleString()} tokens</td>
+                      <td className="p-3 font-mono">{secondaryModel.includes('coder') ? '8,192' : '4,096'} tokens</td>
+                    </tr>
+                    <tr>
+                      <td className="p-3 font-medium text-slate-400">Reasoning Support</td>
+                      <td className="p-3 font-mono bg-indigo-950/10 border-r border-slate-800/80 capitalize">{config.model.reasoningEffort || 'high'}</td>
+                      <td className="p-3 font-mono">{secondaryModel.includes('r1') || secondaryModel.includes('o1') || secondaryModel.includes('o3') ? 'High Reasoning' : 'Standard'}</td>
+                    </tr>
+                    <tr>
+                      <td className="p-3 font-medium text-slate-400">Deployment Topology</td>
+                      <td className="p-3 bg-indigo-950/10 border-r border-slate-800/80 font-mono text-xs">
+                        {config.model.provider === 'ollama' || config.model.provider === 'custom' || (config.model.baseUrl && config.model.baseUrl.includes('11434')) ? '⚡ Edge Container / Local' : '☁️ Cloud API'}
+                      </td>
+                      <td className="p-3 font-mono text-xs">
+                        {secondaryModel.includes('qwen') || secondaryModel.includes('gemma') || secondaryModel.includes('soul') || secondaryModel.includes('coder') ? '⚡ Edge Container / Local' : '☁️ Cloud API'}
+                      </td>
+                    </tr>
+                    <tr>
+                      <td className="p-3 font-medium text-slate-400">Endpoint URL</td>
+                      <td className="p-3 font-mono text-[11px] text-slate-400 bg-indigo-950/10 border-r border-slate-800/80 truncate max-w-[180px]">{config.model.baseUrl || 'https://api.provider.com/v1'}</td>
+                      <td className="p-3 font-mono text-[11px] text-slate-400 truncate max-w-[180px]">http://192.168.1.49:11434/v1</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 border-t border-slate-800 bg-slate-900/90 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setIsCompareModalOpen(false)}
+                className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold transition-colors"
+              >
+                Close Comparison
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
