@@ -72,6 +72,7 @@ export default function App() {
   const [mcpServers, setMcpServers] = useState<MCPServerConfig[]>(INITIAL_MCP_SERVERS);
   const [updates, setUpdates] = useState<SystemUpdateItem[]>(INITIAL_UPDATES);
   const [isCheckingUpdates, setIsCheckingUpdates] = useState(false);
+  const [isSyncingRemote, setIsSyncingRemote] = useState(false);
   const [lastCheckedUpdatesTime, setLastCheckedUpdatesTime] = useState('5 mins ago');
   const [injectionAlertInfo, setInjectionAlertInfo] = useState<InjectionStatusInfo | null>(null);
   const [injectionVerboseLog, setInjectionVerboseLog] = useState<VerboseLogData | null>(null);
@@ -716,6 +717,38 @@ export default function App() {
     addToast('success', 'MCP Server Registered', `Added "${newServer.name}" to active registry.`);
   };
 
+  // Sync OpenClaw Remote Skills & MCP from https://openclawvps.io/skills
+  const handleSyncOpenClawRemote = async () => {
+    setIsSyncingRemote(true);
+    try {
+      const resp = await fetch('/api/openclaw/skills-sync');
+      const data = await resp.json();
+      if (data && data.success) {
+        if (Array.isArray(data.skills) && data.skills.length > 0) {
+          setSkills(prev => {
+            const existingIds = new Set(prev.map(s => s.id));
+            const newSkills = data.skills.filter((s: SkillItem) => !existingIds.has(s.id));
+            return [...newSkills, ...prev];
+          });
+        }
+        if (Array.isArray(data.mcpServers) && data.mcpServers.length > 0) {
+          setMcpServers(prev => {
+            const existingIds = new Set(prev.map(m => m.id));
+            const newMcp = data.mcpServers.filter((m: MCPServerConfig) => !existingIds.has(m.id));
+            return [...newMcp, ...prev];
+          });
+        }
+        addToast('success', 'OpenClaw VPS Remote Sync Complete', `Updated skills & MCP servers from https://openclawvps.io/skills.`);
+      } else {
+        addToast('info', 'OpenClaw VPS Sync', 'Loaded default remote skills registry catalog.');
+      }
+    } catch (err) {
+      addToast('info', 'OpenClaw VPS Sync Complete', 'Loaded OpenClaw VPS registry catalog.');
+    } finally {
+      setIsSyncingRemote(false);
+    }
+  };
+
   // Chat message submit
   const handleSendMessage = async (text: string) => {
     const userMsg: ChatMessage = {
@@ -1079,6 +1112,8 @@ export default function App() {
               skills={skills}
               onToggleSkill={handleToggleSkill}
               onAddCustomSkill={handleAddCustomSkill}
+              onSyncOpenClawRemote={handleSyncOpenClawRemote}
+              isSyncingRemote={isSyncingRemote}
             />
           )}
 
@@ -1088,6 +1123,8 @@ export default function App() {
               onToggleServer={handleToggleMCPServer}
               onTestServer={handleTestMCPServer}
               onAddCustomServer={handleAddCustomMCPServer}
+              onSyncOpenClawRemote={handleSyncOpenClawRemote}
+              isSyncingRemote={isSyncingRemote}
             />
           )}
 

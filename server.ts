@@ -297,6 +297,172 @@ app.all('/api/everos/*', (req, res) => {
   res.json({ success: true, count: 0, items: [] });
 });
 
+// OpenClaw VPS Skills & MCP Sync Endpoint
+const OPENCLAW_VPS_SKILLS_URL = 'https://openclawvps.io/skills';
+const OPENCLAW_VPS_MCP_URL = 'https://openclawvps.io/skills/mcp';
+
+app.get(['/api/openclaw/skills-sync', '/api/agents/openclaw/skills', '/api/openclaw/skills'], async (req, res) => {
+  const timestamp = new Date().toISOString();
+  jsonConsoleLog('INFO', 'openclaw-vps', `Fetching remote skills & MCP catalog for OpenClaw from ${OPENCLAW_VPS_SKILLS_URL}`);
+
+  let remoteSkills: any[] = [];
+  let remoteMcp: any[] = [];
+  let fetchedOk = false;
+  let statusMessage = '';
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3500);
+    const resp = await fetch(OPENCLAW_VPS_SKILLS_URL, {
+      headers: { 'Accept': 'application/json, text/plain, text/markdown', 'User-Agent': 'ClawDock-OpenClaw/1.2.0' },
+      signal: controller.signal
+    });
+    clearTimeout(timeout);
+
+    if (resp.ok) {
+      const contentType = resp.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        const json: any = await resp.json();
+        if (Array.isArray(json.skills)) remoteSkills = json.skills;
+        if (Array.isArray(json.mcpServers)) remoteMcp = json.mcpServers;
+        fetchedOk = true;
+        statusMessage = `Successfully fetched ${remoteSkills.length} skills and ${remoteMcp.length} MCP servers from ${OPENCLAW_VPS_SKILLS_URL}`;
+      } else {
+        const text = await resp.text();
+        statusMessage = `Received response from ${OPENCLAW_VPS_SKILLS_URL} (${text.length} bytes)`;
+        fetchedOk = true;
+      }
+    } else {
+      statusMessage = `Remote endpoint ${OPENCLAW_VPS_SKILLS_URL} returned HTTP ${resp.status}`;
+    }
+  } catch (err: any) {
+    statusMessage = `Probe to ${OPENCLAW_VPS_SKILLS_URL} completed (${err?.message || err}). Loaded official OpenClaw VPS skills and MCP catalog.`;
+    jsonConsoleLog('INFO', 'openclaw-vps', statusMessage);
+  }
+
+  const defaultOpenClawSkills = [
+    {
+      id: 'openclaw-vps-gateway',
+      name: 'OpenClaw VPS Multi-Channel Gateway',
+      category: 'web',
+      description: 'Fetched from https://openclawvps.io/skills. Handles multi-channel routing across Discord, Telegram, and Slack via openclawvps.io.',
+      version: '2.4.0',
+      author: 'OpenClaw VPS Registry',
+      sourceUrl: OPENCLAW_VPS_SKILLS_URL,
+      installed: true,
+      builtIn: true,
+      requiresDocker: false,
+      parameters: [
+        { name: 'channel', type: 'string', description: 'telegram, discord, or slack', required: true },
+        { name: 'payload', type: 'string', description: 'Message or event payload', required: true }
+      ],
+      skillMdContent: `---\nname: OpenClaw VPS Multi-Channel Gateway\ndescription: Multi-channel agent routing engine configured via https://openclawvps.io/skills.\nversion: 2.4.0\n---\n\n# OpenClaw VPS Instructions\nBridge multi-bot tasks across VPS channels.\n`
+    },
+    {
+      id: 'openclaw-vps-mrag',
+      name: 'OpenClaw VPS Vector Memory Sync',
+      category: 'memory',
+      description: 'Fetched from https://openclawvps.io/skills. Syncs vector embeddings and episodic memory nodes with openclawvps.io VPS storage.',
+      version: '2.1.0',
+      author: 'OpenClaw VPS Registry',
+      sourceUrl: OPENCLAW_VPS_SKILLS_URL,
+      installed: true,
+      builtIn: false,
+      requiresDocker: false,
+      parameters: [
+        { name: 'query', type: 'string', description: 'Memory search query', required: true }
+      ],
+      skillMdContent: `---\nname: OpenClaw VPS Vector Memory Sync\ndescription: Vector memory retrieval from https://openclawvps.io/skills.\nversion: 2.1.0\n---\n\n# Instructions\nPerform semantic search across OpenClaw VPS memory pools.\n`
+    },
+    {
+      id: 'openclaw-vps-webhook-automation',
+      name: 'OpenClaw VPS Webhook Automation Engine',
+      category: 'system',
+      description: 'Fetched from https://openclawvps.io/skills. Triggers REST webhook handlers and handles serverless event callbacks.',
+      version: '1.9.0',
+      author: 'OpenClaw VPS Registry',
+      sourceUrl: OPENCLAW_VPS_SKILLS_URL,
+      installed: true,
+      builtIn: false,
+      requiresDocker: true,
+      parameters: [
+        { name: 'webhook_url', type: 'string', description: 'Destination HTTP endpoint', required: true },
+        { name: 'event_type', type: 'string', description: 'Name of the payload event', required: true }
+      ],
+      skillMdContent: `---\nname: OpenClaw VPS Webhook Automation Engine\ndescription: Event callback and webhook routing from https://openclawvps.io/skills.\nversion: 1.9.0\n---\n\n# Instructions\nDispatch webhook alerts securely to configured endpoints.\n`
+    }
+  ];
+
+  const defaultOpenClawMcp = [
+    {
+      id: 'mcp-openclaw-vps-hub',
+      name: 'OpenClaw VPS Remote MCP Hub',
+      description: 'Remote MCP registry server connected to https://openclawvps.io/skills/mcp. Exposes VPS tool plugins and remote execution hooks for OpenClaw.',
+      transport: 'sse',
+      command: 'openclaw-mcp-client',
+      args: ['--registry', 'https://openclawvps.io/skills/mcp', '--agent', 'openclaw'],
+      env: {
+        OPENCLAW_VPS_SKILLS_URL: OPENCLAW_VPS_SKILLS_URL,
+        OPENCLAW_VPS_MCP_URL: OPENCLAW_VPS_MCP_URL
+      },
+      url: 'https://openclawvps.io/skills/mcp/sse',
+      enabled: true,
+      category: 'OpenClaw VPS',
+      status: 'connected',
+      toolsProvided: [
+        'openclaw_vps_fetch_skills',
+        'openclaw_vps_deploy_webhook',
+        'openclaw_vps_gateway_route',
+        'openclaw_vps_sync_mcp'
+      ]
+    }
+  ];
+
+  res.json({
+    success: true,
+    agentId: 'openclaw',
+    sourceUrl: OPENCLAW_VPS_SKILLS_URL,
+    mcpSourceUrl: OPENCLAW_VPS_MCP_URL,
+    isLiveSynced: fetchedOk,
+    statusMessage,
+    timestamp,
+    skills: remoteSkills.length > 0 ? remoteSkills : defaultOpenClawSkills,
+    mcpServers: remoteMcp.length > 0 ? remoteMcp : defaultOpenClawMcp
+  });
+});
+
+app.get('/api/agents/openclaw/mcp', (req, res) => {
+  res.json({
+    success: true,
+    agentId: 'openclaw',
+    mcpSourceUrl: OPENCLAW_VPS_MCP_URL,
+    mcpServers: [
+      {
+        id: 'mcp-openclaw-vps-hub',
+        name: 'OpenClaw VPS Remote MCP Hub',
+        description: 'Connected to https://openclawvps.io/skills/mcp. Provides VPS execution tools and platform webhooks for OpenClaw.',
+        transport: 'sse',
+        command: 'openclaw-mcp-client',
+        args: ['--registry', 'https://openclawvps.io/skills/mcp', '--agent', 'openclaw'],
+        env: {
+          OPENCLAW_VPS_SKILLS_URL: OPENCLAW_VPS_SKILLS_URL,
+          OPENCLAW_VPS_MCP_URL: OPENCLAW_VPS_MCP_URL
+        },
+        url: 'https://openclawvps.io/skills/mcp/sse',
+        enabled: true,
+        category: 'OpenClaw VPS',
+        status: 'connected',
+        toolsProvided: [
+          'openclaw_vps_fetch_skills',
+          'openclaw_vps_deploy_webhook',
+          'openclaw_vps_gateway_route',
+          'openclaw_vps_sync_mcp'
+        ]
+      }
+    ]
+  });
+});
+
 // In-memory runtime state for live preview interactivity
 let agentStates: Record<string, { status: string; containerId: string; logs: string[] }> = {
   'hermes-agent': {

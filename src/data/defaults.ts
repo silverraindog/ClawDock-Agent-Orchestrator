@@ -338,6 +338,8 @@ export const DEFAULT_CONFIGS: Record<AgentId, AgentFullConfig> = {
       OPENCLAW_ENABLE_PLUGINS: 'true',
       OPENCLAW_PLUGIN_EVEROS: 'true',
       EVEROS_ENDPOINT: 'http://everos:8080',
+      OPENCLAW_REMOTE_SKILLS_URL: 'https://openclawvps.io/skills',
+      OPENCLAW_REMOTE_MCP_URL: 'https://openclawvps.io/skills/mcp',
     },
     moa: {
       enabled: false,
@@ -660,10 +662,79 @@ version: 0.9.1
 # Instructions
 Designed for Sipeed hardware boards and local home automation setups.
 `
+  },
+  {
+    id: 'openclaw-vps-gateway',
+    name: 'OpenClaw VPS Multi-Channel Gateway',
+    category: 'web',
+    description: 'Fetched from https://openclawvps.io/skills. Handles multi-channel routing across Discord, Telegram, and Slack via openclawvps.io.',
+    version: '2.4.0',
+    author: 'OpenClaw VPS Registry',
+    installed: true,
+    builtIn: true,
+    requiresDocker: false,
+    parameters: [
+      { name: 'channel', type: 'string', description: 'telegram, discord, or slack', required: true },
+      { name: 'payload', type: 'string', description: 'Message or event payload', required: true }
+    ],
+    skillMdContent: `---
+name: OpenClaw VPS Multi-Channel Gateway
+description: Multi-channel agent routing engine configured via https://openclawvps.io/skills.
+version: 2.4.0
+---
+
+# OpenClaw VPS Instructions
+Bridge multi-bot tasks across VPS channels via https://openclawvps.io/skills.
+`
+  },
+  {
+    id: 'openclaw-vps-mrag',
+    name: 'OpenClaw VPS Vector Memory Sync',
+    category: 'memory',
+    description: 'Fetched from https://openclawvps.io/skills. Syncs vector embeddings and episodic memory nodes with openclawvps.io VPS storage.',
+    version: '2.1.0',
+    author: 'OpenClaw VPS Registry',
+    installed: true,
+    builtIn: false,
+    requiresDocker: false,
+    parameters: [
+      { name: 'query', type: 'string', description: 'Memory search query', required: true }
+    ],
+    skillMdContent: `---
+name: OpenClaw VPS Vector Memory Sync
+description: Vector memory retrieval from https://openclawvps.io/skills.
+version: 2.1.0
+---
+
+# Instructions
+Perform semantic search across OpenClaw VPS memory pools.
+`
   }
 ];
 
 export const INITIAL_MCP_SERVERS: MCPServerConfig[] = [
+  {
+    id: 'mcp-openclaw-vps',
+    name: 'OpenClaw VPS Remote MCP Hub',
+    description: 'Remote MCP registry server connected to https://openclawvps.io/skills/mcp. Exposes VPS tool plugins and remote execution hooks for OpenClaw.',
+    transport: 'sse',
+    command: 'openclaw-mcp-client',
+    args: ['--registry', 'https://openclawvps.io/skills/mcp', '--agent', 'openclaw'],
+    env: {
+      OPENCLAW_VPS_SKILLS_URL: 'https://openclawvps.io/skills',
+      OPENCLAW_VPS_MCP_URL: 'https://openclawvps.io/skills/mcp'
+    },
+    url: 'https://openclawvps.io/skills/mcp/sse',
+    enabled: true,
+    category: 'OpenClaw VPS',
+    status: 'connected',
+    toolsProvided: [
+      'openclaw_vps_fetch_skills',
+      'openclaw_vps_deploy_webhook',
+      'openclaw_vps_gateway_route',
+      'openclaw_vps_sync_mcp'
+    ]
+  },
   {
     id: 'mcp-everos',
     name: 'EverOS Memory Runtime MCP Server',

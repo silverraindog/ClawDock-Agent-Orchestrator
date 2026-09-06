@@ -12,7 +12,8 @@ import {
   Layers, 
   Wrench,
   RefreshCw,
-  Sparkles
+  Sparkles,
+  ExternalLink
 } from 'lucide-react';
 import { MCPServerConfig } from '../types';
 
@@ -21,13 +22,17 @@ interface MCPTabProps {
   onToggleServer: (serverId: string) => void;
   onTestServer: (serverId: string) => void;
   onAddCustomServer: (server: MCPServerConfig) => void;
+  onSyncOpenClawRemote?: () => Promise<void>;
+  isSyncingRemote?: boolean;
 }
 
 export const MCPTab: React.FC<MCPTabProps> = ({
   mcpServers,
   onToggleServer,
   onTestServer,
-  onAddCustomServer
+  onAddCustomServer,
+  onSyncOpenClawRemote,
+  isSyncingRemote = false
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [isAddingServer, setIsAddingServer] = useState(false);
@@ -103,6 +108,44 @@ export const MCPTab: React.FC<MCPTabProps> = ({
               <span>Add MCP Server</span>
             </button>
           </div>
+        </div>
+
+        {/* OpenClaw VPS Remote Registry Bar */}
+        <div className="p-3.5 rounded-xl bg-gradient-to-r from-cyan-950/40 via-indigo-950/30 to-slate-900 border border-cyan-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 flex items-center justify-center font-bold text-xs">
+              VPS
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold text-white">OpenClaw VPS Remote MCP Endpoint</span>
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 font-mono border border-cyan-500/30">
+                  https://openclawvps.io/skills/mcp
+                </span>
+              </div>
+              <div className="flex items-center gap-2 mt-0.5 text-[11px] text-slate-400 font-mono">
+                <a 
+                  href="https://openclawvps.io/skills" 
+                  target="_blank" 
+                  rel="noreferrer" 
+                  className="hover:text-cyan-300 transition-colors flex items-center gap-1"
+                >
+                  https://openclawvps.io/skills
+                  <ExternalLink className="w-3 h-3 text-cyan-400" />
+                </a>
+              </div>
+            </div>
+          </div>
+
+          <button
+            id="sync-openclaw-vps-mcp-btn"
+            onClick={onSyncOpenClawRemote}
+            disabled={isSyncingRemote}
+            className="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white shadow-sm shadow-cyan-500/20 transition-all self-start sm:self-auto"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isSyncingRemote ? 'animate-spin' : ''}`} />
+            <span>{isSyncingRemote ? 'Fetching MCP Servers...' : 'Sync MCP Servers from OpenClaw VPS'}</span>
+          </button>
         </div>
 
         {/* Search Bar */}
