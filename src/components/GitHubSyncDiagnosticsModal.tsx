@@ -40,10 +40,19 @@ export const GitHubSyncDiagnosticsModal: React.FC<GitHubSyncDiagnosticsModalProp
   isOpen,
   onClose
 }) => {
-  const [repoUrl, setRepoUrl] = useState<string>('https://github.com/silverraindog/ClawDock-Agent-Orchestrator.git');
-  const [githubToken, setGitHubToken] = useState<string>('');
-  const [commitMessage, setCommitMessage] = useState<string>('Update ClawDock configuration & sync fixes');
-  const [selectedBranch, setSelectedBranch] = useState<string>('main');
+  const [repoUrl, setRepoUrl] = useState<string>(() => {
+    return localStorage.getItem('clawdock_github_repo_url') || 'https://github.com/silverraindog/ClawDock-Agent-Orchestrator.git';
+  });
+  const [githubToken, setGitHubToken] = useState<string>(() => {
+    return localStorage.getItem('clawdock_github_token') || '';
+  });
+  const [commitMessage, setCommitMessage] = useState<string>(() => {
+    return localStorage.getItem('clawdock_github_commit_msg') || 'Update ClawDock configuration & sync fixes';
+  });
+  const [selectedBranch, setSelectedBranch] = useState<string>(() => {
+    return localStorage.getItem('clawdock_github_branch') || 'main';
+  });
+  const [saveNotice, setSaveNotice] = useState<boolean>(false);
   const [isAnalyzing, setIsAnalyzing] = useState<boolean>(false);
   const [isPushing, setIsPushing] = useState<boolean>(false);
   const [validationIssues, setValidationIssues] = useState<ValidationIssue[]>([]);
@@ -52,6 +61,15 @@ export const GitHubSyncDiagnosticsModal: React.FC<GitHubSyncDiagnosticsModalProp
   const [errorCode, setErrorCode] = useState<string | null>(null);
 
   if (!isOpen) return null;
+
+  const handleSaveSettings = () => {
+    localStorage.setItem('clawdock_github_repo_url', repoUrl);
+    localStorage.setItem('clawdock_github_token', githubToken);
+    localStorage.setItem('clawdock_github_commit_msg', commitMessage);
+    localStorage.setItem('clawdock_github_branch', selectedBranch);
+    setSaveNotice(true);
+    setTimeout(() => setSaveNotice(false), 3000);
+  };
 
   const runPreFlightValidation = () => {
     const now = () => new Date().toLocaleTimeString();
@@ -128,6 +146,7 @@ export const GitHubSyncDiagnosticsModal: React.FC<GitHubSyncDiagnosticsModalProp
   };
 
   const executeRealGitSync = async () => {
+    handleSaveSettings();
     const isValid = runPreFlightValidation();
     if (!isValid) {
       setSyncState('error');
@@ -280,24 +299,41 @@ export const GitHubSyncDiagnosticsModal: React.FC<GitHubSyncDiagnosticsModalProp
           </div>
 
           {/* Action Buttons */}
-          <div className="flex items-center gap-3 pt-2">
-            <button
-              onClick={handleValidateOnly}
-              disabled={isAnalyzing || isPushing}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors shadow-sm disabled:opacity-50"
-            >
-              {isAnalyzing ? <RefreshCw className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4 text-indigo-400" />}
-              Validate Only
-            </button>
+          <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+            <div className="flex items-center gap-3">
+              <button
+                onClick={handleValidateOnly}
+                disabled={isAnalyzing || isPushing}
+                className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors shadow-sm disabled:opacity-50"
+              >
+                {isAnalyzing ? <RefreshCw className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4 text-indigo-400" />}
+                Validate Only
+              </button>
 
-            <button
-              onClick={executeRealGitSync}
-              disabled={isAnalyzing || isPushing}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white transition-colors shadow-sm disabled:opacity-50"
-            >
-              {isPushing ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-              Sync &amp; Push to GitHub Now
-            </button>
+              <button
+                onClick={executeRealGitSync}
+                disabled={isAnalyzing || isPushing}
+                className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white transition-colors shadow-sm disabled:opacity-50"
+              >
+                {isPushing ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+                Sync &amp; Push to GitHub Now
+              </button>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleSaveSettings}
+                className="px-3 py-2 rounded-xl text-xs font-medium bg-slate-800 hover:bg-slate-700 text-indigo-300 border border-indigo-500/30 transition-colors flex items-center gap-1.5"
+              >
+                <Check className="w-3.5 h-3.5" />
+                Save Token &amp; Settings
+              </button>
+              {saveNotice && (
+                <span className="text-[11px] text-emerald-400 font-medium animate-pulse">
+                  Saved to cache!
+                </span>
+              )}
+            </div>
           </div>
 
           {/* Validation Results Grid */}
