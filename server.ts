@@ -3489,6 +3489,110 @@ app.post('/api/updates/apply-all', (req, res) => {
   });
 });
 
+// Real Git Sync Endpoint
+app.post('/api/github/sync', async (req, res) => {
+  const { repoUrl, branch = 'main', commitMessage = 'Update configuration & sync via ClawDock', token } = req.body || {};
+  
+  if (!repoUrl) {
+    return res.status(400).json({ success: false, error: 'Repository URL is required' });
+  }
+
+  const logs: Array<{ step: string; output: string; exitCode: number }> = [];
+
+  const runCmd = (cmd: string, args: string[]): Promise<{ stdout: string; stderr: string; code: number }> => {
+    return new Promise(resolve => {
+      const p = spawn(cmd, args, { cwd: process.cwd(), shell: true });
+      let stdout = '';
+      let stderr = '';
+      p.stdout.on('data', d => { stdout += d.toString(); });
+      p.stderr.on('data', d => { stderr += d.toString(); });
+      p.on('close', code => {
+        resolve({ stdout, stderr, code: code ?? 0 });
+      });
+    });
+  };
+
+  try {
+    // 1. git init
+    let resInit = await runCmd('git', ['init']);
+    logs.push({ step: 'git init', output: resInit.stdout + resInit.stderr, exitCode: resInit.code });
+
+    // 2. git config user
+    await runCmd('git', ['config', 'user.name', '"ClawDock Sync Bot"']);
+    await runCmd('git', ['config', 'user.email', '"bot@clawdock.internal"']);
+
+    // 3. format remote URL with token if provided
+    let cleanRepoUrl = repoUrl.trim();
+    if (token && token.trim()) {
+      cleanRepoUrl = cleanRepoUrl.replace(/^https:\/\/([^@]+@)?/, 'https://');
+      cleanRepoUrl = cleanRepoUrl.replace('https://', `https://${token.trim()}@`);
+    }
+    if (!cleanRepoUrl.endsWith('.git')) {
+      cleanRepoUrl += '.git';
+    }
+
+    // 4. remote set-url or add
+    await runCmd('git', ['remote', 'remove', 'origin']);
+    let resAdd = await runCmd('git', ['remote', 'add', 'origin', `"${cleanRepoUrl}"`]);
+    logs.push({ step: 'git remote origin', output: resAdd.stdout + resAdd.stderr, exitCode: resAdd.code });
+
+    // 5. Fetch remote branch first to integrate existing remote commits if any
+    let resFetch = await runCmd('git', ['fetch', 'origin', branch || 'main']);
+    logs.push({ step: 'git fetch origin', output: resFetch.stdout + resFetch.stderr, exitCode: resFetch.code });
+
+    // 6. If fetch succeeded, merge with allow-unrelated-histories and theirs strategy
+    if (resFetch.code === 0) {
+      await runCmd('git', ['config', 'pull.rebase', 'false']);
+      let resMerge = await runCmd('git', ['merge', `origin/${branch || 'main'}`, '--allow-unrelated-histories', '-X', 'theirs', '--no-edit']);
+      logs.push({ step: 'git merge origin (integrate remote)', output: resMerge.stdout + resMerge.stderr, exitCode: resMerge.code });
+    }
+
+    // 7. git add -A
+    let resAddAll = await runCmd('git', ['add', '-A']);
+    logs.push({ step: 'git add -A', output: resAddAll.stdout + resAddAll.stderr, exitCode: resAddAll.code });
+
+    // 8. Check status before commit
+    let resStatus = await runCmd('git', ['status', '--porcelain']);
+    if (resStatus.stdout.trim().length > 0) {
+      const safeMsg = (commitMessage || 'Update configuration').replace(/"/g, '\\"');
+      let resCommit = await runCmd('git', ['commit', '-m', `"${safeMsg}"`]);
+      logs.push({ step: 'git commit', output: resCommit.stdout + resCommit.stderr, exitCode: resCommit.code });
+    } else {
+      logs.push({ step: 'git commit', output: 'Working tree clean, no new changes to commit.', exitCode: 0 });
+    }
+
+    // 9. git branch -M branch
+    await runCmd('git', ['branch', '-M', branch || 'main']);
+
+    // 10. git push origin branch (with fallback to force push if divergent)
+    let resPush = await runCmd('git', ['push', '-u', 'origin', branch || 'main']);
+    logs.push({ step: `git push origin ${branch || 'main'}`, output: resPush.stdout + resPush.stderr, exitCode: resPush.code });
+
+    if (resPush.code !== 0) {
+      // Try force with lease as robust fallback for divergent branches
+      let resForcePush = await runCmd('git', ['push', '-u', 'origin', branch || 'main', '--force-with-lease']);
+      logs.push({ step: `git push origin ${branch || 'main'} (--force-with-lease)`, output: resForcePush.stdout + resForcePush.stderr, exitCode: resForcePush.code });
+      if (resForcePush.code === 0) {
+        resPush = resForcePush;
+      }
+    }
+
+    const success = resPush.code === 0;
+    return res.json({
+      success,
+      logs,
+      message: success ? 'Successfully pulled, merged, and pushed to GitHub!' : 'Push failed. Check output logs.'
+    });
+
+  } catch (err: any) {
+    return res.status(500).json({
+      success: false,
+      error: err.message || 'Internal sync error',
+      logs
+    });
+  }
+});
+
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({

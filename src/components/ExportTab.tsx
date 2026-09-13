@@ -9,8 +9,10 @@ import {
   Container, 
   CheckCircle2, 
   ExternalLink,
-  Code2
+  Code2,
+  GitBranch
 } from 'lucide-react';
+import { GitHubSyncDiagnosticsModal } from './GitHubSyncDiagnosticsModal';
 
 interface ExportFile {
   path: string;
@@ -24,6 +26,7 @@ export const ExportTab: React.FC = () => {
   const [selectedPath, setSelectedPath] = useState<string>('python_backend/main.py');
   const [copied, setCopied] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [showSyncDiagnostics, setShowSyncDiagnostics] = useState(false);
 
   useEffect(() => {
     fetch('/api/export/code')
@@ -79,7 +82,15 @@ export const ExportTab: React.FC = () => {
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              onClick={() => setShowSyncDiagnostics(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white transition-colors shadow-sm"
+              title="Open GitHub Sync Validator & Error Diagnostics"
+            >
+              <GitBranch className="w-3.5 h-3.5" />
+              GitHub Sync Diagnostics
+            </button>
             <a
               href="/api/export/archive.tar.gz"
               download="clawdock-bot-admin.tar.gz"
@@ -216,6 +227,11 @@ export const ExportTab: React.FC = () => {
           )}
         </div>
       </div>
+
+      <GitHubSyncDiagnosticsModal
+        isOpen={showSyncDiagnostics}
+        onClose={() => setShowSyncDiagnostics(false)}
+      />
     </div>
   );
 };
