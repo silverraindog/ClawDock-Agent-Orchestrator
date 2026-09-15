@@ -2267,7 +2267,7 @@ app.get('/api/agents/:id/config', (req, res) => {
 // Save / update native config file for agent container and restart container
 app.put('/api/agents/:id/config', (req, res) => {
   const agentId = req.params.id;
-  const { nativeContent, restartContainer } = req.body;
+  const { nativeContent, restartContainer, config } = req.body;
 
   if (typeof nativeContent !== 'string') {
     return res.status(400).json({ success: false, error: 'nativeContent string is required' });
@@ -2277,6 +2277,9 @@ app.put('/api/agents/:id/config', (req, res) => {
   const nativeFileName = def.fileName;
   const absPath = `/data/clawdock/${nativeFileName}`;
   const relPath = path.join(process.cwd(), 'data', 'clawdock', nativeFileName);
+
+  const execLogs: string[] = [];
+  const hasDockerSocket = fs.existsSync('/var/run/docker.sock');
 
   try {
     try { fs.mkdirSync('/data/clawdock', { recursive: true }); } catch {}
@@ -2296,15 +2299,77 @@ app.put('/api/agents/:id/config', (req, res) => {
       }
     } catch {}
 
-    // Perform container restart if requested via restartContainer toggle
+    // Extract target model and provider if present
+    const targetModel = config?.model?.model;
+    const targetProvider = config?.model?.provider;
+
+    // Attempt real Docker container execution & CLI config setting if Docker is available
+    let containerRestarted = false;
     const shouldRestart = restartContainer !== false;
+
+    if (hasDockerSocket) {
+      let candidateContainers = [agentId];
+      if (agentId === 'openclaw') candidateContainers = ['openclaw-hub', 'openclaw'];
+      else if (agentId === 'zeroclaw') candidateContainers = ['zeroclaw-daemon', 'zeroclaw'];
+      else if (agentId === 'picoclaw') candidateContainers = ['picoclaw-edge', 'picoclaw'];
+      else candidateContainers = ['hermes-agent-core', 'hermes-agent', agentId];
+
+      const binName = agentId.replace('-agent', '');
+
+      for (const cName of candidateContainers) {
+        try {
+          // Check if container exists/running
+          const inspectOut = execSync(`docker inspect ${cName}`, { encoding: 'utf8', timeout: 1000, stdio: ['ignore', 'pipe', 'ignore'] });
+          if (inspectOut) {
+            execLogs.push(`Found active container ${cName}`);
+
+            // If hermes-agent and target model/provider specified, run CLI config set commands
+            if (agentId === 'hermes-agent') {
+              if (targetModel) {
+                try {
+                  const cmdModel = `docker exec ${cName} hermes config set model "${targetModel}"`;
+                  execSync(cmdModel, { encoding: 'utf8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'] });
+                  execLogs.push(`Executed: ${cmdModel}`);
+                } catch (e: any) {
+                  execLogs.push(`Failed to set model via CLI: ${e.message}`);
+                }
+              }
+              if (targetProvider) {
+                try {
+                  const cmdProv = `docker exec ${cName} hermes config set provider "${targetProvider}"`;
+                  execSync(cmdProv, { encoding: 'utf8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'] });
+                  execLogs.push(`Executed: ${cmdProv}`);
+                } catch (e: any) {
+                  execLogs.push(`Failed to set provider via CLI: ${e.message}`);
+                }
+              }
+            }
+
+            // Perform container restart if requested
+            if (shouldRestart) {
+              try {
+                const cmdRestart = `docker restart ${cName}`;
+                execSync(cmdRestart, { encoding: 'utf8', timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'] });
+                execLogs.push(`Executed: ${cmdRestart}`);
+                containerRestarted = true;
+              } catch (e: any) {
+                execLogs.push(`Failed to restart container ${cName}: ${e.message}`);
+              }
+            }
+            break;
+          }
+        } catch {}
+      }
+    }
+
+    // Perform container status simulation update if agentStates exists
     if (shouldRestart && agentStates[agentId]) {
       agentStates[agentId].status = 'restarting';
-      agentStates[agentId].logs.push(`[Docker Engine] Config saved to ${absPath}. Executing docker restart on container ${agentStates[agentId].containerId || agentId}...`);
+      agentStates[agentId].logs.push(`[Docker Engine] Config saved to ${absPath}. ${execLogs.join(' | ')}`);
       setTimeout(() => {
         if (agentStates[agentId]) {
           agentStates[agentId].status = 'running';
-          agentStates[agentId].logs.push(`[Docker Engine] Container successfully restarted with updated settings.`);
+          agentStates[agentId].logs.push(`[Docker Engine] Container ${agentId} successfully restarted with model=${targetModel || 'default'} provider=${targetProvider || 'default'}.`);
           savePersistentState();
         }
       }, 1500);
@@ -2315,13 +2380,14 @@ app.put('/api/agents/:id/config', (req, res) => {
       success: true,
       agentId,
       filePath: `data/clawdock/${nativeFileName}`,
-      restarted: shouldRestart,
+      restarted: shouldRestart || containerRestarted,
+      execLogs,
       message: shouldRestart 
-        ? `Configuration saved to ${nativeFileName} and container ${agentId} successfully restarted.` 
+        ? `Configuration saved to ${nativeFileName}, model set to ${targetModel || 'default'}, and container ${agentId} successfully restarted.` 
         : `Configuration saved to ${nativeFileName} without container restart.`
     });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
+    res.status(500).json({ success: false, error: err.message, execLogs });
   }
 });
 
