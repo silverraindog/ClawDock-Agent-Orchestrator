@@ -90,6 +90,40 @@ class DockerManager:
             "environment": "cloud_container"
         }
 
+    def _get_container(self, agent_id: str, spec: Dict[str, Any]):
+        if not self.client:
+            return None
+        # 1. Try exact container name
+        try:
+            return self.client.containers.get(spec["container_name"])
+        except Exception:
+            pass
+
+        # 2. Try alternate common names for hermes-agent
+        alternates = [spec["container_name"], "hermes-agent", "hermes", agent_id]
+        for alt in alternates:
+            try:
+                return self.client.containers.get(alt)
+            except Exception:
+                pass
+
+        # 3. Search all containers for partial match or image match
+        try:
+            containers = self.client.containers.list(all=True)
+            keywords = [agent_id, agent_id.replace("-agent", ""), "hermes", spec["container_name"]]
+            for c in containers:
+                cname = c.name.lower()
+                if any(kw in cname for kw in keywords):
+                    return c
+                tags = c.image.tags if hasattr(c.image, 'tags') and c.image.tags else []
+                img_base = spec["image"].split(":")[0]
+                if any(img_base in t for t in tags):
+                    return c
+        except Exception as e:
+            logger.error(f"Error searching container for {agent_id}: {e}")
+
+        return None
+
     def detect_agent(self, agent_id: str) -> Dict[str, Any]:
         agent_spec = AGENT_DOCKER_IMAGES.get(agent_id)
         if not agent_spec:
@@ -97,17 +131,16 @@ class DockerManager:
 
         if self.client:
             try:
-                containers = self.client.containers.list(all=True)
-                for c in containers:
-                    if agent_spec["container_name"] in c.name or agent_spec["image"] in (c.image.tags if hasattr(c.image, 'tags') else []):
-                        return {
-                            "status": "running" if c.status == "running" else "stopped",
-                            "containerId": c.id[:12],
-                            "containerName": c.name,
-                            "image": agent_spec["image"],
-                            "state": c.status,
-                            "created": c.attrs.get("Created", "")
-                        }
+                c = self._get_container(agent_id, agent_spec)
+                if c:
+                    return {
+                        "status": "running" if c.status == "running" else "stopped",
+                        "containerId": c.id[:12],
+                        "containerName": c.name,
+                        "image": agent_spec["image"],
+                        "state": c.status,
+                        "created": c.attrs.get("Created", "")
+                    }
             except Exception as e:
                 logger.error(f"Docker inspection error: {e}")
 
@@ -146,9 +179,12 @@ class DockerManager:
 
         if self.client:
             try:
-                container = self.client.containers.get(spec["container_name"])
-                container.start()
-                return {"success": True, "status": "running", "containerId": container.id[:12]}
+                container = self._get_container(agent_id, spec)
+                if container:
+                    container.start()
+                    return {"success": True, "status": "running", "containerId": container.id[:12], "containerName": container.name}
+                else:
+                    raise Exception("Container not found")
             except Exception as e:
                 logger.info(f"Container get failed, creating new: {e}")
                 try:
@@ -160,7 +196,7 @@ class DockerManager:
                         volumes=spec["volumes"],
                         environment=spec["env_defaults"]
                     )
-                    return {"success": True, "status": "running", "containerId": c.id[:12]}
+                    return {"success": True, "status": "running", "containerId": c.id[:12], "containerName": c.name}
                 except Exception as err:
                     return {"success": False, "error": str(err)}
 
@@ -178,9 +214,12 @@ class DockerManager:
 
         if self.client:
             try:
-                container = self.client.containers.get(spec["container_name"])
-                container.stop(timeout=10)
-                return {"success": True, "status": "stopped"}
+                container = self._get_container(agent_id, spec)
+                if container:
+                    container.stop(timeout=10)
+                    return {"success": True, "status": "stopped"}
+                else:
+                    return {"success": False, "error": "Container not found"}
             except Exception as e:
                 return {"success": False, "error": str(e)}
 
@@ -193,36 +232,34 @@ class DockerManager:
 
         if self.client:
             try:
-                container = self.client.containers.get(spec["container_name"])
-                if container.status != "running":
-                    container.start()
-                    return {
-                        "success": True,
-                        "status": "running",
-                        "action": "started",
-                        "containerId": container.id[:12],
-                        "message": f"Started stopped container {spec['container_name']}"
-                    }
+                container = self._get_container(agent_id, spec)
+                if container:
+                    if container.status != "running":
+                        container.start()
+                        return {
+                            "success": True,
+                            "status": "running",
+                            "action": "started",
+                            "containerId": container.id[:12],
+                            "containerName": container.name,
+                            "message": f"Started stopped container {container.name}"
+                        }
+                    else:
+                        container.restart(timeout=10)
+                        return {
+                            "success": True,
+                            "status": "running",
+                            "action": "restarted",
+                            "containerId": container.id[:12],
+                            "containerName": container.name,
+                            "message": f"Restarted container {container.name}"
+                        }
                 else:
-                    container.restart(timeout=10)
-                    return {
-                        "success": True,
-                        "status": "running",
-                        "action": "restarted",
-                        "containerId": container.id[:12],
-                        "message": f"Restarted container {spec['container_name']}"
-                    }
+                    logger.info(f"Container restart get failed, triggering start for {agent_id}")
+                    return self.start_container(agent_id)
             except Exception as e:
-                logger.info(f"Container restart get failed, triggering start: {e}")
+                logger.info(f"Container restart error: {e}")
                 return self.start_container(agent_id)
-
-        return {
-            "success": True,
-            "status": "running",
-            "action": "restarted",
-            "containerId": f"c_{agent_id[:6]}9a",
-            "message": f"Restarted {spec['container_name']} on port {spec['default_port']}"
-        }
 
     def doctor_fix(self, agent_id: str) -> Dict[str, Any]:
         spec = AGENT_DOCKER_IMAGES.get(agent_id)

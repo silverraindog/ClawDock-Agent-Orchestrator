@@ -2746,7 +2746,23 @@ app.post('/api/agents/:id/stop', (req, res) => {
 app.get('/api/agents/:id/logs', (req, res) => {
   const agentId = req.params.id;
   const current = agentStates[agentId];
-  res.json({ logs: current ? current.logs : [] });
+  let logs: string[] = current && Array.isArray(current.logs) ? [...current.logs] : [];
+
+  // Try fetching actual docker container logs if socket is available
+  const hasDockerSocket = fs.existsSync('/var/run/docker.sock');
+  if (hasDockerSocket && current && current.containerId) {
+    try {
+      const dockerLogs = execSync(`docker logs --tail 50 ${current.containerId}`, { encoding: 'utf8', timeout: 1500, stdio: ['ignore', 'pipe', 'ignore'] });
+      if (dockerLogs) {
+        const lines = dockerLogs.split(/\r?\n/).filter(Boolean);
+        logs = [...logs, ...lines.map(l => `[Docker Daemon] ${l}`)];
+      }
+    } catch {}
+  }
+
+  // Ensure latest 50 lines
+  const latest50 = logs.slice(-50);
+  res.json({ logs: latest50 });
 });
 
 // Agent chat simulation / execution
