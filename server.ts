@@ -2264,19 +2264,104 @@ app.get('/api/agents/:id/config', (req, res) => {
   }
 });
 
+function generateHermesYaml(cfg: any): string {
+  const m = cfg?.model || {};
+  const sys = cfg?.system || {};
+  const moa = cfg?.moa || {};
+  const sec = cfg?.security || {};
+  const sto = cfg?.storage || {};
+  const env = cfg?.customEnv || {};
+
+  const provider = m?.provider && m.provider.trim() !== '' ? m.provider : 'anthropic';
+  const model = m?.model && m.model.trim() !== '' ? m.model : 'claude-3-7-sonnet';
+  const apiKey = m?.apiKey || process.env.ANTHROPIC_API_KEY || process.env.GEMINI_API_KEY || '';
+
+  return `version: "1.0.0"
+agent_id: "${cfg?.agentId || 'hermes-agent'}"
+agent_name: "${sys?.agentName || 'Hermes Code Assistant'}"
+persona: "${sys?.personaName || 'Hermes Prime'}"
+system_preset: "${sys?.preset || 'engineer'}"
+system_prompt: "${(sys?.systemPrompt || '').replace(/"/g, '\\"')}"
+
+model:
+  provider: "${provider}"
+  model: "${model}"
+  api_key: "${apiKey}"
+  temperature: ${m?.temperature ?? 0.3}
+  reasoning_effort: "${m?.reasoningEffort || 'medium'}"
+  max_tokens: ${m?.maxTokens ?? 8192}
+  context_window: ${m?.contextWindow ?? 131072}
+  top_p: ${m?.topP ?? 0.95}
+
+channels:
+  telegram:
+    enabled: true
+    bot_token: "env:TELEGRAM_BOT_TOKEN"
+    allowed_users: ["@developer", "@admin"]
+    mode: "polling"
+  discord:
+    enabled: false
+  webhook:
+    enabled: true
+    port: 8080
+    auth_token: "hermes_secret_token_99"
+
+security:
+  sandbox_mode: "${sec?.sandboxMode || 'docker_isolated'}"
+  allowed_directories:
+    - "/workspace"
+    - "/tmp/agent-scratch"
+    - "/var/log/hermes"
+  max_execution_time_sec: ${sec?.maxExecutionTimeSec ?? 120}
+  block_network_access: ${sec?.blockNetworkAccess ?? false}
+  require_approval_for_commands: ${sec?.requireApprovalForCommands ?? false}
+
+storage:
+  memory_backend: "${sto?.memoryBackend || 'everos'}"
+  db_path: "${sto?.dbPath || '/data/everos/memories'}"
+  auto_summarize_interval: ${sto?.autoSummarizeInterval ?? 25}
+  max_history_turns: ${sto?.maxHistoryTurns ?? 100}
+  vector_db_url: "${sto?.vectorDbUrl || 'http://everos:8080'}"
+
+moa:
+  enabled: ${moa?.enabled ?? true}
+  proposer_models:
+${(moa?.proposerModels || ['claude-3-7-sonnet', 'deepseek-r1']).map((p: string) => `    - "${p}"`).join('\n')}
+  aggregator_model: "${moa?.aggregatorModel || 'claude-3-7-sonnet'}"
+  rounds: ${moa?.rounds ?? 2}
+  temperature_spread: ${moa?.temperatureSpread ?? 0.3}
+  consensus_threshold: ${moa?.consensusThreshold ?? 0.85}
+
+env:
+${Object.entries(env).map(([k, v]) => `  ${k}: "${v}"`).join('\n')}
+`;
+}
+
 // Save / update native config file for agent container and restart container
 app.put('/api/agents/:id/config', (req, res) => {
   const agentId = req.params.id;
-  const { nativeContent, restartContainer, config } = req.body;
+  const { nativeContent: rawNativeContent, restartContainer, config } = req.body;
 
-  if (typeof nativeContent !== 'string') {
-    return res.status(400).json({ success: false, error: 'nativeContent string is required' });
+  if (typeof rawNativeContent !== 'string' && !config) {
+    return res.status(400).json({ success: false, error: 'nativeContent string or config object is required' });
   }
 
   const def = DEFAULT_NATIVE_FILES[agentId] || DEFAULT_NATIVE_FILES['hermes-agent'];
   const nativeFileName = def.fileName;
   const absPath = `/data/clawdock/${nativeFileName}`;
   const relPath = path.join(process.cwd(), 'data', 'clawdock', nativeFileName);
+
+  let nativeContent = rawNativeContent;
+  if (agentId === 'hermes-agent' && config) {
+    nativeContent = generateHermesYaml(config);
+  } else if (def.format === 'yaml' && nativeContent && nativeContent.trim().startsWith('{')) {
+    try {
+      const parsed = JSON.parse(nativeContent);
+      if (agentId === 'hermes-agent') {
+        nativeContent = generateHermesYaml(parsed);
+      }
+    } catch {}
+  }
 
   const execLogs: string[] = [];
   const hasDockerSocket = fs.existsSync('/var/run/docker.sock');
@@ -2300,8 +2385,9 @@ app.put('/api/agents/:id/config', (req, res) => {
     } catch {}
 
     // Extract target model and provider if present
-    const targetModel = config?.model?.model;
-    const targetProvider = config?.model?.provider;
+    const targetModel = config?.model?.model || 'claude-3-7-sonnet';
+    const targetProvider = config?.model?.provider || 'anthropic';
+    const targetApiKey = config?.model?.apiKey || '';
 
     // Attempt real Docker container execution & CLI config setting if Docker is available
     let containerRestarted = false;
@@ -2323,8 +2409,20 @@ app.put('/api/agents/:id/config', (req, res) => {
           if (inspectOut) {
             execLogs.push(`Found active container ${cName}`);
 
-            // If hermes-agent and target model/provider specified, run CLI config set commands
+            // Write config file directly into container paths so hermes finds it immediately
             if (agentId === 'hermes-agent') {
+              try {
+                execSync(`docker exec -i ${cName} sh -c "mkdir -p /root/.hermes /opt/hermes /etc/hermes && cat > /root/.hermes/config.yaml && cp /root/.hermes/config.yaml /opt/hermes/config.yaml && cp /root/.hermes/config.yaml /workspace/hermes.yaml"`, {
+                  input: nativeContent,
+                  encoding: 'utf8',
+                  timeout: 3000,
+                  stdio: ['pipe', 'pipe', 'ignore']
+                });
+                execLogs.push(`Wrote hermes.yaml configuration to container ${cName} (/root/.hermes/config.yaml)`);
+              } catch (e: any) {
+                execLogs.push(`Failed to write config into container: ${e.message}`);
+              }
+
               if (targetModel) {
                 try {
                   const cmdModel = `docker exec ${cName} hermes config set model "${targetModel}"`;
@@ -2341,6 +2439,15 @@ app.put('/api/agents/:id/config', (req, res) => {
                   execLogs.push(`Executed: ${cmdProv}`);
                 } catch (e: any) {
                   execLogs.push(`Failed to set provider via CLI: ${e.message}`);
+                }
+              }
+              if (targetApiKey) {
+                try {
+                  const cmdKey = `docker exec ${cName} hermes config set api_key "${targetApiKey}"`;
+                  execSync(cmdKey, { encoding: 'utf8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'] });
+                  execLogs.push(`Executed: docker exec ${cName} hermes config set api_key [masked]`);
+                } catch (e: any) {
+                  execLogs.push(`Failed to set API key via CLI: ${e.message}`);
                 }
               }
             }
