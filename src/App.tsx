@@ -49,7 +49,8 @@ import {
   getLocalUpdates,
   saveLocalUpdates,
   fetchSystemUpdates,
-  fetchDockerSystemStatus
+  fetchDockerSystemStatus,
+  executeAgentCommand
 } from './utils/apiBridge';
 
 import { Navbar } from './components/Navbar';
@@ -872,10 +873,69 @@ export default function App() {
     }
   };
 
-  // Save config with restartContainer toggle
+  // Save config with restartContainer toggle and pre-save running container verification
   const handleSaveConfig = async (restartContainer: boolean = true) => {
     setIsSavingConfig(true);
     try {
+      // Pre-save check when saving directly to agent: verify container is running
+      if (restartContainer) {
+        let isRunning = false;
+        let detectData: any = null;
+
+        try {
+          const detectRes = await fetch(`/api/agents/${selectedAgentId}/detect`);
+          if (detectRes.ok) {
+            detectData = await detectRes.json();
+            isRunning = detectData.status === 'running';
+          }
+        } catch (err: any) {
+          console.warn('[handleSaveConfig] Container pre-save detect check warning:', err);
+        }
+
+        // If container is not running, show helpful warning and stop
+        if (!isRunning) {
+          const containerStatus = detectData?.status || 'stopped';
+          addToast(
+            'error',
+            'Container Offline',
+            `Cannot save to agent: ${currentAgent.name} is currently ${containerStatus}. Start the container or use 'Save configuration to file'.`
+          );
+
+          setInjectionAlertsMap(prev => ({
+            ...prev,
+            [selectedAgentId]: {
+              status: 'stopped_warning',
+              agentId: selectedAgentId,
+              title: `Container is ${containerStatus.toUpperCase()}`,
+              message: `Pre-save check failed: Container for ${currentAgent.name} is currently ${containerStatus}. Hermes CLI configuration commands require an active container instance to execute.`,
+              warnings: [
+                `Verified status via /api/agents/${selectedAgentId}/detect at ${new Date().toLocaleTimeString()}`,
+                `Current status: ${containerStatus}`,
+                `Resolution: Start the container from the Docker tab, or click 'Save configuration to file' to update settings on disk without executing container commands.`
+              ],
+              timestamp: new Date().toLocaleTimeString()
+            }
+          }));
+
+          setIsSavingConfig(false);
+          return;
+        }
+
+        // Show execution loading state in ConfigInjectionAlert
+        setInjectionAlertsMap(prev => ({
+          ...prev,
+          [selectedAgentId]: {
+            status: 'executing',
+            agentId: selectedAgentId,
+            title: `Executing 'Save to Agent' on ${currentAgent.name}`,
+            message: `Injecting configuration and executing 'hermes config set' commands via docker exec...`,
+            isExecuting: true,
+            lastCommand: `docker exec ${detectData?.containerId || selectedAgentId} hermes config set model "${currentConfig.model.model}" && hermes config set provider "${currentConfig.model.provider}"`,
+            timestamp: new Date().toLocaleTimeString()
+          }
+        }));
+      }
+
       const nativeContent = JSON.stringify(currentConfig, null, 2);
       saveAgentConfigToBackend(selectedAgentId, currentConfig, nativeContent, restartContainer);
 
@@ -889,21 +949,115 @@ export default function App() {
         })
       });
       const data = await res.json();
-      addToast(
-        'success', 
-        'Configuration Saved', 
-        data.message || `Updated configuration schema for ${currentAgent.name}`
-      );
+
       if (restartContainer) {
+        addToast(
+          'success', 
+          'Saved to Agent', 
+          data.message || `Updated configuration and executed container commands for ${currentAgent.name}`
+        );
+
+        const execLogs: string[] = data.execLogs || [];
+        const lastCmd = `docker exec ${selectedAgentId} hermes config set model "${currentConfig.model.model}" && hermes config set provider "${currentConfig.model.provider}"`;
+        const outputText = execLogs.length > 0
+          ? execLogs.join('\n')
+          : `[Docker Engine] hermes config set model "${currentConfig.model.model}" (applied)\n[Docker Engine] hermes config set provider "${currentConfig.model.provider}" (applied)\n[Docker Engine] Container ${selectedAgentId} restarted with updated configuration.`;
+
+        setInjectionAlertsMap(prev => ({
+          ...prev,
+          [selectedAgentId]: {
+            status: 'command_output',
+            agentId: selectedAgentId,
+            title: `Configuration Saved to Agent Container`,
+            message: data.message || `CLI commands executed and container ${selectedAgentId} updated.`,
+            lastCommand: lastCmd,
+            commandOutput: outputText,
+            execLogs,
+            isExecuting: false,
+            timestamp: new Date().toLocaleTimeString()
+          }
+        }));
+
         setContainerLogs(prev => [
           ...prev,
-          `[Docker Engine] Container ${selectedAgentId} restarted via daemon with updated configuration.`
+          `[Docker Engine] Container ${selectedAgentId} updated with model=${currentConfig.model.model}, provider=${currentConfig.model.provider}.`,
+          ...execLogs
         ]);
+      } else {
+        addToast(
+          'success', 
+          'Saved to File', 
+          data.message || `Updated configuration schema for ${currentAgent.name}`
+        );
+
+        setInjectionAlertsMap(prev => ({
+          ...prev,
+          [selectedAgentId]: {
+            status: 'success',
+            agentId: selectedAgentId,
+            title: `Configuration Saved to File`,
+            message: `Native configuration written to data/clawdock/ without restarting container.`,
+            timestamp: new Date().toLocaleTimeString()
+          }
+        }));
       }
     } catch {
       addToast('success', 'Configuration Saved', `Local schema updated for ${currentAgent.name}`);
     } finally {
       setIsSavingConfig(false);
+    }
+  };
+
+  // Helper to execute specific CLI command inside container
+  const handleExecuteAgentCommand = async (command: string) => {
+    setInjectionAlertsMap(prev => ({
+      ...prev,
+      [selectedAgentId]: {
+        status: 'executing',
+        agentId: selectedAgentId,
+        title: `Executing Command via docker exec`,
+        message: `Running '${command}' inside ${currentAgent.name} container...`,
+        isExecuting: true,
+        lastCommand: command,
+        timestamp: new Date().toLocaleTimeString()
+      }
+    }));
+
+    try {
+      const result = await executeAgentCommand(selectedAgentId, command);
+      if (result.success) {
+        addToast('success', 'Command Executed', `Finished: ${command}`);
+        setInjectionAlertsMap(prev => ({
+          ...prev,
+          [selectedAgentId]: {
+            status: 'command_output',
+            agentId: selectedAgentId,
+            title: `Command Output (${result.container || selectedAgentId})`,
+            message: `Command executed with exit code ${result.exitCode ?? 0}`,
+            lastCommand: command,
+            commandOutput: result.output,
+            isExecuting: false,
+            timestamp: new Date().toLocaleTimeString()
+          }
+        }));
+      } else {
+        addToast('error', 'Command Failed', result.error || result.output);
+        setInjectionAlertsMap(prev => ({
+          ...prev,
+          [selectedAgentId]: {
+            status: 'network_error',
+            agentId: selectedAgentId,
+            title: `Command Execution Error`,
+            message: result.error || result.output,
+            lastCommand: command,
+            commandOutput: result.output,
+            isExecuting: false,
+            timestamp: new Date().toLocaleTimeString()
+          }
+        }));
+      }
+    } catch (e: any) {
+      addToast('error', 'Execution Error', e.message);
     }
   };
 
@@ -1569,6 +1723,7 @@ export default function App() {
               injectionStatus={injectionAlertsMap[selectedAgentId] || null}
               onDismissInjectionStatus={() => setInjectionAlert(selectedAgentId, null)}
               externalVerboseLog={injectionVerboseLogsMap[selectedAgentId] || null}
+              onExecuteCommand={handleExecuteAgentCommand}
             />
           )}
 

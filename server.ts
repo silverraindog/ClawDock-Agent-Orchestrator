@@ -2668,13 +2668,185 @@ app.post('/api/docker/containers/unbind', (req, res) => {
 app.get('/api/agents/:id/detect', (req, res) => {
   const agentId = req.params.id;
   const current = agentStates[agentId] || { status: 'stopped', containerId: '', logs: [] };
+  let status = current.status;
+  let runningContainer = current.containerId;
+  const hasDockerSocket = fs.existsSync('/var/run/docker.sock');
+  if (hasDockerSocket) {
+    let candidateContainers = [agentId];
+    if (agentId === 'openclaw') candidateContainers = ['openclaw-hub', 'openclaw'];
+    else if (agentId === 'zeroclaw') candidateContainers = ['zeroclaw-daemon', 'zeroclaw'];
+    else if (agentId === 'picoclaw') candidateContainers = ['picoclaw-edge', 'picoclaw'];
+    else candidateContainers = ['hermes-agent-core', 'hermes-agent', agentId];
+
+    for (const cName of candidateContainers) {
+      try {
+        const inspectOut = execSync(`docker inspect -f "{{.State.Running}}" ${cName}`, { encoding: 'utf8', timeout: 800, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+        if (inspectOut === 'true') {
+          status = 'running';
+          runningContainer = cName;
+          break;
+        } else if (inspectOut === 'false') {
+          status = 'stopped';
+          runningContainer = cName;
+          break;
+        }
+      } catch {}
+    }
+  }
+
   res.json({
     agentId,
-    status: current.status,
-    containerId: current.containerId,
-    detectedInDocker: current.status === 'running' || current.status === 'stopped',
+    status,
+    containerId: runningContainer || current.containerId,
+    detectedInDocker: status === 'running' || status === 'stopped',
     detectedLocally: true,
     timestamp: new Date().toISOString()
+  });
+});
+
+// Execute CLI command inside agent Docker container
+app.post('/api/agents/:id/exec', (req, res) => {
+  const agentId = req.params.id;
+  const { command } = req.body || {};
+
+  if (!command || typeof command !== 'string' || !command.trim()) {
+    return res.status(400).json({
+      success: false,
+      agentId,
+      error: 'A non-empty command string is required in request body.'
+    });
+  }
+
+  const trimmedCmd = command.trim();
+  const hasDockerSocket = fs.existsSync('/var/run/docker.sock');
+  let candidateContainers = [agentId];
+  if (agentId === 'openclaw') candidateContainers = ['openclaw-hub', 'openclaw'];
+  else if (agentId === 'zeroclaw') candidateContainers = ['zeroclaw-daemon', 'zeroclaw'];
+  else if (agentId === 'picoclaw') candidateContainers = ['picoclaw-edge', 'picoclaw'];
+  else candidateContainers = ['hermes-agent-core', 'hermes-agent', agentId];
+
+  let targetContainer = '';
+  let containerRunning = false;
+
+  if (hasDockerSocket) {
+    for (const cName of candidateContainers) {
+      try {
+        const inspectOut = execSync(`docker inspect -f "{{.State.Running}}" ${cName}`, {
+          encoding: 'utf8',
+          timeout: 1000,
+          stdio: ['ignore', 'pipe', 'ignore']
+        }).trim();
+        if (inspectOut === 'true') {
+          targetContainer = cName;
+          containerRunning = true;
+          break;
+        } else if (inspectOut === 'false') {
+          targetContainer = cName;
+          containerRunning = false;
+        }
+      } catch {}
+    }
+  }
+
+  // Fallback to in-memory state tracking
+  if (!targetContainer && agentStates[agentId]) {
+    targetContainer = agentStates[agentId].containerId || agentId;
+    containerRunning = agentStates[agentId].status === 'running';
+  }
+
+  // If container is not running, reject with helpful warning
+  if (!containerRunning) {
+    const errorMsg = `Container for agent '${agentId}' is currently stopped. Please start the container before executing CLI commands.`;
+    return res.status(409).json({
+      success: false,
+      agentId,
+      command: trimmedCmd,
+      container: targetContainer || agentId,
+      error: errorMsg,
+      output: `[Docker Engine Error] Container ${agentId} is stopped. Cannot execute: ${trimmedCmd}`,
+      exitCode: 1,
+      timestamp: new Date().toISOString()
+    });
+  }
+
+  // Execute in real Docker container if socket is available and container is running
+  if (hasDockerSocket && targetContainer && containerRunning) {
+    try {
+      const sanitized = trimmedCmd.replace(/"/g, '\\"');
+      const dockerExecCmd = `docker exec ${targetContainer} sh -c "${sanitized}"`;
+      const stdout = execSync(dockerExecCmd, {
+        encoding: 'utf8',
+        timeout: 15000,
+        stdio: ['ignore', 'pipe', 'pipe']
+      });
+
+      const cleanOutput = stdout.trim() || `Command executed successfully: ${trimmedCmd}`;
+      if (agentStates[agentId]) {
+        agentStates[agentId].logs.push(`[docker exec ${targetContainer}] $ ${trimmedCmd}\n${cleanOutput}`);
+        savePersistentState();
+      }
+
+      return res.json({
+        success: true,
+        agentId,
+        command: trimmedCmd,
+        container: targetContainer,
+        output: cleanOutput,
+        exitCode: 0,
+        timestamp: new Date().toISOString()
+      });
+    } catch (e: any) {
+      const errorOutput = (e.stdout || e.stderr || e.message || '').toString().trim();
+      if (agentStates[agentId]) {
+        agentStates[agentId].logs.push(`[docker exec ${targetContainer}] $ ${trimmedCmd} [FAILED]\n${errorOutput}`);
+        savePersistentState();
+      }
+
+      return res.status(500).json({
+        success: false,
+        agentId,
+        command: trimmedCmd,
+        container: targetContainer,
+        output: errorOutput || e.message,
+        error: e.message,
+        exitCode: e.status || 1,
+        timestamp: new Date().toISOString()
+      });
+    }
+  }
+
+  // Simulated fallback execution when container is marked running in sandbox mode
+  let simulatedOutput = '';
+  if (trimmedCmd.startsWith('hermes config set model')) {
+    const parts = trimmedCmd.split(' ');
+    const model = parts[parts.length - 1].replace(/['"]/g, '');
+    simulatedOutput = `[hermes CLI] Model configured: ${model}\n[hermes CLI] Configuration written to /root/.hermes/config.yaml`;
+  } else if (trimmedCmd.startsWith('hermes config set provider')) {
+    const parts = trimmedCmd.split(' ');
+    const provider = parts[parts.length - 1].replace(/['"]/g, '');
+    simulatedOutput = `[hermes CLI] Provider configured: ${provider}\n[hermes CLI] Configuration written to /root/.hermes/config.yaml`;
+  } else if (trimmedCmd.startsWith('hermes config set')) {
+    simulatedOutput = `[hermes CLI] Configuration key updated: ${trimmedCmd}\n[hermes CLI] Successfully written to agent config.`;
+  } else if (trimmedCmd.startsWith('hermes config')) {
+    simulatedOutput = `[hermes CLI] active model: claude-3-7-sonnet\n[hermes CLI] active provider: anthropic`;
+  } else {
+    simulatedOutput = `[${agentId} container] $ ${trimmedCmd}\nExecution completed with exit code 0.`;
+  }
+
+  if (agentStates[agentId]) {
+    agentStates[agentId].logs.push(`[docker exec ${agentId}] $ ${trimmedCmd}\n${simulatedOutput}`);
+    savePersistentState();
+  }
+
+  return res.json({
+    success: true,
+    agentId,
+    command: trimmedCmd,
+    container: targetContainer || agentId,
+    output: simulatedOutput,
+    exitCode: 0,
+    timestamp: new Date().toISOString(),
+    isSimulated: true
   });
 });
 

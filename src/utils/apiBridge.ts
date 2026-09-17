@@ -1327,3 +1327,84 @@ export async function fetchDockerSystemStatus(): Promise<DockerSystemInfo | null
   return null;
 }
 
+export interface AgentExecResult {
+  success: boolean;
+  agentId: AgentId;
+  command: string;
+  output: string;
+  exitCode?: number;
+  container?: string;
+  error?: string;
+  timestamp: string;
+  isSimulated?: boolean;
+}
+
+/**
+ * Executes a CLI command inside the agent's Docker container via /api/agents/:id/exec.
+ * Allows triggering commands like `hermes config set model` directly in container runtime.
+ */
+export async function executeAgentCommand(
+  agentId: AgentId,
+  command: string
+): Promise<AgentExecResult> {
+  const timestamp = new Date().toISOString();
+  try {
+    const res = await fetch(`/api/agents/${agentId}/exec`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify({ command })
+    });
+
+    const data = await res.json().catch(() => null);
+
+    if (!res.ok) {
+      const errorMsg = data?.error || data?.output || `Command execution failed with HTTP ${res.status}`;
+      return {
+        success: false,
+        agentId,
+        command,
+        output: data?.output || errorMsg,
+        error: errorMsg,
+        exitCode: data?.exitCode ?? res.status,
+        container: data?.container,
+        timestamp
+      };
+    }
+
+    return {
+      success: data?.success ?? true,
+      agentId,
+      command,
+      output: data?.output || (data?.success ? 'Command executed successfully.' : 'Command completed with no output.'),
+      exitCode: data?.exitCode ?? 0,
+      container: data?.container,
+      timestamp: data?.timestamp || timestamp,
+      isSimulated: data?.isSimulated
+    };
+  } catch (err: any) {
+    const errorMsg = err?.message || 'Network error executing agent command';
+    logApiFailure({
+      endpoint: `/api/agents/${agentId}/exec`,
+      method: 'POST',
+      status: 500,
+      statusText: 'Network Error',
+      context: 'executeAgentCommand',
+      fallbackAction: 'Returned execution failure result.',
+      error: err
+    });
+
+    return {
+      success: false,
+      agentId,
+      command,
+      output: `Error: ${errorMsg}`,
+      error: errorMsg,
+      exitCode: 1,
+      timestamp
+    };
+  }
+}
+

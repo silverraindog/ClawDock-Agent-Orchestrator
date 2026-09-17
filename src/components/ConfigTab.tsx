@@ -702,19 +702,25 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
           </div>
 
           <button
-            id="save-config-btn"
-            onClick={() => {
-              if (restartContainer) {
-                setIsRestartModalOpen(true);
-              } else {
-                onSaveConfig(false);
-              }
-            }}
+            id="save-config-file-btn"
+            onClick={() => onSaveConfig(false)}
             disabled={isSaving}
-            className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 transition-all shadow-md shadow-emerald-950/40 disabled:opacity-50"
+            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold text-slate-200 bg-slate-800 hover:bg-slate-700 border border-slate-700 transition-all disabled:opacity-50"
+            title="Save configuration to file (.hermes/config.yaml / clawdock mount)"
+          >
+            <FileCode className="w-3.5 h-3.5 text-indigo-400" />
+            {isSaving ? 'Saving...' : 'Save configuration to file'}
+          </button>
+
+          <button
+            id="save-config-agent-btn"
+            onClick={() => onSaveConfig(true)}
+            disabled={isSaving}
+            className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 transition-all shadow-md shadow-indigo-950/40 disabled:opacity-50"
+            title="Save configuration to agent and execute docker container CLI config set / restart"
           >
             <Save className="w-3.5 h-3.5" />
-            {isSaving ? 'Saving...' : 'Save Configuration'}
+            {isSaving ? 'Saving...' : 'Save configuration to agent'}
           </button>
         </div>
       </div>
