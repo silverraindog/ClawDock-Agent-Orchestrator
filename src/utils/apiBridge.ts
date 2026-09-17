@@ -1115,13 +1115,37 @@ export async function saveAgentConfigToBackend(
   return true;
 }
 
-export async function fetchRuntimeAgentStates(): Promise<Record<string, { status: string; containerId: string; logs: string[]; version?: string; dockerImage?: string }>> {
-  const defaultStates: Record<string, { status: string; containerId: string; logs: string[]; version?: string; dockerImage?: string }> = {
+export async function fetchRuntimeAgentStates(): Promise<Record<string, { 
+  status: string; 
+  containerId: string; 
+  logs: string[]; 
+  version?: string; 
+  dockerImage?: string;
+  uptimeHistory?: number[];
+  latencyHistory?: number[];
+  uptimePct?: number;
+  avgLatencyMs?: number;
+}>> {
+  const defaultStates: Record<string, { 
+    status: string; 
+    containerId: string; 
+    logs: string[]; 
+    version?: string; 
+    dockerImage?: string;
+    uptimeHistory?: number[];
+    latencyHistory?: number[];
+    uptimePct?: number;
+    avgLatencyMs?: number;
+  }> = {
     'hermes-agent': {
       status: 'running',
       containerId: 'c108a94fd32b',
       version: 'v0.9.4',
       dockerImage: 'ghcr.io/nousresearch/hermes-agent:v0.9.4',
+      uptimeHistory: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+      latencyHistory: [142, 156, 138, 145, 162, 148, 155, 141, 139, 144, 150, 147, 152, 143, 146, 149, 151, 145, 140, 144],
+      uptimePct: 100,
+      avgLatencyMs: 147,
       logs: [
         '[Hermes Core] Initializing Nous Hermes 3.11 Runtime...',
         '[Hermes Core] Mounting workspace volume at /workspace',
@@ -1135,6 +1159,10 @@ export async function fetchRuntimeAgentStates(): Promise<Record<string, { status
       containerId: 'b94101e4aa22',
       version: 'v0.4.1',
       dockerImage: 'zeroclaw/zeroclaw:v0.4.1',
+      uptimeHistory: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      latencyHistory: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      uptimePct: 0,
+      avgLatencyMs: 0,
       logs: [
         '[ZeroClaw Daemon] Rust tokio runtime exited with code 0',
         '[ZeroClaw Daemon] Snapshot saved to /var/zeroclaw/memory.md'
@@ -1145,6 +1173,10 @@ export async function fetchRuntimeAgentStates(): Promise<Record<string, { status
       containerId: 'f77012bc091e',
       version: 'v1.2.0',
       dockerImage: 'openclaw/openclaw:v1.2.0',
+      uptimeHistory: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+      latencyHistory: [92, 105, 88, 95, 112, 98, 105, 91, 89, 94, 100, 97, 102, 93, 96, 99, 101, 95, 90, 94],
+      uptimePct: 99.8,
+      avgLatencyMs: 98,
       logs: [
         '[OpenClaw Hub] Detected container openclaw-hub-prod (f77012bc091e)',
         '[OpenClaw Hub] Gateway daemon active and connected via Docker port 8082'
@@ -1155,6 +1187,10 @@ export async function fetchRuntimeAgentStates(): Promise<Record<string, { status
       containerId: 'e4991ac89b10',
       version: 'v0.8.2',
       dockerImage: 'sipeed/picoclaw:v0.8.2',
+      uptimeHistory: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+      latencyHistory: [42, 56, 38, 45, 62, 48, 55, 41, 39, 44, 50, 47, 52, 43, 46, 49, 51, 45, 40, 44],
+      uptimePct: 100,
+      avgLatencyMs: 48,
       logs: [
         '[PicoClaw Edge] Sipeed Go engine initialized (Memory: 9.4MB)',
         '[PicoClaw Edge] PicoLM Quantized GGUF inference ready',

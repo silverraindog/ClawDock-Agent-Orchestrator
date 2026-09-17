@@ -30,7 +30,8 @@ import {
   AlertCircle,
   BarChart3,
   Network,
-  LayoutGrid
+  LayoutGrid,
+  Camera
 } from 'lucide-react';
 import { 
   AgentId, 
@@ -146,6 +147,28 @@ export const EverOSTab: React.FC<EverOSTabProps> = ({ onOpenAgentConfig }) => {
       })
       .catch(() => { /* fallback */ });
   }, []);
+
+  const [isTakingSnapshot, setIsTakingSnapshot] = useState(false);
+
+  const handleTakeSnapshot = () => {
+    setIsTakingSnapshot(true);
+    fetch('/api/everos/snapshot', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ memories })
+    })
+      .then(res => res.json())
+      .then(data => {
+        if (data.success) {
+          setConsolidationSuccess(data.message);
+          setTimeout(() => setConsolidationSuccess(null), 5000);
+        } else {
+          console.error('Failed to take snapshot:', data.error);
+        }
+      })
+      .catch(console.error)
+      .finally(() => setIsTakingSnapshot(false));
+  };
 
   // Execute hybrid mRAG Search
   const handleSearch = (queryText?: string) => {
@@ -378,6 +401,14 @@ export const EverOSTab: React.FC<EverOSTabProps> = ({ onOpenAgentConfig }) => {
 
           {/* Quick Header CTA buttons */}
           <div className="flex flex-wrap items-center gap-3">
+            <button
+              onClick={handleTakeSnapshot}
+              disabled={isTakingSnapshot}
+              className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold flex items-center gap-2 transition-all disabled:opacity-50"
+            >
+              <Camera className="w-4 h-4 text-purple-400" />
+              {isTakingSnapshot ? 'Saving...' : 'Take Snapshot'}
+            </button>
             <button
               id="everos-add-memory-btn"
               onClick={() => setIsAddModalOpen(true)}

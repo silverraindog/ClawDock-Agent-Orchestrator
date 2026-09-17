@@ -5,6 +5,8 @@ import fs from 'fs';
 import http from 'http';
 import { spawn, execSync } from 'child_process';
 import { createServer as createViteServer } from 'vite';
+import YAML from 'yaml';
+import * as TOML from 'smol-toml';
 
 const app = express();
 const PORT = 3000;
@@ -677,12 +679,26 @@ function getAgentImageForVersion(agentId: string, version: string): string {
 }
 
 // In-memory runtime state for live preview interactivity
-let agentStates: Record<string, { status: string; containerId: string; logs: string[]; version?: string; dockerImage?: string }> = {
+let agentStates: Record<string, { 
+  status: string; 
+  containerId: string; 
+  logs: string[]; 
+  version?: string; 
+  dockerImage?: string;
+  uptimeHistory?: number[];
+  latencyHistory?: number[];
+  uptimePct?: number;
+  avgLatencyMs?: number;
+}> = {
   'hermes-agent': {
     status: 'running',
     containerId: 'c108a94fd32b',
     version: 'v0.9.4',
     dockerImage: 'ghcr.io/nousresearch/hermes-agent:v0.9.4',
+    uptimeHistory: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+    latencyHistory: [142, 156, 138, 145, 162, 148, 155, 141, 139, 144, 150, 147, 152, 143, 146, 149, 151, 145, 140, 144],
+    uptimePct: 100,
+    avgLatencyMs: 147,
     logs: [
       '[Hermes Core] Initializing Nous Hermes 3.11 Runtime...',
       '[Hermes Core] Mounting workspace volume at /workspace',
@@ -696,6 +712,10 @@ let agentStates: Record<string, { status: string; containerId: string; logs: str
     containerId: 'b94101e4aa22',
     version: 'v0.4.1',
     dockerImage: 'zeroclaw/zeroclaw:v0.4.1',
+    uptimeHistory: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    latencyHistory: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    uptimePct: 0,
+    avgLatencyMs: 0,
     logs: [
       '[ZeroClaw Daemon] Rust tokio runtime exited with code 0',
       '[ZeroClaw Daemon] Snapshot saved to /var/zeroclaw/memory.md'
@@ -706,6 +726,10 @@ let agentStates: Record<string, { status: string; containerId: string; logs: str
     containerId: 'f77012bc091e',
     version: 'v1.2.0',
     dockerImage: 'openclaw/openclaw:v1.2.0',
+    uptimeHistory: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+    latencyHistory: [92, 105, 88, 95, 112, 98, 105, 91, 89, 94, 100, 97, 102, 93, 96, 99, 101, 95, 90, 94],
+    uptimePct: 99.8,
+    avgLatencyMs: 98,
     logs: [
       '[OpenClaw Hub] Detected container openclaw-hub-prod (f77012bc091e)',
       '[OpenClaw Hub] Gateway daemon active and connected via Docker port 8082'
@@ -716,6 +740,10 @@ let agentStates: Record<string, { status: string; containerId: string; logs: str
     containerId: 'e4991ac89b10',
     version: 'v0.8.2',
     dockerImage: 'sipeed/picoclaw:v0.8.2',
+    uptimeHistory: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+    latencyHistory: [42, 56, 38, 45, 62, 48, 55, 41, 39, 44, 50, 47, 52, 43, 46, 49, 51, 45, 40, 44],
+    uptimePct: 100,
+    avgLatencyMs: 48,
     logs: [
       '[PicoClaw Edge] Sipeed Go engine initialized (Memory: 9.4MB)',
       '[PicoClaw Edge] PicoLM Quantized GGUF inference ready',
@@ -2007,7 +2035,20 @@ function getAgentConfigData(agentId: string, requestedFormatVersion?: string) {
 
   const hasDockerSocket = fs.existsSync('/var/run/docker.sock');
 
-  // 1. Check if container is running and supports config show (only if socket exists)
+  // 1. Read from local file first (Source of Truth for ClawDock)
+  if (fs.existsSync(absPath) && fs.statSync(absPath).size > 10) {
+    nativeContent = fs.readFileSync(absPath, 'utf8');
+    filePath = absPath;
+    source = 'clawdock_mount_file';
+  } else if (fs.existsSync(relPath) && fs.statSync(relPath).size > 10) {
+    nativeContent = fs.readFileSync(relPath, 'utf8');
+    filePath = relPath;
+    source = 'clawdock_mount_file';
+  }
+
+  // 2. Fallback or Sync: Check if container is running and supports config show (only if socket exists)
+  // We only do this if the file was missing OR to verify live status, 
+  // but we won't overwrite the local file unless it was missing.
   if (hasDockerSocket) {
     let containerNames = [agentId];
     if (agentId === 'openclaw') containerNames = ['openclaw-hub', 'openclaw'];
@@ -2019,30 +2060,29 @@ function getAgentConfigData(agentId: string, requestedFormatVersion?: string) {
       try {
         const binName = agentId.replace('-agent', '');
         const cmd = `docker exec ${cName} ${binName} config show`;
-        const output = execSync(cmd, { encoding: 'utf8', timeout: 800, stdio: ['ignore', 'pipe', 'ignore'] });
+        // Shorter timeout to keep refresh snappy
+        const output = execSync(cmd, { encoding: 'utf8', timeout: 500, stdio: ['ignore', 'pipe', 'ignore'] });
         if (output && output.trim().length > 10) {
-          nativeContent = output.trim();
-          source = `docker_exec_${cName}_config_show`;
-          try { fs.writeFileSync(relPath, nativeContent, 'utf8'); } catch {}
-          try { fs.writeFileSync(absPath, nativeContent, 'utf8'); } catch {}
+          const liveContent = output.trim();
+          // If we didn't have a file, or if it's radically different and we want live data
+          if (source !== 'clawdock_mount_file') {
+            nativeContent = liveContent;
+            source = `docker_exec_${cName}_config_show`;
+            // Cache locally
+            try { fs.writeFileSync(relPath, nativeContent, 'utf8'); } catch {}
+            try { fs.writeFileSync(absPath, nativeContent, 'utf8'); } catch {}
+          }
           break;
         }
       } catch {}
     }
   }
 
-  // 2. Read from local file if not fetched from docker exec
-  if (source === 'clawdock_mount_file') {
-    if (fs.existsSync(absPath) && fs.statSync(absPath).size > 10) {
-      nativeContent = fs.readFileSync(absPath, 'utf8');
-      filePath = absPath;
-    } else if (fs.existsSync(relPath) && fs.statSync(relPath).size > 10) {
-      nativeContent = fs.readFileSync(relPath, 'utf8');
-      filePath = relPath;
-    } else {
-      nativeContent = defaultContent;
-      try { fs.writeFileSync(relPath, defaultContent, 'utf8'); } catch {}
-    }
+  // 3. Final default fallback
+  if (!nativeContent || nativeContent.length < 10) {
+    nativeContent = defaultContent;
+    source = 'default_template';
+    try { fs.writeFileSync(relPath, defaultContent, 'utf8'); } catch {}
   }
 
   // 3. Parse native content into structured configSchema for UI
@@ -2106,41 +2146,34 @@ function getAgentConfigData(agentId: string, requestedFormatVersion?: string) {
         if (parsedJson.system?.systemPrompt) parsedSystemPrompt = parsedJson.system.systemPrompt;
       }
     } else if (nativeFormat === 'toml') {
-      const matchName = nativeContent.match(/name\s*=\s*["']([^"']+)["']/);
-      if (matchName) parsedAgentName = matchName[1];
-      const matchProv = nativeContent.match(/provider\s*=\s*["']([^"']+)["']/);
-      if (matchProv) parsedModelProvider = matchProv[1];
-      const matchModel = nativeContent.match(/model\s*=\s*["']([^"']+)["']/);
-      if (matchModel) parsedModelName = matchModel[1];
-      const matchTemp = nativeContent.match(/temperature\s*=\s*([0-9.]+)/);
-      if (matchTemp) parsedTemperature = Number(matchTemp[1]);
-      const matchPrompt = nativeContent.match(/system_prompt\s*=\s*"([^"]+)"/);
-      if (matchPrompt) parsedSystemPrompt = matchPrompt[1];
+      const parsedToml: any = TOML.parse(nativeContent);
+      if (parsedToml.agent?.name) parsedAgentName = parsedToml.agent.name;
+      if (parsedToml.agent?.id) { /* agentId already set */ }
+      if (parsedToml.model?.provider) parsedModelProvider = parsedToml.model.provider;
+      if (parsedToml.model?.model) parsedModelName = parsedToml.model.model;
+      if (parsedToml.model?.temperature !== undefined) parsedTemperature = Number(parsedToml.model.temperature);
+      if (parsedToml.system?.systemPrompt || parsedToml.agent?.systemPrompt) {
+        parsedSystemPrompt = parsedToml.system?.systemPrompt || parsedToml.agent?.systemPrompt;
+      }
     } else {
       // yaml
-      const matchName = nativeContent.match(/agent_name:\s*"([^"]+)"|agent_name:\s*([^\n]+)/);
-      if (matchName) parsedAgentName = (matchName[1] || matchName[2]).trim();
-
-      const modelBlockMatch = nativeContent.match(/model:\s*\n([\s\S]*?)(?=\n[a-z_]+:|$)/i);
-      if (modelBlockMatch) {
-        const block = modelBlockMatch[1];
-        const pMatch = block.match(/provider:\s*["']?([^"'\s\n]+)["']?/);
-        if (pMatch && pMatch[1]) parsedModelProvider = pMatch[1].trim();
-        const mMatch = block.match(/model:\s*["']?([^"'\s\n]+)["']?/);
-        if (mMatch && mMatch[1] && mMatch[1] !== 'provider:') parsedModelName = mMatch[1].trim();
-        const tMatch = block.match(/temperature:\s*([0-9.]+)/);
-        if (tMatch) parsedTemperature = Number(tMatch[1]);
-      } else {
-        const matchProv = nativeContent.match(/provider:\s*"([^"]+)"|provider:\s*([^\s\n]+)/);
-        if (matchProv) parsedModelProvider = (matchProv[1] || matchProv[2]).trim();
-        const matchModel = nativeContent.match(/model:\s*"([^"]+)"|model:\s*([^\s\n]+)/);
-        if (matchModel && matchModel[1] !== 'provider:') parsedModelName = (matchModel[1] || matchModel[2]).trim();
+      const parsedYaml: any = YAML.parse(nativeContent);
+      if (parsedYaml.agent_name) parsedAgentName = parsedYaml.agent_name;
+      if (parsedYaml.model?.provider) parsedModelProvider = parsedYaml.model.provider;
+      if (parsedYaml.model?.model) parsedModelName = parsedYaml.model.model;
+      if (parsedYaml.model?.temperature !== undefined) parsedTemperature = Number(parsedYaml.model.temperature);
+      
+      if (parsedYaml.security?.sandbox_mode || parsedYaml.security?.sandboxMode) {
+        parsedSandboxMode = parsedYaml.security.sandbox_mode || parsedYaml.security.sandboxMode;
       }
-
-      const matchPrompt = nativeContent.match(/system_prompt:\s*"([^"]+)"/);
-      if (matchPrompt) parsedSystemPrompt = matchPrompt[1];
+      if (parsedYaml.storage?.memory_backend || parsedYaml.storage?.memoryBackend) {
+        parsedMemoryBackend = parsedYaml.storage.memory_backend || parsedYaml.storage.memoryBackend;
+      }
+      if (parsedYaml.system_prompt) parsedSystemPrompt = parsedYaml.system_prompt;
+      if (parsedYaml.moa?.enabled !== undefined) moaEnabled = Boolean(parsedYaml.moa.enabled);
     }
 
+    // Final safety check for missing model names (don't revert to default if it's literally empty string or "provider:")
     if (parsedModelName === 'provider:' || !parsedModelName) {
       parsedModelName = agentId === 'zeroclaw' ? 'deepseek-r1' : agentId === 'openclaw' ? 'gpt-4o' : agentId === 'picoclaw' ? 'qwen2.5-coder:7b' : 'claude-3-7-sonnet';
     }
@@ -3720,6 +3753,39 @@ app.get('/api/updates', (req, res) => {
   });
 });
 
+// Take Snapshot of EverOS Memories
+app.post('/api/everos/snapshot', (req, res) => {
+  const { memories } = req.body || {};
+  if (!Array.isArray(memories)) {
+    return res.status(400).json({ error: 'memories array is required' });
+  }
+
+  try {
+    const snapshotDir = path.join(process.cwd(), 'data', 'everos', 'snapshots');
+    if (!fs.existsSync(snapshotDir)) {
+      fs.mkdirSync(snapshotDir, { recursive: true });
+    }
+
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const filename = `snapshot-${timestamp}.md`;
+    const filepath = path.join(snapshotDir, filename);
+
+    let mdContent = `# EverOS Episodic Memory Snapshot\n*Taken at: ${new Date().toISOString()}*\n\n`;
+    memories.forEach(mem => {
+      mdContent += `## [${mem.type.toUpperCase()}] ${mem.title}\n`;
+      mdContent += `- **ID:** ${mem.id}\n`;
+      mdContent += `- **Tags:** ${(mem.tags || []).join(', ')}\n`;
+      mdContent += `- **Created At:** ${mem.createdAt}\n\n`;
+      mdContent += `${mem.content}\n\n---\n\n`;
+    });
+
+    fs.writeFileSync(filepath, mdContent, 'utf-8');
+    res.json({ success: true, filepath, message: `Snapshot saved to ${filename}` });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to create snapshot', details: err.message });
+  }
+});
+
 // Check updates
 app.post('/api/updates/check', (req, res) => {
   const { id } = req.body || {};
@@ -3953,6 +4019,43 @@ app.post('/api/github/sync', async (req, res) => {
     });
   }
 });
+
+// Record telemetry every 30 seconds
+setInterval(() => {
+  for (const agentId of Object.keys(agentStates)) {
+    const state = agentStates[agentId];
+    const isUp = state.status === 'running' ? 1 : 0;
+    
+    // Simulate latency based on status
+    let latency = 0;
+    if (isUp) {
+      const baseLatency = agentId === 'picoclaw' ? 40 : agentId === 'zeroclaw' ? 60 : agentId === 'openclaw' ? 90 : 140;
+      latency = baseLatency + Math.floor(Math.random() * 30);
+    }
+
+    if (!state.uptimeHistory) state.uptimeHistory = [];
+    if (!state.latencyHistory) state.latencyHistory = [];
+
+    state.uptimeHistory.push(isUp);
+    state.latencyHistory.push(latency);
+
+    // Keep last 20 points
+    if (state.uptimeHistory.length > 20) state.uptimeHistory.shift();
+    if (state.latencyHistory.length > 20) state.latencyHistory.shift();
+
+    // Calculate averages
+    const upCount = state.uptimeHistory.filter(v => v === 1).length;
+    state.uptimePct = parseFloat(((upCount / state.uptimeHistory.length) * 100).toFixed(1));
+    
+    const activeLatencies = state.latencyHistory.filter(v => v > 0);
+    if (activeLatencies.length > 0) {
+      const sum = activeLatencies.reduce((a, b) => a + b, 0);
+      state.avgLatencyMs = Math.round(sum / activeLatencies.length);
+    } else {
+      state.avgLatencyMs = 0;
+    }
+  }
+}, 30000);
 
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {

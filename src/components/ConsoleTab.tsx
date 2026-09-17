@@ -11,7 +11,9 @@ import {
   Clock, 
   Wrench,
   ChevronRight,
-  RefreshCw
+  RefreshCw,
+  Copy,
+  ArrowDown
 } from 'lucide-react';
 import { AgentInfo, ChatMessage } from '../types';
 
@@ -31,15 +33,32 @@ export const ConsoleTab: React.FC<ConsoleTabProps> = ({
   isThinking
 }) => {
   const [inputText, setInputText] = useState('');
+  const [autoScroll, setAutoScroll] = useState(true);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (autoScroll) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
   };
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages, isThinking]);
+  }, [messages, isThinking, autoScroll]);
+
+  const handleCopyMessage = (text: string, id: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedId(id);
+    setTimeout(() => setCopiedId(null), 2000);
+  };
+
+  const handleCopyAllLogs = () => {
+    const allLogs = messages.map(m => `[${m.timestamp}] ${m.sender.toUpperCase()}: ${m.content}`).join('\n\n');
+    navigator.clipboard.writeText(allLogs);
+    setCopiedId('all');
+    setTimeout(() => setCopiedId(null), 2000);
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -79,6 +98,13 @@ export const ConsoleTab: React.FC<ConsoleTabProps> = ({
         </div>
 
         <div className="flex items-center gap-2">
+          <button
+            onClick={handleCopyAllLogs}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 border border-slate-700 transition-colors"
+          >
+            {copiedId === 'all' ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+            {copiedId === 'all' ? 'Copied All' : 'Copy Chat Logs'}
+          </button>
           <button
             onClick={onClearHistory}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 border border-slate-700 transition-colors"
@@ -138,11 +164,18 @@ export const ConsoleTab: React.FC<ConsoleTabProps> = ({
                 </div>
 
                 {/* Message Bubble */}
-                <div className={`space-y-2 max-w-[85%] ${
+                <div className={`group relative space-y-2 max-w-[85%] ${
                   msg.sender === 'user'
                     ? 'bg-indigo-500/10 border border-indigo-500/20 text-slate-100 rounded-2xl rounded-tr-sm p-4'
                     : 'bg-slate-900 border border-slate-800 text-slate-200 rounded-2xl rounded-tl-sm p-4'
                 }`}>
+                  <button
+                    onClick={() => handleCopyMessage(msg.content, msg.id)}
+                    className="absolute top-2 right-2 p-1.5 rounded-lg bg-slate-800/80 border border-slate-700 text-slate-400 hover:text-white opacity-0 group-hover:opacity-100 transition-all"
+                    title="Copy message"
+                  >
+                    {copiedId === msg.id ? <CheckCircle2 className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                  </button>
                   <div className="flex items-center justify-between gap-4 text-[11px] text-slate-400 border-b border-slate-800/50 pb-1 mb-2">
                     <span className="font-semibold text-white">
                       {msg.sender === 'user' ? 'You' : agent.name}
@@ -188,6 +221,23 @@ export const ConsoleTab: React.FC<ConsoleTabProps> = ({
         </div>
 
         {/* Input Bar */}
+        <div className="px-4 py-2 border-t border-slate-800 bg-slate-950 flex items-center justify-between">
+          <button
+            onClick={() => setAutoScroll(!autoScroll)}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all ${
+              autoScroll 
+                ? 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/20' 
+                : 'bg-slate-800 text-slate-500 border border-slate-700'
+            }`}
+          >
+            <ArrowDown className={`w-3 h-3 ${autoScroll ? 'animate-bounce' : ''}`} />
+            Auto-Scroll: {autoScroll ? 'ON' : 'OFF'}
+          </button>
+          <div className="text-[10px] text-slate-500 font-mono">
+            {messages.length} messages in buffer
+          </div>
+        </div>
+
         <form onSubmit={handleSubmit} className="p-3 border-t border-slate-800 bg-slate-900/60 flex gap-2">
           <input
             id="console-input"

@@ -1100,6 +1100,24 @@ export const EverOSRelationshipViz: React.FC<EverOSRelationshipVizProps> = ({
                   </div>
                   <div className="font-bold text-white text-xs">{hoveredNode.title}</div>
                   <div className="text-[11px] text-slate-300">{hoveredNode.subtitle}</div>
+                  
+                  {hoveredNode.type === 'memory' && (
+                    <div className="pt-2 border-t border-slate-700/50 mt-2">
+                      <div className="text-[10px] text-slate-400 mb-1 font-bold">EPISODIC SNIPPET:</div>
+                      <div className="text-[11px] text-slate-300 line-clamp-3 italic mb-2 break-words">
+                        {(hoveredNode.data as any).content?.substring(0, 120)}...
+                      </div>
+                      <div className="text-[10px] text-slate-400 mb-1 font-bold">RELATED SKILLS:</div>
+                      <div className="flex flex-wrap gap-1">
+                        {((hoveredNode.data as any).tags || []).slice(0, 3).map((tag: string, i: number) => (
+                           <span key={i} className="px-1.5 py-0.5 bg-emerald-900/40 text-emerald-300 rounded text-[9px] border border-emerald-700/30">
+                             {tag}
+                           </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   <div className="text-[10px] text-emerald-400 pt-1">
                     Connected to {hoveredNode.linkCount} items • Click for full inspection
                   </div>

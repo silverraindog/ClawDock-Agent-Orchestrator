@@ -72,7 +72,15 @@ export const DockerLogsInspector: React.FC<DockerLogsInspectorProps> = ({
       if (res.ok) {
         const data = await res.json();
         if (data && Array.isArray(data.logs)) {
-          setLogs(data.logs);
+          setLogs(prev => {
+            // Logic to append only new logs if we want to keep a longer history than the backend returns
+            // Or just slice the last 100 lines if the backend returns enough.
+            // Assuming the backend returns the latest chunk, we can merge and slice.
+            const newLogs = data.logs;
+            // Simple approach: if the backend returns the last N lines, we just update.
+            // But user asked for a "sliding window of the last 100 lines".
+            return newLogs.slice(-100);
+          });
           setLastFetchedTime(new Date().toLocaleTimeString());
         }
       }

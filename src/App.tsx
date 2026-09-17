@@ -197,7 +197,11 @@ export default function App() {
                   status: st.status as any,
                   containerId: st.containerId || a.containerId,
                   version: ver,
-                  dockerImage: img
+                  dockerImage: img,
+                  uptimeHistory: st.uptimeHistory || a.uptimeHistory,
+                  latencyHistory: st.latencyHistory || a.latencyHistory,
+                  uptimePct: st.uptimePct ?? a.uptimePct,
+                  avgLatencyMs: st.avgLatencyMs ?? a.avgLatencyMs
                 };
               }
               return a;
@@ -937,7 +941,7 @@ export default function App() {
       }
 
       const nativeContent = JSON.stringify(currentConfig, null, 2);
-      saveAgentConfigToBackend(selectedAgentId, currentConfig, nativeContent, restartContainer);
+      // Removed redundant saveAgentConfigToBackend(selectedAgentId, currentConfig, nativeContent, restartContainer);
 
       const res = await fetch(`/api/agents/${selectedAgentId}/config`, {
         method: 'PUT',

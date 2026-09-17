@@ -17,6 +17,10 @@ export interface AgentInfo {
   memoryUsageMb: number;
   cpuUsagePct: number;
   uptimeSeconds: number;
+  uptimeHistory: number[]; // 0 or 1
+  latencyHistory: number[]; // ms
+  avgLatencyMs: number;
+  uptimePct: number;
   description: string;
   capabilities: string[];
   docsUrl: string;

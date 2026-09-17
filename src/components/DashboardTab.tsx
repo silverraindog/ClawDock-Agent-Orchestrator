@@ -15,8 +15,19 @@ import {
   Play,
   Search,
   Sparkles,
-  Brain
+  Brain,
+  Clock,
+  History,
+  TrendingUp,
+  BarChart3
 } from 'lucide-react';
+import { 
+  LineChart, 
+  Line, 
+  ResponsiveContainer, 
+  YAxis, 
+  Tooltip 
+} from 'recharts';
 import { AgentFullConfig, AgentInfo, DockerSystemInfo, SkillItem, MCPServerConfig } from '../types';
 
 interface DashboardTabProps {
@@ -246,6 +257,102 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
           <p className="text-[11px] text-slate-500">
             Filesystem, Search &amp; Code Sandbox
           </p>
+        </div>
+      </div>
+
+      {/* Operational Telemetry: Uptime & Latency Sparklines */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* Uptime History Card */}
+        <div className="p-5 rounded-2xl border border-slate-800 bg-slate-900 space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="space-y-1">
+              <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                <History className="w-3.5 h-3.5 text-emerald-400" />
+                Historical Uptime
+              </span>
+              <div className="text-2xl font-bold text-white font-mono">
+                {agent.uptimePct}%
+              </div>
+            </div>
+            <div className="text-right">
+              <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                agent.uptimePct > 99 ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 
+                agent.uptimePct > 95 ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' : 
+                'bg-rose-500/10 text-rose-400 border border-rose-500/20'
+              }`}>
+                {agent.uptimePct > 99 ? 'Excellent' : agent.uptimePct > 95 ? 'Stable' : 'Degraded'}
+              </span>
+              <p className="text-[10px] text-slate-500 mt-1">Last 20 checks</p>
+            </div>
+          </div>
+          
+          <div className="h-16 w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={agent.uptimeHistory.map((val, i) => ({ val, i }))}>
+                <Line 
+                  type="stepAfter" 
+                  dataKey="val" 
+                  stroke="#10b981" 
+                  strokeWidth={2} 
+                  dot={false}
+                  isAnimationActive={false}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+          <div className="flex justify-between items-center text-[10px] text-slate-500 font-mono">
+            <span>T-20</span>
+            <div className="flex gap-1">
+              {agent.uptimeHistory.slice(-10).map((v, i) => (
+                <div key={i} className={`w-1.5 h-1.5 rounded-full ${v === 1 ? 'bg-emerald-500' : 'bg-slate-800'}`} />
+              ))}
+            </div>
+            <span>Now</span>
+          </div>
+        </div>
+
+        {/* Latency History Card */}
+        <div className="p-5 rounded-2xl border border-slate-800 bg-slate-900 space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="space-y-1">
+              <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                <Activity className="w-3.5 h-3.5 text-indigo-400" />
+                Avg Response Latency
+              </span>
+              <div className="text-2xl font-bold text-white font-mono">
+                {agent.avgLatencyMs}ms
+              </div>
+            </div>
+            <div className="text-right">
+              <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                agent.avgLatencyMs < 100 ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 
+                agent.avgLatencyMs < 300 ? 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/20' : 
+                'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+              }`}>
+                {agent.avgLatencyMs < 100 ? 'Ultra-Fast' : agent.avgLatencyMs < 300 ? 'Normal' : 'Slow'}
+              </span>
+              <p className="text-[10px] text-slate-500 mt-1">Moving Average</p>
+            </div>
+          </div>
+          
+          <div className="h-16 w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={agent.latencyHistory.map((val, i) => ({ val, i }))}>
+                <Line 
+                  type="monotone" 
+                  dataKey="val" 
+                  stroke="#6366f1" 
+                  strokeWidth={2} 
+                  dot={false}
+                  isAnimationActive={false}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+          <div className="flex justify-between items-center text-[10px] text-slate-500 font-mono">
+            <span>Peak: {Math.max(...agent.latencyHistory)}ms</span>
+            <span>Current: {agent.latencyHistory[agent.latencyHistory.length - 1]}ms</span>
+          </div>
         </div>
       </div>
 
