@@ -773,7 +773,18 @@ export function saveLocalPersistence(key: string, value: any): void {
 const AGENT_STATES_LOCAL_KEY = 'clawdock_agent_runtime_states';
 const SYSTEM_UPDATES_LOCAL_KEY = 'clawdock_system_updates';
 
-export function getLocalAgentStates(): Record<string, { status: string; containerId?: string; containerName?: string; version?: string; dockerImage?: string; logs?: string[] }> | null {
+export function getLocalAgentStates(): Record<string, { 
+  status: string; 
+  containerId?: string; 
+  containerName?: string; 
+  version?: string; 
+  dockerImage?: string; 
+  logs?: string[];
+  uptimeHistory?: number[];
+  latencyHistory?: number[];
+  uptimePct?: number;
+  avgLatencyMs?: number;
+}> | null {
   try {
     const raw = localStorage.getItem(AGENT_STATES_LOCAL_KEY);
     if (raw) {

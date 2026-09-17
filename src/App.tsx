@@ -82,25 +82,26 @@ export default function App() {
     try {
       const local = getLocalAgentStates();
       if (local && Object.keys(local).length > 0) {
-        return INITIAL_AGENTS.map(a => {
+        return INITIAL_AGENTS.filter(a => local[a.id] !== undefined).map(a => {
           const s = local[a.id];
-          if (s) {
-            const ver = s.version || a.version;
-            const img = s.dockerImage || (ver ? a.dockerImage.replace(/:[^:]+$/, `:${ver}`) : a.dockerImage);
-            return {
-              ...a,
-              status: (s.status as any) || a.status,
-              containerId: s.containerId !== undefined ? s.containerId : a.containerId,
-              containerName: s.containerName || a.containerName,
-              version: ver,
-              dockerImage: img
-            };
-          }
-          return a;
+          const ver = s.version || a.version;
+          const img = s.dockerImage || (ver ? a.dockerImage.replace(/:[^:]+$/, `:${ver}`) : a.dockerImage);
+          return {
+            ...a,
+            status: (s.status as any) || a.status,
+            containerId: s.containerId !== undefined ? s.containerId : a.containerId,
+            containerName: s.containerName || a.containerName,
+            version: ver,
+            dockerImage: img,
+            uptimeHistory: s.uptimeHistory || a.uptimeHistory,
+            latencyHistory: s.latencyHistory || a.latencyHistory,
+            uptimePct: s.uptimePct ?? a.uptimePct,
+            avgLatencyMs: s.avgLatencyMs ?? a.avgLatencyMs
+          };
         });
       }
     } catch {}
-    return INITIAL_AGENTS;
+    return [];
   });
   const [selectedAgentId, setSelectedAgentId] = useState<AgentId>('hermes-agent');
   const [configs, setConfigs] = useState<Record<AgentId, AgentFullConfig>>(DEFAULT_CONFIGS);

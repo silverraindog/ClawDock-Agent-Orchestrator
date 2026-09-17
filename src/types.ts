@@ -260,6 +260,17 @@ export interface SystemUpdateItem {
   breakingChanges?: boolean;
   installCommand?: string;
   autoUpdateSupported?: boolean;
+  dockerTag?: string;
+  registryMatch?: boolean;
+  buildHistory?: BuildHistoryItem[];
+}
+
+export interface BuildHistoryItem {
+  id: string;
+  version: string;
+  timestamp: string;
+  dockerTag: string;
+  commitMessage?: string;
 }
 
 // ==========================================

@@ -36,7 +36,7 @@ export const ContainerDiscoveryModal: React.FC<ContainerDiscoveryModalProps> = (
   onUnbindContainer,
   onStartAgent
 }) => {
-  const [pattern, setPattern] = useState('*claw*, *hermes*, *agent*, *nous*');
+  const [pattern, setPattern] = useState('*openclaw-gateway*, *zeroclaw*, *hermes-agent*, *picoclaw-launcher*');
   const [loading, setLoading] = useState(false);
   const [discoveredContainers, setDiscoveredContainers] = useState<DiscoveredContainer[]>([]);
   const [selectedAgentMap, setSelectedAgentMap] = useState<Record<string, AgentId>>({});
@@ -46,11 +46,11 @@ export const ContainerDiscoveryModal: React.FC<ContainerDiscoveryModalProps> = (
   const [activeFilter, setActiveFilter] = useState<string>('all');
 
   const presetFilters = [
-    { label: 'All Bot Agents', query: '*claw*, *hermes*, *agent*, *nous*' },
+    { label: 'Primary Agents', query: '*openclaw-gateway*, *zeroclaw*, *hermes-agent*, *picoclaw-launcher*' },
     { label: 'Hermes Only', query: '*hermes*' },
-    { label: 'ZeroClaw Only', query: '*zero*' },
-    { label: 'OpenClaw Only', query: '*open*' },
-    { label: 'PicoClaw Only', query: '*pico*' },
+    { label: 'ZeroClaw Only', query: '*zeroclaw*' },
+    { label: 'OpenClaw Only', query: '*openclaw-gateway*' },
+    { label: 'PicoClaw Only', query: '*picoclaw-launcher*' },
     { label: 'All Host Containers (*)', query: '*' }
   ];
 

@@ -689,68 +689,58 @@ let agentStates: Record<string, {
   latencyHistory?: number[];
   uptimePct?: number;
   avgLatencyMs?: number;
-}> = {
-  'hermes-agent': {
-    status: 'running',
-    containerId: 'c108a94fd32b',
-    version: 'v0.9.4',
-    dockerImage: 'ghcr.io/nousresearch/hermes-agent:v0.9.4',
-    uptimeHistory: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-    latencyHistory: [142, 156, 138, 145, 162, 148, 155, 141, 139, 144, 150, 147, 152, 143, 146, 149, 151, 145, 140, 144],
-    uptimePct: 100,
-    avgLatencyMs: 147,
-    logs: [
-      '[Hermes Core] Initializing Nous Hermes 3.11 Runtime...',
-      '[Hermes Core] Mounting workspace volume at /workspace',
-      '[Hermes Core] SKILL.md specification engine loaded (9 skills active)',
-      '[Hermes Core] Channel listener: Telegram polling active [@developer, @admin]',
-      '[Hermes Core] Ready for autonomous tasks on port 8080'
-    ]
-  },
-  'zeroclaw': {
-    status: 'stopped',
-    containerId: 'b94101e4aa22',
-    version: 'v0.4.1',
-    dockerImage: 'zeroclaw/zeroclaw:v0.4.1',
-    uptimeHistory: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-    latencyHistory: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-    uptimePct: 0,
-    avgLatencyMs: 0,
-    logs: [
-      '[ZeroClaw Daemon] Rust tokio runtime exited with code 0',
-      '[ZeroClaw Daemon] Snapshot saved to /var/zeroclaw/memory.md'
-    ]
-  },
-  'openclaw': {
-    status: 'running',
-    containerId: 'f77012bc091e',
-    version: 'v1.2.0',
-    dockerImage: 'openclaw/openclaw:v1.2.0',
-    uptimeHistory: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-    latencyHistory: [92, 105, 88, 95, 112, 98, 105, 91, 89, 94, 100, 97, 102, 93, 96, 99, 101, 95, 90, 94],
-    uptimePct: 99.8,
-    avgLatencyMs: 98,
-    logs: [
-      '[OpenClaw Hub] Detected container openclaw-hub-prod (f77012bc091e)',
-      '[OpenClaw Hub] Gateway daemon active and connected via Docker port 8082'
-    ]
-  },
-  'picoclaw': {
-    status: 'running',
-    containerId: 'e4991ac89b10',
-    version: 'v0.8.2',
-    dockerImage: 'sipeed/picoclaw:v0.8.2',
-    uptimeHistory: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-    latencyHistory: [42, 56, 38, 45, 62, 48, 55, 41, 39, 44, 50, 47, 52, 43, 46, 49, 51, 45, 40, 44],
-    uptimePct: 100,
-    avgLatencyMs: 48,
-    logs: [
-      '[PicoClaw Edge] Sipeed Go engine initialized (Memory: 9.4MB)',
-      '[PicoClaw Edge] PicoLM Quantized GGUF inference ready',
-      '[PicoClaw Edge] WebUI Gateway listening on 0.0.0.0:8083'
-    ]
-  }
+}> = {};
+
+const AGENT_CONTAINER_MAPPING: Record<string, string[]> = {
+  'hermes-agent': ['hermes-agent', 'hermes-agent-core'],
+  'zeroclaw': ['zeroclaw', 'zeroclaw-daemon'],
+  'openclaw': ['openclaw-gateway', 'openclaw-hub', 'openclaw'],
+  'picoclaw': ['picoclaw-launcher', 'picoclaw-edge', 'picoclaw']
 };
+
+function discoverAgentsSync() {
+  const hasDockerSocket = fs.existsSync('/var/run/docker.sock');
+  if (!hasDockerSocket) return;
+
+  for (const [agentId, candidateContainers] of Object.entries(AGENT_CONTAINER_MAPPING)) {
+    for (const cName of candidateContainers) {
+      try {
+        const inspectOut = execSync(`docker inspect -f "{{.State.Running}},{{.Config.Image}},{{.Id}}" ${cName}`, { 
+          encoding: 'utf8', 
+          timeout: 1000, 
+          stdio: ['ignore', 'pipe', 'ignore'] 
+        }).trim();
+        
+        if (inspectOut) {
+          const [running, image, id] = inspectOut.split(',');
+          const status = running === 'true' ? 'running' : 'stopped';
+          
+          agentStates[agentId] = {
+            status,
+            containerId: id.slice(0, 12),
+            dockerImage: image,
+            version: image.split(':').pop() || 'latest',
+            logs: [`[Discovery] Detected container ${cName} (${id.slice(0, 12)})`],
+            uptimeHistory: Array(20).fill(status === 'running' ? 1 : 0),
+            latencyHistory: Array(20).fill(0),
+            uptimePct: status === 'running' ? 100 : 0,
+            avgLatencyMs: 0
+          };
+          break; // Found a container for this agent
+        }
+      } catch (e) {
+        // Container not found, continue to next candidate
+      }
+    }
+  }
+}
+
+// Run initial discovery
+try {
+  discoverAgentsSync();
+} catch (e) {
+  console.error('Initial agent discovery failed:', e);
+}
 
 const STATE_FILE_PATH = path.join(process.cwd(), 'data', 'app_persistent_state.json');
 const SQLITE_DB_PATH = path.join(process.cwd(), 'data', 'clawdock', 'clawdock.db');
@@ -2558,7 +2548,7 @@ const discoveredHostContainers = [
   },
   {
     id: 'b94101e4aa22',
-    name: 'zeroclaw-daemon',
+    name: 'zeroclaw',
     image: 'zeroclaw/zeroclaw:latest',
     status: 'stopped',
     state: 'Exited (0) 18 mins ago',
@@ -2570,7 +2560,7 @@ const discoveredHostContainers = [
   },
   {
     id: 'f77012bc091e',
-    name: 'openclaw-hub-prod',
+    name: 'openclaw-gateway',
     image: 'openclaw/openclaw:latest',
     status: 'running',
     state: 'Up 1 hour',
@@ -2582,7 +2572,7 @@ const discoveredHostContainers = [
   },
   {
     id: 'e4991ac89b10',
-    name: 'picoclaw-edge-gateway',
+    name: 'picoclaw-launcher',
     image: 'sipeed/picoclaw:latest',
     status: 'running',
     state: 'Up 6 hours',
@@ -2594,7 +2584,7 @@ const discoveredHostContainers = [
   },
   {
     id: 'a88390bbf12c',
-    name: 'hermes-agent-dev-sandbox',
+    name: 'hermes-agent',
     image: 'nousresearch/hermes:v0.9.3',
     status: 'stopped',
     state: 'Exited (137) 3 hours ago',
@@ -2606,7 +2596,7 @@ const discoveredHostContainers = [
   },
   {
     id: 'd9124401bb7a',
-    name: 'openclaw-gateway-staging',
+    name: 'openclaw-gateway-legacy',
     image: 'ghcr.io/openclaw/gateway:edge',
     status: 'running',
     state: 'Up 30 mins',
@@ -2705,11 +2695,7 @@ app.get('/api/agents/:id/detect', (req, res) => {
   let runningContainer = current.containerId;
   const hasDockerSocket = fs.existsSync('/var/run/docker.sock');
   if (hasDockerSocket) {
-    let candidateContainers = [agentId];
-    if (agentId === 'openclaw') candidateContainers = ['openclaw-hub', 'openclaw'];
-    else if (agentId === 'zeroclaw') candidateContainers = ['zeroclaw-daemon', 'zeroclaw'];
-    else if (agentId === 'picoclaw') candidateContainers = ['picoclaw-edge', 'picoclaw'];
-    else candidateContainers = ['hermes-agent-core', 'hermes-agent', agentId];
+    let candidateContainers = AGENT_CONTAINER_MAPPING[agentId] || [agentId];
 
     for (const cName of candidateContainers) {
       try {
@@ -4056,6 +4042,29 @@ setInterval(() => {
     }
   }
 }, 30000);
+
+app.post('/api/agents/:id/rollback', (req, res) => {
+  const { id } = req.params;
+  const { tag, version } = req.body;
+  
+  if (!agentStates[id]) {
+    return res.status(404).json({ success: false, message: 'Agent not found' });
+  }
+
+  const agent = agentStates[id];
+  agent.status = 'restarting';
+  agent.logs.push(`[Rollback] Initiating rollback to version ${version} (Tag: ${tag})...`);
+  agent.logs.push(`[Docker] Pulling image ${agent.dockerImage.split(':')[0]}:${tag}...`);
+
+  setTimeout(() => {
+    agent.status = 'running';
+    agent.version = version;
+    agent.dockerImage = `${agent.dockerImage.split(':')[0]}:${tag}`;
+    agent.logs.push(`[Rollback] Successfully rolled back to ${version}. Container restarted.`);
+  }, 2000);
+
+  res.json({ success: true, message: `Rollback to ${version} initiated` });
+});
 
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {

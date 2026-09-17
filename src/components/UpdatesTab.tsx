@@ -16,9 +16,17 @@ import {
   Search, 
   Layers,
   Container,
-  AlertTriangle
+  AlertTriangle,
+  Tag,
+  History,
+  Activity,
+  RotateCcw,
+  GitCompare,
+  ArrowRightLeft,
+  FileJson,
+  X
 } from 'lucide-react';
-import { SystemUpdateItem, UpdateCategory } from '../types';
+import { SystemUpdateItem, UpdateCategory, BuildHistoryItem } from '../types';
 
 interface UpdatesTabProps {
   updates: SystemUpdateItem[];
@@ -29,6 +37,43 @@ interface UpdatesTabProps {
   isCheckingAll: boolean;
   lastCheckedTime: string;
 }
+
+// Mock configuration schemas for comparison
+const MOCK_SCHEMAS: Record<string, any> = {
+  'v1.2.0': {
+    engine: 'hermes-3.5',
+    max_tokens: 4096,
+    temperature: 0.7,
+    features: ['async_tools', 'memory_graph', 'reasoning_tokens'],
+    retry_policy: { strategy: 'exponential', max_retries: 3 }
+  },
+  'v1.1.0': {
+    engine: 'hermes-3.0',
+    max_tokens: 2048,
+    temperature: 0.8,
+    features: ['async_tools', 'memory_graph'],
+    retry_policy: { strategy: 'fixed', max_retries: 5 }
+  },
+  'v2.0.0': {
+    schema_version: '2.0',
+    agent_id: 'openclaw-gateway',
+    routing: 'multi-fleet',
+    models: ['gpt-4o', 'claude-3.5-sonnet'],
+    security: { tls: true, auth: 'oidc' }
+  },
+  'v0.6.2': {
+    allocator: 'jemalloc',
+    heap_limit: '12MB',
+    simd: true,
+    persistence: 'sqlite'
+  },
+  'v1.0.0': {
+    boot_mode: 'fast',
+    inference: 'picolm-gguf',
+    hardware_accel: 'riscv-v',
+    web_gateway: true
+  }
+};
 
 export const UpdatesTab: React.FC<UpdatesTabProps> = ({
   updates,
@@ -47,6 +92,9 @@ export const UpdatesTab: React.FC<UpdatesTabProps> = ({
   const [copiedCommandId, setCopiedCommandId] = useState<string | null>(null);
   const [updatingIds, setUpdatingIds] = useState<Record<string, boolean>>({});
   const [isBulkUpdating, setIsBulkUpdating] = useState(false);
+  const [rollingBack, setRollingBack] = useState<string | null>(null);
+  const [compareSelection, setCompareSelection] = useState<{agentId: string, v1?: BuildHistoryItem, v2?: BuildHistoryItem}>({ agentId: '' });
+  const [showCompare, setShowCompare] = useState(false);
 
   // Filtered update list
   const filteredUpdates = useMemo(() => {
@@ -73,6 +121,42 @@ export const UpdatesTab: React.FC<UpdatesTabProps> = ({
       return true;
     });
   }, [updates, activeCategory, onlyUpdates, searchQuery]);
+
+  const handleRollback = async (agentId: string, history: BuildHistoryItem) => {
+    if (!confirm(`Are you sure you want to rollback to ${history.version} (Tag: ${history.dockerTag})? This will restart the container.`)) return;
+    
+    setRollingBack(history.id);
+    try {
+      const res = await fetch(`/api/agents/${agentId}/rollback`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tag: history.dockerTag, version: history.version })
+      });
+      const data = await res.json();
+      if (data.success) {
+        alert(`Rollback initiated for ${agentId}. The agent will restart shortly.`);
+      }
+    } catch (e) {
+      console.error('Rollback failed:', e);
+    } finally {
+      setRollingBack(null);
+    }
+  };
+
+  const startComparison = (agentId: string) => {
+    setCompareSelection({ agentId });
+    setShowCompare(true);
+  };
+
+  const toggleVersionSelect = (v: BuildHistoryItem) => {
+    setCompareSelection(prev => {
+      if (prev.v1?.id === v.id) return { ...prev, v1: undefined };
+      if (prev.v2?.id === v.id) return { ...prev, v2: undefined };
+      if (!prev.v1) return { ...prev, v1: v };
+      if (!prev.v2) return { ...prev, v2: v };
+      return { ...prev, v2: v }; // Replace v2 if both selected
+    });
+  };
 
   // Metric counts
   const totalCount = updates.length;
@@ -146,6 +230,125 @@ export const UpdatesTab: React.FC<UpdatesTabProps> = ({
 
   return (
     <div className="space-y-6">
+      {/* Comparison Modal Overlay */}
+      {showCompare && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
+          <div className="w-full max-w-5xl bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div className="p-6 border-b border-slate-800 flex items-center justify-between bg-slate-900/50">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-xl bg-indigo-500/10 text-indigo-400">
+                  <GitCompare className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-white">Compare Build Schemas</h3>
+                  <p className="text-xs text-slate-500">Agent: {compareSelection.agentId}</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setShowCompare(false)}
+                className="p-2 rounded-full hover:bg-slate-800 text-slate-400 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-auto p-6">
+              {!compareSelection.v1 || !compareSelection.v2 ? (
+                <div className="h-64 flex flex-col items-center justify-center space-y-4 border-2 border-dashed border-slate-800 rounded-2xl">
+                  <div className="p-4 rounded-full bg-slate-800/50">
+                    <ArrowRightLeft className="w-8 h-8 text-slate-600" />
+                  </div>
+                  <p className="text-slate-400 font-medium">Select two builds from the history to compare configurations</p>
+                  <div className="flex gap-2">
+                    {updates.find(u => u.id === compareSelection.agentId)?.buildHistory?.map(h => (
+                      <button
+                        key={h.id}
+                        onClick={() => toggleVersionSelect(h)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${
+                          compareSelection.v1?.id === h.id || compareSelection.v2?.id === h.id
+                            ? 'bg-indigo-500 border-indigo-400 text-white shadow-lg shadow-indigo-500/20 scale-105'
+                            : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-600'
+                        }`}
+                      >
+                        {h.version}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-6 h-full">
+                  {/* Version 1 */}
+                  <div className="space-y-4 flex flex-col h-full">
+                    <div className="flex items-center justify-between px-4 py-3 rounded-xl bg-slate-800/50 border border-slate-700/50">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold text-white font-mono">{compareSelection.v1.version}</span>
+                        <span className="text-[10px] text-slate-500">{compareSelection.v1.dockerTag}</span>
+                      </div>
+                      <span className="text-[10px] text-slate-400">Left Baseline</span>
+                    </div>
+                    <div className="flex-1 p-4 rounded-xl bg-slate-950 font-mono text-xs overflow-auto border border-slate-800">
+                      <pre className="text-slate-300">
+                        {JSON.stringify(MOCK_SCHEMAS[compareSelection.v1.version] || { warning: 'Schema not found for this build' }, null, 2)}
+                      </pre>
+                    </div>
+                  </div>
+
+                  {/* Version 2 */}
+                  <div className="space-y-4 flex flex-col h-full">
+                    <div className="flex items-center justify-between px-4 py-3 rounded-xl bg-indigo-500/10 border border-indigo-500/20">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold text-indigo-400 font-mono">{compareSelection.v2.version}</span>
+                        <span className="text-[10px] text-indigo-300/60">{compareSelection.v2.dockerTag}</span>
+                      </div>
+                      <span className="text-[10px] text-indigo-400">Target Changes</span>
+                    </div>
+                    <div className="flex-1 p-4 rounded-xl bg-slate-950 font-mono text-xs overflow-auto border border-indigo-500/10">
+                      <pre className="text-slate-300">
+                        {Object.entries(MOCK_SCHEMAS[compareSelection.v2.version] || {}).map(([key, val]) => {
+                          const v1Val = (MOCK_SCHEMAS[compareSelection.v1!.version] || {})[key];
+                          const isDiff = JSON.stringify(val) !== JSON.stringify(v1Val);
+                          return (
+                            <div key={key} className={isDiff ? 'bg-amber-500/10 -mx-4 px-4 py-0.5 border-l-2 border-amber-500' : ''}>
+                              <span className="text-slate-500">"{key}": </span>
+                              <span className={isDiff ? 'text-amber-400 font-bold' : 'text-slate-300'}>
+                                {JSON.stringify(val, null, 2)}
+                              </span>
+                              {isDiff && <span className="text-[10px] text-slate-500 ml-2 italic"> // changed from {JSON.stringify(v1Val)}</span>}
+                            </div>
+                          );
+                        })}
+                        {!(MOCK_SCHEMAS[compareSelection.v2.version]) && 'Schema not found for this build'}
+                      </pre>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+            
+            <div className="p-6 bg-slate-900 border-t border-slate-800 flex justify-between items-center">
+              <div className="flex items-center gap-2 text-[10px] text-slate-500">
+                <div className="w-2 h-2 rounded-full bg-amber-500" />
+                <span>Indicates schema difference detected between builds</span>
+              </div>
+              <div className="flex gap-3">
+                <button 
+                  onClick={() => setCompareSelection({ agentId: compareSelection.agentId })}
+                  className="px-4 py-2 rounded-xl text-sm font-medium text-slate-400 hover:text-white transition-colors"
+                >
+                  Clear Selection
+                </button>
+                <button 
+                  onClick={() => setShowCompare(false)}
+                  className="px-6 py-2 rounded-xl bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-500 transition-colors"
+                >
+                  Close Viewer
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Top Header Card */}
       <div className="p-6 rounded-2xl bg-gradient-to-r from-slate-900 via-slate-900/90 to-indigo-950/40 border border-slate-800 space-y-4">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -390,6 +593,24 @@ export const UpdatesTab: React.FC<UpdatesTabProps> = ({
                       <span className="text-slate-400">{item.packageOrImage}</span>
                       <span>•</span>
                       <span>Checked: {item.lastChecked}</span>
+                      {item.dockerTag && (
+                        <>
+                          <span>•</span>
+                          <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border ${
+                            item.registryMatch !== false 
+                              ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' 
+                              : 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                          }`}>
+                            <Tag className="w-2.5 h-2.5" />
+                            {item.dockerTag}
+                            {item.registryMatch !== false ? (
+                              <Check className="w-2.5 h-2.5" />
+                            ) : (
+                              <Activity className="w-2.5 h-2.5 animate-pulse" />
+                            )}
+                          </span>
+                        </>
+                      )}
                     </div>
                   </div>
 
@@ -575,6 +796,74 @@ export const UpdatesTab: React.FC<UpdatesTabProps> = ({
                         </div>
                         <div className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 font-mono text-xs text-indigo-300 overflow-x-auto select-all">
                           {item.installCommand}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Build History Section */}
+                    {item.buildHistory && item.buildHistory.length > 0 && (
+                      <div className="pt-4 border-t border-slate-800/40">
+                        <div className="flex items-center justify-between mb-3">
+                          <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                            <History className="w-3.5 h-3.5 text-indigo-400" />
+                            Build & Deployment History (CI/CD Pipeline)
+                          </span>
+                          <button
+                            onClick={() => startComparison(item.id)}
+                            className="text-[10px] font-bold text-indigo-400 hover:text-indigo-300 flex items-center gap-1 px-2 py-1 rounded bg-indigo-500/10 border border-indigo-500/20 transition-colors"
+                          >
+                            <GitCompare className="w-3 h-3" />
+                            Compare Versions
+                          </button>
+                        </div>
+                        <div className="space-y-2">
+                          {item.buildHistory.map(history => (
+                            <div key={history.id} className="flex items-center justify-between p-3 rounded-xl bg-slate-950/40 border border-slate-800/60 hover:border-slate-700/60 transition-colors">
+                              <div className="flex items-center gap-3">
+                                <div className="p-1.5 rounded-lg bg-slate-800 text-slate-400">
+                                  <Container className="w-3.5 h-3.5" />
+                                </div>
+                                <div>
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-xs font-bold text-slate-200 font-mono">{history.version}</span>
+                                    <span className="px-1.5 py-0.5 rounded bg-indigo-500/10 text-indigo-400 text-[10px] font-mono border border-indigo-500/20">
+                                      {history.dockerTag}
+                                    </span>
+                                  </div>
+                                  <p className="text-[10px] text-slate-500 mt-0.5 line-clamp-1 italic">
+                                    {history.commitMessage || 'No commit message available'}
+                                  </p>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-4">
+                                <div className="text-right">
+                                  <div className="text-[10px] font-medium text-slate-400 flex items-center gap-1 justify-end">
+                                    <Clock className="w-3 h-3" />
+                                    {new Date(history.timestamp).toLocaleString()}
+                                  </div>
+                                  <div className="text-[10px] text-emerald-400 font-semibold mt-0.5">
+                                    Deployed Successfully
+                                  </div>
+                                </div>
+                                <button
+                                  onClick={() => handleRollback(item.id, history)}
+                                  disabled={rollingBack === history.id}
+                                  className={`p-2 rounded-lg border transition-all ${
+                                    rollingBack === history.id
+                                      ? 'bg-slate-800 border-slate-700 text-slate-500 cursor-not-allowed'
+                                      : 'bg-rose-500/10 border-rose-500/20 text-rose-400 hover:bg-rose-500 hover:text-white hover:border-rose-500'
+                                  }`}
+                                  title="Rollback to this version"
+                                >
+                                  {rollingBack === history.id ? (
+                                    <RefreshCw className="w-4 h-4 animate-spin" />
+                                  ) : (
+                                    <RotateCcw className="w-4 h-4" />
+                                  )}
+                                </button>
+                              </div>
+                            </div>
+                          ))}
                         </div>
                       </div>
                     )}

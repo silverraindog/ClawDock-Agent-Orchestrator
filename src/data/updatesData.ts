@@ -18,6 +18,12 @@ export const INITIAL_UPDATES: SystemUpdateItem[] = [
     installCommand: 'docker pull ghcr.io/nousresearch/hermes-agent:v1.2.0 && docker compose restart hermes-agent',
     breakingChanges: false,
     autoUpdateSupported: true,
+    dockerTag: 'v1.2.0-stable',
+    registryMatch: true,
+    buildHistory: [
+      { id: 'bh-1', version: 'v1.2.0', timestamp: '2026-09-02T14:30:00Z', dockerTag: 'v1.2.0-stable', commitMessage: 'feat: Claude 3.7 support' },
+      { id: 'bh-2', version: 'v1.1.0', timestamp: '2026-08-15T10:15:00Z', dockerTag: 'v1.1.0-stable', commitMessage: 'feat: async tool execution' }
+    ],
     changelogSummary: [
       'Native Claude 3.7 Sonnet & Gemini 2.0 Flash reasoning tokens support',
       'High-throughput asynchronous tool execution queue',
@@ -67,6 +73,11 @@ export const INITIAL_UPDATES: SystemUpdateItem[] = [
     installCommand: 'docker pull zeroclaw/zeroclaw:v0.6.2 && docker compose restart zeroclaw',
     breakingChanges: false,
     autoUpdateSupported: true,
+    dockerTag: 'v0.6.2-alpine',
+    registryMatch: true,
+    buildHistory: [
+      { id: 'bh-z1', version: 'v0.6.2', timestamp: '2026-08-30T16:45:00Z', dockerTag: 'v0.6.2-alpine', commitMessage: 'perf: SIMD token parser' }
+    ],
     changelogSummary: [
       'Sub-12MB heap optimization with jemalloc 5.3 allocator',
       'AVX-512 / NEON SIMD accelerated token stream parser',
@@ -110,6 +121,11 @@ export const INITIAL_UPDATES: SystemUpdateItem[] = [
     installCommand: 'docker pull openclaw/openclaw:v2.0.0 && docker compose restart openclaw',
     breakingChanges: true,
     autoUpdateSupported: true,
+    dockerTag: 'v2.0.0-distroless',
+    registryMatch: false,
+    buildHistory: [
+      { id: 'bh-o1', version: 'v2.0.0', timestamp: '2026-09-10T09:00:00Z', dockerTag: 'v2.0.0-distroless', commitMessage: 'feat: Major v2 architecture' }
+    ],
     changelogSummary: [
       'New OpenClaw v2 Gateway JSON Schema (RFC draft-07) with Multi-Agent Fleets',
       'Unified models catalog & fallback routing (openai, anthropic, groq, gemini)',
@@ -159,6 +175,11 @@ export const INITIAL_UPDATES: SystemUpdateItem[] = [
     installCommand: 'docker pull picoclaw/picoclaw:v1.0.0 && docker compose restart picoclaw',
     breakingChanges: false,
     autoUpdateSupported: true,
+    dockerTag: 'v1.0.0-riscv64',
+    registryMatch: true,
+    buildHistory: [
+      { id: 'bh-p1', version: 'v1.0.0', timestamp: '2026-09-03T11:20:00Z', dockerTag: 'v1.0.0-riscv64', commitMessage: 'feat: Production 1.0 release' }
+    ],
     changelogSummary: [
       'Production 1.0 Milestone release with full backward compatibility',
       'RISC-V 64-bit hardware cryptographic instruction acceleration',
