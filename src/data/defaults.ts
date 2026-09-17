@@ -25,6 +25,8 @@ export const INITIAL_AGENTS: AgentInfo[] = [
     capabilities: ['Autonomous Coding', 'Bash Shell', 'SKILL.md Spec', 'Memory Graph', 'Multi-file Edits', 'Multi-channel Gateway'],
     docsUrl: 'https://github.com/nousresearch/hermes-agent',
     repoUrl: 'https://github.com/nousresearch/hermes-agent',
+    failbackStatus: 'active',
+    failbackCapability: 'Local Ollama & ZeroClaw Node',
   },
   {
     id: 'zeroclaw',
@@ -49,6 +51,8 @@ export const INITIAL_AGENTS: AgentInfo[] = [
     capabilities: ['Sub-15MB RAM', 'Rust Safety', 'Async Runtime', 'REST & WS Daemon', 'Low-power Edge', 'Docker Ready'],
     docsUrl: 'https://github.com/zeroclaw/zeroclaw',
     repoUrl: 'https://github.com/zeroclaw/zeroclaw',
+    failbackStatus: 'configured',
+    failbackCapability: 'PicoClaw Standby Node',
   },
   {
     id: 'openclaw',
@@ -73,6 +77,8 @@ export const INITIAL_AGENTS: AgentInfo[] = [
     capabilities: ['16+ Chat Channels', 'Gateway Daemon', 'Agent Workspace', 'Tool Plugins', 'Multi-bot Routing'],
     docsUrl: 'https://github.com/openclaw/openclaw',
     repoUrl: 'https://github.com/openclaw/openclaw',
+    failbackStatus: 'active',
+    failbackCapability: 'Hermes Core Gateway & DeepSeek',
   },
   {
     id: 'picoclaw',
@@ -97,6 +103,8 @@ export const INITIAL_AGENTS: AgentInfo[] = [
     capabilities: ['<10MB RAM footprint', 'Sub-second Boot', 'PicoLM Inference', 'Go Binary', 'WebUI Gateway'],
     docsUrl: 'https://github.com/sipeed/picoclaw',
     repoUrl: 'https://github.com/sipeed/picoclaw',
+    failbackStatus: 'standby',
+    failbackCapability: 'ZeroClaw Local Edge Engine',
   }
 ];
 
@@ -188,6 +196,15 @@ export const DEFAULT_CONFIGS: Record<AgentId, AgentFullConfig> = {
       temperatureSpread: 0.3,
       consensusThreshold: 0.85
     },
+    fallback: {
+      enabled: true,
+      targetAgentId: 'zeroclaw',
+      strategy: 'on_offline',
+      fallbackProvider: 'ollama',
+      fallbackModel: 'hermes-3-llama-3.1-8b',
+      provider: 'ollama',
+      model: 'hermes-3-llama-3.1-8b'
+    },
   },
   'zeroclaw': {
     agentId: 'zeroclaw',
@@ -274,6 +291,15 @@ export const DEFAULT_CONFIGS: Record<AgentId, AgentFullConfig> = {
       rounds: 1,
       temperatureSpread: 0.2,
       consensusThreshold: 0.80
+    },
+    fallback: {
+      enabled: false,
+      targetAgentId: 'picoclaw',
+      strategy: 'on_offline',
+      fallbackProvider: 'mistral',
+      fallbackModel: 'mistral-7b-instruct',
+      provider: 'mistral',
+      model: 'mistral-7b-instruct'
     },
   },
   'openclaw': {
@@ -369,6 +395,15 @@ export const DEFAULT_CONFIGS: Record<AgentId, AgentFullConfig> = {
       temperatureSpread: 0.2,
       consensusThreshold: 0.80
     },
+    fallback: {
+      enabled: true,
+      targetAgentId: 'hermes-agent',
+      strategy: 'on_error',
+      fallbackProvider: 'deepseek',
+      fallbackModel: 'deepseek-chat',
+      provider: 'deepseek',
+      model: 'deepseek-chat'
+    },
   },
   'picoclaw': {
     agentId: 'picoclaw',
@@ -456,6 +491,16 @@ export const DEFAULT_CONFIGS: Record<AgentId, AgentFullConfig> = {
       rounds: 1,
       temperatureSpread: 0.2,
       consensusThreshold: 0.80
+    },
+    fallback: {
+      enabled: false,
+      targetAgentId: 'zeroclaw',
+      strategy: 'on_latency',
+      latencyThresholdMs: 500,
+      fallbackProvider: 'ollama',
+      fallbackModel: 'picolm-1.1b',
+      provider: 'ollama',
+      model: 'picolm-1.1b'
     },
   }
 };

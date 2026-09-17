@@ -25,6 +25,8 @@ export interface AgentInfo {
   capabilities: string[];
   docsUrl: string;
   repoUrl: string;
+  failbackStatus?: 'active' | 'configured' | 'standby' | 'disabled' | 'unsupported';
+  failbackCapability?: string;
 }
 
 export type LLMProvider = 
@@ -132,6 +134,17 @@ export interface MoAConfig {
   consensusThreshold: number;
 }
 
+export interface FallbackConfig {
+  enabled: boolean;
+  targetAgentId?: AgentId;
+  strategy: 'on_offline' | 'on_error' | 'on_latency';
+  latencyThresholdMs?: number;
+  fallbackProvider?: LLMProvider | string;
+  fallbackModel?: string;
+  provider?: LLMProvider | string;
+  model?: string;
+}
+
 export interface AgentFullConfig {
   agentId: AgentId;
   version: string;
@@ -143,6 +156,7 @@ export interface AgentFullConfig {
   security: SecurityConfig;
   storage: StorageConfig;
   moa: MoAConfig;
+  fallback: FallbackConfig;
   customEnv: Record<string, string>;
 }
 

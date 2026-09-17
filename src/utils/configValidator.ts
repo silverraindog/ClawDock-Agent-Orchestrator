@@ -1010,6 +1010,79 @@ export function validateAgentConfig(data: any, expectedAgentId?: AgentId): Confi
     }
   }
 
+  // Fallback & Redundancy Validation Check
+  if (data.fallback && typeof data.fallback === 'object') {
+    const fallbackProvider = data.fallback.fallbackProvider || data.fallback.provider;
+    const fallbackModel = data.fallback.fallbackModel || data.fallback.model;
+
+    if (data.fallback.enabled) {
+      // 1. Validate failback provider presence and support
+      if (!fallbackProvider || typeof fallbackProvider !== 'string' || !fallbackProvider.trim()) {
+        errors.push("Missing required failback provider in active fallback configuration.");
+        issues.push({
+          id: 'missing-fallback-provider',
+          type: 'missing_required',
+          severity: 'error',
+          path: 'fallback.provider',
+          message: "Failback is enabled but no failback provider is defined. Specify a supported provider (e.g., 'ollama', 'openai', 'anthropic', 'deepseek', 'mistral', 'groq', 'gemini').",
+          suggestedFix: 'Set fallback.provider to "ollama" or "openai"'
+        });
+      } else if (!VALID_PROVIDERS.includes(fallbackProvider as any)) {
+        errors.push(`Unsupported failback provider "${fallbackProvider}". Expected one of: ${VALID_PROVIDERS.join(', ')}.`);
+        issues.push({
+          id: 'unsupported-fallback-provider',
+          type: 'type_error',
+          severity: 'error',
+          path: 'fallback.provider',
+          message: `Unsupported failback provider "${fallbackProvider}". Expected one of: ${VALID_PROVIDERS.join(', ')}.`,
+          suggestedFix: 'Switch to a supported provider such as "ollama", "openai", or "deepseek"'
+        });
+      } else {
+        issues.push({
+          id: 'valid-fallback-provider',
+          type: 'schema_mismatch',
+          severity: 'info',
+          path: 'fallback.provider',
+          message: `Failback provider "${fallbackProvider}" is valid and supported according to schema.`
+        });
+      }
+
+      // 2. Validate fallback model presence and validity
+      if (!fallbackModel || typeof fallbackModel !== 'string' || !fallbackModel.trim()) {
+        errors.push("Missing required fallback model in active fallback configuration.");
+        issues.push({
+          id: 'missing-fallback-model',
+          type: 'missing_required',
+          severity: 'error',
+          path: 'fallback.model',
+          message: "Failback is enabled but no fallback model identifier is defined. Specify a valid fallback model (e.g., 'llama3.2:3b', 'gpt-4o-mini', 'claude-3-haiku').",
+          suggestedFix: 'Set fallback.model to a supported model string'
+        });
+      } else {
+        issues.push({
+          id: 'valid-fallback-model',
+          type: 'schema_mismatch',
+          severity: 'info',
+          path: 'fallback.model',
+          message: `Fallback model "${fallbackModel}" is valid according to schema.`
+        });
+      }
+
+      // 3. Fallback target agent checks
+      if (data.fallback.targetAgentId) {
+        if (!VALID_AGENT_IDS.includes(data.fallback.targetAgentId)) {
+          warnings.push(`Unrecognized fallback targetAgentId "${data.fallback.targetAgentId}". Valid agents: ${VALID_AGENT_IDS.join(', ')}.`);
+        } else if (effectiveAgentId && data.fallback.targetAgentId === effectiveAgentId) {
+          warnings.push(`Fallback targetAgentId cannot be identical to the primary agent "${effectiveAgentId}".`);
+        }
+      }
+    } else {
+      if (fallbackProvider && !VALID_PROVIDERS.includes(fallbackProvider as any)) {
+        warnings.push(`Configured failback provider "${fallbackProvider}" is not in the supported providers list.`);
+      }
+    }
+  }
+
   const normalized: AgentFullConfig = {
     ...data,
     schemaVersion: data.schemaVersion || detectedVersion,
@@ -1024,6 +1097,79 @@ export function validateAgentConfig(data: any, expectedAgentId?: AgentId): Confi
     normalizedConfig: errors.length === 0 ? normalized : undefined,
     syncStatus: errors.length === 0 ? (warnings.length > 0 ? 'mismatched' : 'in_sync') : 'syntax_invalid',
     lineIssuesMap
+  };
+}
+
+export interface FallbackValidationDetail {
+  isValid: boolean;
+  providerSupported: boolean;
+  providerPresent: boolean;
+  provider: string | null;
+  modelValid: boolean;
+  modelPresent: boolean;
+  model: string | null;
+  targetAgentValid: boolean;
+  targetAgentId: AgentId | null;
+  errors: string[];
+  warnings: string[];
+}
+
+export function validateFallbackConfiguration(fallback: any, primaryAgentId?: AgentId): FallbackValidationDetail {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+
+  if (!fallback || typeof fallback !== 'object') {
+    return {
+      isValid: false,
+      providerSupported: false,
+      providerPresent: false,
+      provider: null,
+      modelValid: false,
+      modelPresent: false,
+      model: null,
+      targetAgentValid: false,
+      targetAgentId: null,
+      errors: ['Fallback configuration object missing.'],
+      warnings: []
+    };
+  }
+
+  const provider = fallback.fallbackProvider || fallback.provider || null;
+  const model = fallback.fallbackModel || fallback.model || null;
+  const providerPresent = !!(provider && String(provider).trim());
+  const providerSupported = providerPresent && VALID_PROVIDERS.includes(provider as any);
+  const modelPresent = !!(model && String(model).trim());
+  const modelValid = modelPresent && typeof model === 'string';
+
+  let targetAgentValid = true;
+  if (fallback.targetAgentId) {
+    if (!VALID_AGENT_IDS.includes(fallback.targetAgentId)) {
+      targetAgentValid = false;
+      warnings.push(`Target agent '${fallback.targetAgentId}' not recognized.`);
+    } else if (primaryAgentId && fallback.targetAgentId === primaryAgentId) {
+      targetAgentValid = false;
+      warnings.push('Target agent cannot match primary agent.');
+    }
+  }
+
+  if (fallback.enabled) {
+    if (!providerPresent) errors.push('Failback provider is required.');
+    else if (!providerSupported) errors.push(`Provider '${provider}' is not supported.`);
+    if (!modelPresent) errors.push('Fallback model identifier is required.');
+  }
+
+  return {
+    isValid: errors.length === 0,
+    providerSupported,
+    providerPresent,
+    provider,
+    modelValid,
+    modelPresent,
+    model,
+    targetAgentValid,
+    targetAgentId: fallback.targetAgentId || null,
+    errors,
+    warnings
   };
 }
 

@@ -13,9 +13,16 @@ import {
   Sparkles,
   Eye,
   FileJson,
-  Zap
+  Zap,
+  ShieldCheck,
+  ArrowUpDown,
+  Cpu,
+  Radio,
+  Layers,
+  ChevronDown
 } from 'lucide-react';
 import { RequestLogsTable } from './RequestLogsTable';
+import { AgentFullConfig, AgentInfo } from '../types';
 
 interface ProblematicRouteTest {
   id: string;
@@ -37,7 +44,7 @@ interface InspectorTarget {
   method: 'GET' | 'POST';
   endpoint: string;
   body?: any;
-  category: 'state' | 'docker-exec';
+  category: 'state' | 'docker-exec' | 'failback';
   description: string;
 }
 
@@ -60,6 +67,74 @@ const INSPECTOR_TARGETS: InspectorTarget[] = [
     body: {},
     category: 'state',
     description: 'Synchronizes and verifies state endpoints supporting POST/PUT operations.'
+  },
+  {
+    id: 'hermes-failback-simulate',
+    name: 'POST /api/agents/hermes-agent/simulate-failback',
+    shortLabel: 'Hermes Failback (Simulate)',
+    method: 'POST',
+    endpoint: '/api/agents/hermes-agent/simulate-failback',
+    body: {
+      forced: true,
+      prompt: 'Simulated failback health verification probe',
+      fallbackProvider: 'ollama',
+      fallbackModel: 'hermes-3-llama-3.1-8b',
+      targetAgentId: 'zeroclaw',
+      strategy: 'on_offline'
+    },
+    category: 'failback',
+    description: 'Forces Hermes into failback mode, executing secondary gateway & local Ollama model routing.'
+  },
+  {
+    id: 'zeroclaw-failback-simulate',
+    name: 'POST /api/agents/zeroclaw/simulate-failback',
+    shortLabel: 'ZeroClaw Failback (Simulate)',
+    method: 'POST',
+    endpoint: '/api/agents/zeroclaw/simulate-failback',
+    body: {
+      forced: true,
+      prompt: 'Simulated failback health verification probe',
+      fallbackProvider: 'mistral',
+      fallbackModel: 'mistral-7b-instruct',
+      targetAgentId: 'picoclaw',
+      strategy: 'on_offline'
+    },
+    category: 'failback',
+    description: 'Forces ZeroClaw into failback mode, redirecting traffic to PicoClaw edge engine.'
+  },
+  {
+    id: 'openclaw-failback-simulate',
+    name: 'POST /api/agents/openclaw/simulate-failback',
+    shortLabel: 'OpenClaw Failback (Simulate)',
+    method: 'POST',
+    endpoint: '/api/agents/openclaw/simulate-failback',
+    body: {
+      forced: true,
+      prompt: 'Simulated failback health verification probe',
+      fallbackProvider: 'deepseek',
+      fallbackModel: 'deepseek-chat',
+      targetAgentId: 'hermes-agent',
+      strategy: 'on_error'
+    },
+    category: 'failback',
+    description: 'Forces OpenClaw into failback mode, routing traffic to Hermes core.'
+  },
+  {
+    id: 'picoclaw-failback-simulate',
+    name: 'POST /api/agents/picoclaw/simulate-failback',
+    shortLabel: 'PicoClaw Failback (Simulate)',
+    method: 'POST',
+    endpoint: '/api/agents/picoclaw/simulate-failback',
+    body: {
+      forced: true,
+      prompt: 'Simulated failback health verification probe',
+      fallbackProvider: 'ollama',
+      fallbackModel: 'picolm-1.1b',
+      targetAgentId: 'zeroclaw',
+      strategy: 'on_latency'
+    },
+    category: 'failback',
+    description: 'Forces PicoClaw into failback mode, rerouting to ZeroClaw edge engine.'
   },
   {
     id: 'hermes-docker-exec-post',
@@ -108,7 +183,30 @@ const INSPECTOR_TARGETS: InspectorTarget[] = [
   }
 ];
 
-export const DiagnosticsTab: React.FC = () => {
+export interface DiagnosticsTabProps {
+  currentAgentId?: string;
+  agent?: AgentInfo;
+  config?: AgentFullConfig;
+}
+
+export const DiagnosticsTab: React.FC<DiagnosticsTabProps> = ({
+  currentAgentId = 'hermes-agent',
+  agent,
+  config
+}) => {
+  // Failback simulation state
+  const [isSimulatingFailback, setIsSimulatingFailback] = useState(false);
+  const [simAgentId, setSimAgentId] = useState<string>(currentAgentId || 'hermes-agent');
+  const [simStrategy, setSimStrategy] = useState<'on_offline' | 'on_error' | 'on_latency'>('on_offline');
+  const [failbackConsoleLogs, setFailbackConsoleLogs] = useState<Array<{
+    timestamp: string;
+    level: 'INFO' | 'WARN' | 'SUCCESS' | 'ERROR';
+    step: string;
+    message: string;
+    details?: any;
+  }>>([]);
+  const [consoleCopied, setConsoleCopied] = useState(false);
+
   // Problematic routes probe state
   const [isProbing, setIsProbing] = useState(false);
   const [probeResults, setProbeResults] = useState<ProblematicRouteTest[]>([]);
@@ -142,6 +240,122 @@ export const DiagnosticsTab: React.FC = () => {
       return JSON.stringify(parsed, null, 2);
     } catch {
       return raw;
+    }
+  };
+
+  // Dedicated Button Handler: Simulate Failback & Output to Console
+  const handleSimulateFailback = async (overrideAgentId?: string) => {
+    const targetAgent = overrideAgentId || simAgentId || 'hermes-agent';
+    setIsSimulatingFailback(true);
+    const start = performance.now();
+    const timestampStr = new Date().toLocaleTimeString();
+
+    const fallbackProvider = config?.fallback?.fallbackProvider || config?.fallback?.provider || 'ollama';
+    const fallbackModel = config?.fallback?.fallbackModel || config?.fallback?.model || 'hermes-3-llama-3.1-8b';
+    const targetAgentId = config?.fallback?.targetAgentId || (targetAgent === 'hermes-agent' ? 'zeroclaw' : 'picoclaw');
+    const strategy = simStrategy || config?.fallback?.strategy || 'on_offline';
+
+    const reqPayload = {
+      forced: true,
+      agentId: targetAgent,
+      fallbackProvider,
+      fallbackModel,
+      targetAgentId,
+      strategy,
+      prompt: 'Simulated failback health probe: testing secondary gateway failover routing & model fallback'
+    };
+
+    // Step 1: Output dispatch info to browser console
+    console.log('[DiagnosticsTab: Simulate Failback] MANUAL FAILBACK REQUEST TRIGGERED');
+    console.log('[DiagnosticsTab: Simulate Failback] Forcing Agent into Fallback Configuration with Payload:', reqPayload);
+
+    const initialLogs: Array<{ timestamp: string; level: 'INFO' | 'WARN' | 'SUCCESS' | 'ERROR'; step: string; message: string; details?: any }> = [
+      {
+        timestamp: timestampStr,
+        level: 'WARN',
+        step: 'TRIGGER_FORCED_FAILOVER',
+        message: `Triggering manual request forcing [${targetAgent}] into failback configuration. Trigger condition: [${strategy}].`,
+        details: { targetAgent, strategy }
+      },
+      {
+        timestamp: timestampStr,
+        level: 'INFO',
+        step: 'DISPATCH_ORCHESTRATOR',
+        message: `Dispatched request to failback orchestrator at /api/agents/${targetAgent}/simulate-failback`,
+        details: reqPayload
+      }
+    ];
+    setFailbackConsoleLogs(initialLogs);
+
+    try {
+      const res = await fetch(`/api/agents/${targetAgent}/simulate-failback`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify(reqPayload)
+      });
+      const durationMs = Math.round(performance.now() - start);
+      const text = await res.text();
+
+      // Step 2: Output response status to browser console
+      console.log('[DiagnosticsTab: Simulate Failback] Response Status:', res.status, res.statusText, `(${durationMs}ms)`);
+
+      let parsedData: any = null;
+      try {
+        parsedData = JSON.parse(text);
+      } catch {
+        parsedData = { raw: text };
+      }
+
+      // Step 3: Output full result output to browser console as requested by user
+      console.log('[DiagnosticsTab: Simulate Failback] Full Result Output:', parsedData);
+
+      const successLog: { timestamp: string; level: 'INFO' | 'WARN' | 'SUCCESS' | 'ERROR'; step: string; message: string; details?: any } = {
+        timestamp: new Date().toLocaleTimeString(),
+        level: res.ok ? 'SUCCESS' : 'ERROR',
+        step: res.ok ? 'FAILBACK_ROUTED_SUCCESS' : 'FAILBACK_ROUTED_FAILURE',
+        message: res.ok
+          ? `Failback orchestration succeeded! Gracefully rerouted to fallback target [${parsedData.fallbackTarget?.targetAgentId || targetAgentId}] using model [${parsedData.fallbackTarget?.fallbackModel || fallbackModel}].`
+          : `Failback simulation failed with status ${res.status}: ${res.statusText}`,
+        details: parsedData
+      };
+
+      setFailbackConsoleLogs(prev => [...prev, successLog]);
+
+      // Set formatted JSON inspector response so the on-screen JSON view updates immediately
+      const formattedJson = JSON.stringify(parsedData, null, 2);
+      setInspectResponse({
+        targetId: 'failback-simulation',
+        endpoint: `/api/agents/${targetAgent}/simulate-failback`,
+        method: 'POST',
+        status: res.status,
+        statusText: res.statusText || 'OK',
+        ok: res.ok,
+        durationMs,
+        formattedJson,
+        parsedData,
+        sizeBytes: new Blob([text]).size,
+        timestamp: new Date().toLocaleTimeString()
+      });
+    } catch (err: any) {
+      const durationMs = Math.round(performance.now() - start);
+      console.error('[DiagnosticsTab: Simulate Failback] Fetch Exception:', err);
+      console.log('[DiagnosticsTab: Simulate Failback] Result Output (Error):', { error: err.message || 'Fetch failed' });
+
+      setFailbackConsoleLogs(prev => [
+        ...prev,
+        {
+          timestamp: new Date().toLocaleTimeString(),
+          level: 'ERROR',
+          step: 'NETWORK_EXCEPTION',
+          message: `Network error during failback simulation: ${err.message}`,
+          details: { error: err.message, durationMs }
+        }
+      ]);
+    } finally {
+      setIsSimulatingFailback(false);
     }
   };
 
@@ -363,6 +577,17 @@ export const DiagnosticsTab: React.FC = () => {
 
         <div className="flex items-center flex-wrap gap-2.5 w-full md:w-auto">
           <button
+            id="simulate-failback-btn"
+            onClick={() => handleSimulateFailback()}
+            disabled={isSimulatingFailback}
+            className="flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow-lg shadow-emerald-600/25 transition-all disabled:opacity-60"
+            title="Trigger manual request forcing the agent to use the failback configuration, and display result in console"
+          >
+            <RefreshCw className={`w-4 h-4 ${isSimulatingFailback ? 'animate-spin' : ''}`} />
+            {isSimulatingFailback ? 'Simulating Failback...' : 'Simulate Failback'}
+          </button>
+
+          <button
             id="run-problematic-probe-btn"
             onClick={runProblematicRoutesProbe}
             disabled={isProbing}
@@ -372,6 +597,176 @@ export const DiagnosticsTab: React.FC = () => {
             <Terminal className={`w-4 h-4 ${isProbing ? 'animate-pulse text-indigo-200' : ''}`} />
             {isProbing ? 'Probing All Routes...' : 'Probe Problematic Routes'}
           </button>
+        </div>
+      </div>
+
+      {/* FAILBACK ORCHESTRATION & SIMULATION CONSOLE PANEL */}
+      <div 
+        id="diagnostics-failback-orchestration-card"
+        className="p-6 rounded-2xl border border-emerald-500/30 bg-slate-900/90 backdrop-blur-sm space-y-4 shadow-xl relative overflow-hidden"
+      >
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-800">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 rounded-lg bg-emerald-500/20 text-emerald-300">
+              <ShieldCheck className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                Agent Failback Orchestration Simulator &amp; Console
+              </h3>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Simulate failover conditions (node down, 5xx upstream, or latency spike) and verify redundant routing to local models and secondary gateways
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              id="simulate-failback-panel-btn"
+              onClick={() => handleSimulateFailback()}
+              disabled={isSimulatingFailback}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-colors disabled:opacity-50 shadow-sm"
+              title="Force agent into failback configuration and inspect result"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isSimulatingFailback ? 'animate-spin' : ''}`} />
+              {isSimulatingFailback ? 'Executing Failback...' : 'Simulate Failback'}
+            </button>
+
+            <button
+              id="copy-failback-console-btn"
+              onClick={() => {
+                const logsText = failbackConsoleLogs.map(l => `[${l.timestamp}] [${l.level}] [${l.step}] ${l.message}\n${l.details ? JSON.stringify(l.details, null, 2) : ''}`).join('\n\n');
+                if (logsText) {
+                  navigator.clipboard.writeText(logsText);
+                  setConsoleCopied(true);
+                  setTimeout(() => setConsoleCopied(false), 2000);
+                }
+              }}
+              disabled={failbackConsoleLogs.length === 0}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-800/90 hover:bg-slate-700 text-slate-200 text-xs font-medium transition-colors disabled:opacity-40"
+              title="Copy failback execution logs to clipboard"
+            >
+              {consoleCopied ? (
+                <>
+                  <Check className="w-3.5 h-3.5 text-emerald-400" />
+                  <span className="text-emerald-400">Copied</span>
+                </>
+              ) : (
+                <>
+                  <Copy className="w-3.5 h-3.5" />
+                  <span>Copy Logs</span>
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+
+        {/* Configuration Selectors for Simulation */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-3.5 rounded-xl bg-slate-950/80 border border-slate-800 text-xs">
+          <div>
+            <label className="block text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1">
+              Primary Agent Target:
+            </label>
+            <select
+              id="failback-sim-agent-select"
+              value={simAgentId}
+              onChange={(e) => setSimAgentId(e.target.value)}
+              className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-200 font-mono focus:outline-none focus:border-emerald-500 text-xs"
+            >
+              <option value="hermes-agent">Hermes Agent (Port 8000)</option>
+              <option value="zeroclaw">ZeroClaw (Port 8002)</option>
+              <option value="openclaw">OpenClaw (Port 8001)</option>
+              <option value="picoclaw">PicoClaw (Port 8003)</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1">
+              Simulated Failback Trigger:
+            </label>
+            <select
+              id="failback-sim-strategy-select"
+              value={simStrategy}
+              onChange={(e) => setSimStrategy(e.target.value as any)}
+              className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-200 font-mono focus:outline-none focus:border-emerald-500 text-xs"
+            >
+              <option value="on_offline">On Offline (Heartbeat Lost / Node Down)</option>
+              <option value="on_error">On Error (Upstream 503 / Provider Error)</option>
+              <option value="on_latency">On Latency (Timeout &gt; 500ms Threshold)</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1">
+              Configured Failback Route:
+            </label>
+            <div className="bg-slate-900/90 border border-slate-700/80 rounded-lg px-2.5 py-1.5 text-slate-300 font-mono text-[11px] truncate flex items-center gap-1.5">
+              <Cpu className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+              <span>
+                {config?.fallback?.fallbackProvider || 'ollama'}:{' '}
+                <strong className="text-emerald-300 font-bold">{config?.fallback?.fallbackModel || 'hermes-3-llama-3.1-8b'}</strong>
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Live Failback Console Terminal Output */}
+        <div className="relative rounded-xl border border-slate-800 bg-slate-950 overflow-hidden shadow-inner">
+          <div className="flex items-center justify-between px-3.5 py-2 bg-slate-900/90 border-b border-slate-800 text-[11px] font-mono text-slate-400">
+            <span className="flex items-center gap-2">
+              <Terminal className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Failback Orchestration Execution Console Output</span>
+            </span>
+            <span className="flex items-center gap-2">
+              <span className="text-slate-500 text-[10px]">Streams to browser console &amp; UI</span>
+              {failbackConsoleLogs.length > 0 && (
+                <span className="px-1.5 py-0.2 rounded text-[9px] bg-emerald-500/20 text-emerald-300 font-bold">
+                  {failbackConsoleLogs.length} events
+                </span>
+              )}
+            </span>
+          </div>
+
+          <div
+            id="failback-console-terminal"
+            className="p-4 font-mono text-xs text-slate-300 bg-slate-950 overflow-x-auto overflow-y-auto max-h-[260px] leading-relaxed space-y-2 scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-slate-900"
+          >
+            {isSimulatingFailback ? (
+              <div className="flex items-center gap-2 text-emerald-400 animate-pulse py-2">
+                <RefreshCw className="w-4 h-4 animate-spin" />
+                <span>Simulating primary agent fault, triggering failback route, and awaiting secondary gateway response...</span>
+              </div>
+            ) : failbackConsoleLogs.length > 0 ? (
+              failbackConsoleLogs.map((log, idx) => (
+                <div key={idx} className="space-y-1">
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-slate-500 text-[10px]">[{log.timestamp}]</span>
+                    <span className={`px-1.5 py-0.2 rounded text-[9px] font-bold ${
+                      log.level === 'SUCCESS' ? 'bg-emerald-500/20 text-emerald-400' :
+                      log.level === 'WARN' ? 'bg-amber-500/20 text-amber-300' :
+                      log.level === 'ERROR' ? 'bg-rose-500/20 text-rose-400' :
+                      'bg-indigo-500/20 text-indigo-300'
+                    }`}>
+                      {log.step}
+                    </span>
+                    <span className="text-slate-200">{log.message}</span>
+                  </div>
+                  {log.details && (
+                    <pre className="ml-6 p-2 rounded bg-slate-900/90 border border-slate-800 text-[11px] text-emerald-400/90 overflow-x-auto">
+                      {JSON.stringify(log.details, null, 2)}
+                    </pre>
+                  )}
+                </div>
+              ))
+            ) : (
+              <div className="text-slate-500 py-3 text-center space-y-1">
+                <div>// Ready to simulate failback orchestration.</div>
+                <div className="text-[11px] text-slate-600">
+                  Click <strong className="text-emerald-400">"Simulate Failback"</strong> to trigger a manual request forcing the agent into its failback configuration. Results will output to the browser console and display here.
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 

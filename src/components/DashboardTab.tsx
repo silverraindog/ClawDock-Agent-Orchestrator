@@ -19,7 +19,12 @@ import {
   Clock,
   History,
   TrendingUp,
-  BarChart3
+  BarChart3,
+  RefreshCw,
+  ArrowUpDown,
+  ShieldAlert,
+  CheckCircle2,
+  Cpu
 } from 'lucide-react';
 import { 
   LineChart, 
@@ -104,6 +109,36 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
               ) : (
                 <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
                   Local Host
+                </span>
+              )}
+
+              {/* Failback capability status badge and icon */}
+              {agent.failbackStatus === 'active' || config.fallback?.enabled ? (
+                <span
+                  id="dashboard-failback-active-badge"
+                  className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow-sm shadow-emerald-500/10"
+                  title={`Failback Active: ${agent.failbackCapability || config.fallback?.fallbackModel || config.fallback?.targetAgentId || 'Local Model / Secondary Gateway'}`}
+                >
+                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  Failback Active: {agent.failbackCapability || config.fallback?.fallbackModel || config.fallback?.targetAgentId || 'Edge Gateway'}
+                </span>
+              ) : agent.failbackStatus === 'configured' || config.fallback?.targetAgentId ? (
+                <span
+                  id="dashboard-failback-configured-badge"
+                  className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20"
+                  title={`Failback Configured (Standby): ${agent.failbackCapability || config.fallback?.targetAgentId}`}
+                >
+                  <RefreshCw className="w-3.5 h-3.5 text-indigo-400" />
+                  Failback Standby: {agent.failbackCapability || config.fallback?.targetAgentId}
+                </span>
+              ) : (
+                <span
+                  id="dashboard-failback-inactive-badge"
+                  className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-slate-800 text-slate-400 border border-slate-700"
+                >
+                  <ShieldAlert className="w-3.5 h-3.5 text-slate-500" />
+                  Failback Standby
                 </span>
               )}
             </h1>
@@ -257,6 +292,93 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
           <p className="text-[11px] text-slate-500">
             Filesystem, Search &amp; Code Sandbox
           </p>
+        </div>
+      </div>
+
+      {/* Failback & Edge Redundancy Status Banner */}
+      <div 
+        id="dashboard-failback-status-card"
+        className="relative overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/90 p-5 sm:p-6"
+      >
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="flex items-start gap-4">
+            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 border ${
+              agent.failbackStatus === 'active' || config.fallback?.enabled
+                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30 shadow-md shadow-emerald-500/10'
+                : agent.failbackStatus === 'configured' || config.fallback?.targetAgentId
+                ? 'bg-indigo-500/10 text-indigo-400 border-indigo-500/30'
+                : 'bg-slate-800 text-slate-400 border-slate-700'
+            }`}>
+              {agent.failbackStatus === 'active' || config.fallback?.enabled ? (
+                <ShieldCheck className="w-6 h-6" />
+              ) : agent.failbackStatus === 'configured' || config.fallback?.targetAgentId ? (
+                <RefreshCw className="w-6 h-6" />
+              ) : (
+                <ShieldAlert className="w-6 h-6" />
+              )}
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                  Failback Capability &amp; Redundancy
+                </h3>
+                {agent.failbackStatus === 'active' || config.fallback?.enabled ? (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                    Active &amp; Armed
+                  </span>
+                ) : agent.failbackStatus === 'configured' || config.fallback?.targetAgentId ? (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+                    Configured (Standby)
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-slate-800 text-slate-400 border border-slate-700">
+                    Standby
+                  </span>
+                )}
+              </div>
+
+              <p className="text-xs text-slate-300">
+                <span className="font-semibold text-slate-200">Capability:</span>{' '}
+                <span className="text-indigo-300 font-mono text-[11px]">{agent.failbackCapability || 'Local Ollama & Secondary Node Gateway'}</span>
+              </p>
+
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-400 pt-0.5">
+                <span className="flex items-center gap-1">
+                  <Cpu className="w-3 h-3 text-indigo-400" />
+                  Fallback Target: <strong className="text-slate-200 font-mono">{config.fallback?.fallbackModel || config.fallback?.model || config.fallback?.targetAgentId || 'Edge SLM'}</strong>
+                </span>
+                <span className="flex items-center gap-1">
+                  <Server className="w-3 h-3 text-emerald-400" />
+                  Provider: <strong className="text-slate-200 font-mono">{config.fallback?.fallbackProvider || config.fallback?.provider || 'ollama'}</strong>
+                </span>
+                <span className="flex items-center gap-1">
+                  <ArrowUpDown className="w-3 h-3 text-amber-400" />
+                  Trigger: <strong className="text-slate-200">{config.fallback?.strategy || 'on_offline'}</strong>
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex sm:flex-row md:flex-col lg:flex-row items-center gap-2.5 shrink-0 pt-2 md:pt-0">
+            <button
+              id="dashboard-simulate-failback-quick-btn"
+              onClick={() => onNavigateTab('diagnostics')}
+              className="flex items-center justify-center gap-2 px-3.5 py-2 rounded-xl bg-indigo-600/20 hover:bg-indigo-600 text-indigo-300 hover:text-white text-xs font-semibold border border-indigo-500/30 transition-all shadow-sm"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span>Simulate Failback</span>
+            </button>
+            <button
+              id="dashboard-configure-failback-btn"
+              onClick={() => onNavigateTab('config')}
+              className="flex items-center justify-center gap-2 px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium border border-slate-700 transition-colors"
+            >
+              <Settings2 className="w-3.5 h-3.5 text-slate-400" />
+              <span>Configure Failback</span>
+            </button>
+          </div>
         </div>
       </div>
 

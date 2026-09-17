@@ -649,6 +649,16 @@ export function mergeWithDefaultConfig(agentId: AgentId, custom?: Partial<AgentF
     customEnv: {
       ...(base.customEnv || {}),
       ...(custom.customEnv || {})
+    },
+    fallback: {
+      enabled: custom.fallback?.enabled ?? base.fallback.enabled,
+      targetAgentId: custom.fallback?.targetAgentId || base.fallback.targetAgentId,
+      strategy: custom.fallback?.strategy || base.fallback.strategy,
+      latencyThresholdMs: custom.fallback?.latencyThresholdMs || base.fallback.latencyThresholdMs,
+      fallbackProvider: custom.fallback?.fallbackProvider || custom.fallback?.provider || base.fallback.fallbackProvider,
+      fallbackModel: custom.fallback?.fallbackModel || custom.fallback?.model || base.fallback.fallbackModel,
+      provider: custom.fallback?.provider || custom.fallback?.fallbackProvider || base.fallback.provider,
+      model: custom.fallback?.model || custom.fallback?.fallbackModel || base.fallback.model,
     }
   };
 }

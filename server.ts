@@ -377,6 +377,68 @@ app.all(['/api/openclaw/mcp', '/api/agents/openclaw/mcp'], (req, res) => {
   });
 });
 
+// Agent Failback Simulation Endpoint
+app.all(['/api/agents/:id/simulate-failback', '/api/agents/:id/failback/simulate', '/api/failback/simulate'], async (req, res) => {
+  const agentId = req.params.id || req.query.agentId || req.body?.agentId || 'hermes-agent';
+  const body = req.body || {};
+  const query = req.query || {};
+  
+  const fallbackProvider = body.fallbackProvider || body.provider || query.fallbackProvider || 'ollama';
+  const fallbackModel = body.fallbackModel || body.model || query.fallbackModel || 'hermes-3-llama-3.1-8b';
+  const targetAgentId = body.targetAgentId || query.targetAgentId || (agentId === 'hermes-agent' ? 'zeroclaw' : 'picoclaw');
+  const strategy = body.strategy || query.strategy || 'on_offline';
+  const prompt = body.prompt || query.prompt || 'Simulated failback test request: verifying secondary gateway & model inference';
+
+  const startTime = Date.now();
+  
+  // Simulated processing delay for failover detection and reroute
+  await new Promise(r => setTimeout(r, 60));
+  const latencyMs = Date.now() - startTime;
+
+  const result = {
+    success: true,
+    simulation: 'FAILBACK_ORCHESTRATION',
+    primaryAgent: {
+      id: agentId,
+      status: 'simulated_offline',
+      triggerReason: strategy === 'on_latency' ? 'Latency threshold exceeded (>500ms)' : strategy === 'on_error' ? 'Simulated 503 Service Unavailable upstream' : 'Primary agent node offline / heartbeat lost'
+    },
+    failbackTriggered: true,
+    strategy,
+    fallbackTarget: {
+      targetAgentId,
+      fallbackProvider,
+      fallbackModel,
+      resolutionType: 'redundant_edge_gateway',
+      activeStatus: 'healthy'
+    },
+    dispatchedPayload: {
+      prompt,
+      timestamp: new Date().toISOString()
+    },
+    response: {
+      status: 200,
+      dispatchedTo: `${fallbackProvider} / ${fallbackModel}`,
+      gatewayNode: targetAgentId,
+      latencyMs,
+      output: `[FAILBACK ORCHESTRATION SUCCESS] Request for [${agentId}] intercepted by failback orchestrator. Primary simulated offline. Gracefully rerouted traffic to failback provider [${fallbackProvider}] running [${fallbackModel}] via [${targetAgentId}] gateway. Failback loop verified healthy.`,
+      heartbeatVerified: true
+    },
+    timestamp: new Date().toISOString()
+  };
+
+  jsonConsoleLog('INFO', 'failback-orchestrator', `Simulate failback completed for agent ${agentId}`, {
+    agentId,
+    fallbackProvider,
+    fallbackModel,
+    targetAgentId,
+    strategy,
+    latencyMs
+  });
+
+  return res.json(result);
+});
+
 // Generic LLM / Provider API forwarder proxy to avoid browser CORS issues
 app.all('/api/proxy/llm', async (req, res) => {
   const targetUrl = (req.query.url || req.headers['x-target-url']) as string;

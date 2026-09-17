@@ -1780,7 +1780,11 @@ export default function App() {
           )}
 
           {currentTab === 'diagnostics' && (
-            <DiagnosticsTab />
+            <DiagnosticsTab
+              currentAgentId={selectedAgentId}
+              agent={currentAgent}
+              config={currentConfig}
+            />
           )}
 
           {currentTab === 'console' && (

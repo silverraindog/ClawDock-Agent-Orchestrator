@@ -38,7 +38,9 @@ import {
   Lightbulb,
   Layers,
   Brain,
-  Target
+  Target,
+  Bot,
+  ShieldAlert
 } from 'lucide-react';
 import { 
   AgentFullConfig, 
@@ -61,7 +63,14 @@ import {
 import { ConfigInjectionAlert, InjectionStatusInfo } from './ConfigInjectionAlert';
 import { VerboseLogInspector, VerboseLogData } from './VerboseLogInspector';
 import { InlineDiagnosticsEditor } from './InlineDiagnosticsEditor';
-import { validateAgentConfig, validateDeepLinkSchema, DeepSchemaIssue, applySingleFix } from '../utils/configValidator';
+import { 
+  validateAgentConfig, 
+  validateDeepLinkSchema, 
+  DeepSchemaIssue, 
+  applySingleFix,
+  validateFallbackConfiguration,
+  VALID_PROVIDERS
+} from '../utils/configValidator';
 import { parseNativeConfigToSchema } from '../utils/configParser';
 import {
   AgentPurpose,
@@ -94,7 +103,7 @@ interface ConfigTabProps {
   externalVerboseLog?: VerboseLogData | null;
 }
 
-type ConfigSection = 'model' | 'moa' | 'channels' | 'system' | 'security' | 'storage' | 'raw';
+type ConfigSection = 'model' | 'moa' | 'channels' | 'system' | 'security' | 'storage' | 'fallback' | 'raw';
 
 export interface MoASynergyRecommendation {
   id: string;
@@ -225,6 +234,11 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
     const content = rawMode === 'native' ? rawText : (nativeConfigInfo?.content || '');
     return validateDeepLinkSchema(agentId, content, config, format);
   }, [agentId, rawText, rawMode, nativeConfigInfo, config]);
+
+  // Failback & Fallback schema validation status
+  const fallbackValidation = React.useMemo(() => {
+    return validateFallbackConfiguration(config.fallback, agentId);
+  }, [config.fallback, agentId]);
 
   const handleSyncNativeToSchema = () => {
     try {
@@ -809,6 +823,7 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
           { id: 'system', label: 'Prompt & Persona', icon: MessageSquare, sectionKey: 'system' },
           { id: 'security', label: 'Security & Sandbox', icon: Shield, sectionKey: 'security' },
           { id: 'storage', label: 'Storage & Memory', icon: Database, sectionKey: 'storage' },
+          { id: 'fallback', label: 'Fallback & Redundancy', icon: RefreshCw, sectionKey: 'fallback' },
           { id: 'raw', label: 'Raw Editor & Validator', icon: FileCode, sectionKey: 'raw' },
         ].map((tab) => {
           const Icon = tab.icon;
@@ -2908,6 +2923,328 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
                   </div>
                 </div>
               )}
+            </div>
+          </div>
+        )}
+
+        {/* ================= FALLBACK & REDUNDANCY ================= */}
+        {activeSection === 'fallback' && (
+          <div className="space-y-6">
+            <div className="border-b border-slate-800 pb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+                  <span>Fallback Routing &amp; Redundancy</span>
+                  {fallbackValidation.isValid ? (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                      <CheckCircle2 className="w-3 h-3" />
+                      Schema Validated
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/10 text-rose-400 border border-rose-500/20">
+                      <AlertTriangle className="w-3 h-3" />
+                      Schema Issues ({fallbackValidation.errors.length})
+                    </span>
+                  )}
+                </h3>
+                <p className="text-xs text-slate-400 mt-1">
+                  Ensure high availability by automatically routing requests to a secondary agent or fallback LLM provider if the primary fails or exceeds latency thresholds.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                {config.fallback?.enabled ? (
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                    Failover Active
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-slate-800 text-slate-400 border border-slate-700">
+                    <span className="w-2 h-2 rounded-full bg-slate-600" />
+                    Failover Standby
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Validation alert banner if errors exist */}
+            {!fallbackValidation.isValid && config.fallback?.enabled && (
+              <div className="p-3.5 rounded-xl bg-rose-950/40 border border-rose-500/30 flex items-start gap-2.5 text-xs text-rose-300 animate-in fade-in duration-200">
+                <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <div className="font-semibold text-white">Failback Configuration Schema Discrepancy</div>
+                  <ul className="list-disc list-inside space-y-0.5 text-rose-300/90 text-[11px]">
+                    {fallbackValidation.errors.map((err, i) => (
+                      <li key={i}>{err}</li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Fallback Toggle */}
+              <div className="p-4 rounded-xl border border-slate-800 bg-slate-800/40 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <RefreshCw className="w-4 h-4 text-indigo-400" />
+                    <span className="text-xs font-bold text-white">Failover Routing</span>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      id="fallback-enabled-toggle"
+                      type="checkbox"
+                      checked={config.fallback?.enabled || false}
+                      onChange={(e) => onChangeConfig({
+                        ...config,
+                        fallback: { ...(config.fallback || { strategy: 'on_offline' }), enabled: e.target.checked }
+                      })}
+                      className="sr-only peer"
+                    />
+                    <div className="w-9 h-5 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
+                  </label>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-[11px] font-medium text-slate-300">Failover Strategy</label>
+                  <select
+                    id="fallback-strategy-select"
+                    value={config.fallback?.strategy || 'on_offline'}
+                    onChange={(e) => onChangeConfig({
+                      ...config,
+                      fallback: { ...(config.fallback || { enabled: false }), strategy: e.target.value as any }
+                    })}
+                    className="w-full px-2 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+                  >
+                    <option value="on_offline">Route if Primary Offline (Heartbeat failure)</option>
+                    <option value="on_error">Route if Primary Errors (5xx status code)</option>
+                    <option value="on_latency">Route if Primary Slow (Latency threshold)</option>
+                  </select>
+                </div>
+
+                {config.fallback?.strategy === 'on_latency' && (
+                  <div className="space-y-2 animate-in slide-in-from-top-2 duration-200">
+                    <label className="text-[11px] font-medium text-slate-300">Latency Threshold ({config.fallback?.latencyThresholdMs || 500}ms)</label>
+                    <input
+                      id="fallback-latency-range"
+                      type="range"
+                      min="100"
+                      max="5000"
+                      step="100"
+                      value={config.fallback?.latencyThresholdMs || 500}
+                      onChange={(e) => onChangeConfig({
+                        ...config,
+                        fallback: { ...(config.fallback || { enabled: false, strategy: 'on_latency' }), latencyThresholdMs: parseInt(e.target.value) }
+                      })}
+                      className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* Target Agent Selection */}
+              <div className="p-4 rounded-xl border border-slate-800 bg-slate-800/40 space-y-4">
+                <div className="flex items-center gap-2">
+                  <ArrowUpDown className="w-4 h-4 text-emerald-400" />
+                  <span className="text-xs font-bold text-white">Secondary Fallback Target</span>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-[11px] font-medium text-slate-300">Select Backup Agent</label>
+                  <div className="relative">
+                    <select
+                      id="fallback-target-select"
+                      value={config.fallback?.targetAgentId || ''}
+                      onChange={(e) => onChangeConfig({
+                        ...config,
+                        fallback: { ...(config.fallback || { enabled: false, strategy: 'on_offline' }), targetAgentId: e.target.value as any }
+                      })}
+                      className="w-full appearance-none px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-slate-200 text-xs font-mono focus:outline-none focus:border-indigo-500 pr-10"
+                    >
+                      <option value="" disabled>Choose an agent...</option>
+                      <option value="hermes-agent" disabled={agentId === 'hermes-agent'}>Hermes Agent (Python Powerhouse)</option>
+                      <option value="zeroclaw" disabled={agentId === 'zeroclaw'}>ZeroClaw (Minimalist Rust)</option>
+                      <option value="openclaw" disabled={agentId === 'openclaw'}>OpenClaw (Gateway Hub)</option>
+                      <option value="picoclaw" disabled={agentId === 'picoclaw'}>PicoClaw (Edge Go)</option>
+                    </select>
+                    <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-2 pointer-events-none" />
+                  </div>
+                </div>
+
+                <div className="p-3 rounded-lg bg-slate-950/60 border border-slate-700/50">
+                  <p className="text-[11px] text-slate-400 leading-relaxed">
+                    <span className="text-emerald-400 font-bold">Pro-tip:</span> Use <span className="text-indigo-400">ZeroClaw</span> or <span className="text-indigo-400">PicoClaw</span> as fallbacks for high-availability edge routing due to their near-instant boot times and low overhead.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Failback Provider & Fallback Model Configuration with Status Badges */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Failback Provider Field */}
+              <div className="p-4 rounded-xl border border-slate-800 bg-slate-800/40 space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-white flex items-center gap-1.5">
+                    <Cpu className="w-3.5 h-3.5 text-indigo-400" />
+                    Failback Provider
+                  </label>
+                  {/* Status Badge */}
+                  {fallbackValidation.providerSupported ? (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                      <CheckCircle2 className="w-3 h-3" />
+                      Supported Provider
+                    </span>
+                  ) : !fallbackValidation.providerPresent ? (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-rose-500/10 text-rose-400 border border-rose-500/20">
+                      <AlertTriangle className="w-3 h-3" />
+                      Provider Required
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                      <AlertTriangle className="w-3 h-3" />
+                      Unsupported Provider
+                    </span>
+                  )}
+                </div>
+
+                <p className="text-[11px] text-slate-400">
+                  Select the underlying LLM provider executed when primary inference fails or switches to edge mode.
+                </p>
+
+                <select
+                  id="fallback-provider-select"
+                  value={config.fallback?.fallbackProvider || config.fallback?.provider || 'ollama'}
+                  onChange={(e) => {
+                    const newProvider = e.target.value;
+                    onChangeConfig({
+                      ...config,
+                      fallback: {
+                        ...(config.fallback || { enabled: false, strategy: 'on_offline' }),
+                        fallbackProvider: newProvider,
+                        provider: newProvider
+                      }
+                    });
+                  }}
+                  className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-slate-200 text-xs font-mono focus:outline-none focus:border-indigo-500"
+                >
+                  {VALID_PROVIDERS.map((p) => (
+                    <option key={p} value={p}>
+                      {p.toUpperCase()} {p === 'ollama' ? '(Local / Edge)' : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Fallback Model Field */}
+              <div className="p-4 rounded-xl border border-slate-800 bg-slate-800/40 space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-white flex items-center gap-1.5">
+                    <Zap className="w-3.5 h-3.5 text-amber-400" />
+                    Fallback Model
+                  </label>
+                  {/* Status Badge */}
+                  {fallbackValidation.modelValid ? (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                      <CheckCircle2 className="w-3 h-3" />
+                      Schema Valid
+                    </span>
+                  ) : !fallbackValidation.modelPresent ? (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-rose-500/10 text-rose-400 border border-rose-500/20">
+                      <AlertTriangle className="w-3 h-3" />
+                      Model Required
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                      <AlertTriangle className="w-3 h-3" />
+                      Invalid Model
+                    </span>
+                  )}
+                </div>
+
+                <p className="text-[11px] text-slate-400">
+                  Target model identifier dispatched during failover execution (e.g., local quant or edge SLM).
+                </p>
+
+                <input
+                  id="fallback-model-input"
+                  type="text"
+                  value={config.fallback?.fallbackModel || config.fallback?.model || ''}
+                  placeholder="e.g., llama3.2:3b, mistral-7b-instruct, gpt-4o-mini"
+                  onChange={(e) => {
+                    const newModel = e.target.value;
+                    onChangeConfig({
+                      ...config,
+                      fallback: {
+                        ...(config.fallback || { enabled: false, strategy: 'on_offline' }),
+                        fallbackModel: newModel,
+                        model: newModel
+                      }
+                    });
+                  }}
+                  className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-slate-200 text-xs font-mono focus:outline-none focus:border-indigo-500"
+                />
+
+                {/* Quick Model Suggestions */}
+                <div className="flex flex-wrap gap-1.5 pt-1">
+                  {['llama3.2:3b', 'hermes-3-llama-3.1-8b', 'mistral-7b-instruct', 'deepseek-chat', 'gpt-4o-mini', 'picolm-1.1b'].map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => {
+                        onChangeConfig({
+                          ...config,
+                          fallback: {
+                            ...(config.fallback || { enabled: false, strategy: 'on_offline' }),
+                            fallbackModel: m,
+                            model: m
+                          }
+                        });
+                      }}
+                      className="px-2 py-0.5 rounded text-[10px] font-mono bg-slate-900 hover:bg-slate-750 text-slate-400 hover:text-slate-200 border border-slate-800 transition-colors"
+                    >
+                      +{m}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Redundancy Visualizer Mock */}
+            <div className="p-5 rounded-2xl border border-slate-800 bg-slate-950/50 space-y-4">
+               <h4 className="text-xs font-semibold text-slate-300 flex items-center gap-2">
+                  <Activity className="w-3.5 h-3.5 text-indigo-400" />
+                  Redundancy Logic Verification
+               </h4>
+               
+               <div className="flex items-center justify-center py-6">
+                 <div className="flex items-center gap-8">
+                    <div className="flex flex-col items-center gap-2">
+                      <div className={`w-12 h-12 rounded-2xl flex items-center justify-center border-2 ${config.fallback?.enabled ? 'border-indigo-500 bg-indigo-500/10' : 'border-slate-800 bg-slate-900'}`}>
+                         <Bot className="w-6 h-6 text-indigo-400" />
+                      </div>
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-tight">{agentId}</span>
+                      <span className="text-[9px] text-emerald-500 font-mono">PRIMARY</span>
+                    </div>
+
+                    <div className="flex flex-col items-center gap-1">
+                      <div className={`h-0.5 w-16 ${config.fallback?.enabled ? 'bg-gradient-to-r from-indigo-500 to-emerald-500' : 'bg-slate-800'}`} />
+                      <span className="text-[9px] font-mono text-slate-500">{config.fallback?.enabled ? config.fallback.strategy : 'OFF'}</span>
+                    </div>
+
+                    <div className="flex flex-col items-center gap-2">
+                      <div className={`w-12 h-12 rounded-2xl flex items-center justify-center border-2 ${config.fallback?.enabled && config.fallback?.targetAgentId ? 'border-emerald-500 bg-emerald-500/10' : 'border-slate-800 bg-slate-900'}`}>
+                         {config.fallback?.targetAgentId ? <Bot className="w-6 h-6 text-emerald-400" /> : <ShieldAlert className="w-6 h-6 text-slate-700" />}
+                      </div>
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-tight">{config.fallback?.targetAgentId || 'NONE'}</span>
+                      <span className="text-[9px] text-indigo-400 font-mono">BACKUP</span>
+                    </div>
+                 </div>
+               </div>
+               
+               <div className="p-3 rounded-lg bg-indigo-500/5 border border-indigo-500/10">
+                 <p className="text-[11px] text-slate-500 text-center">
+                   Routing flow: Traffic hits <span className="text-indigo-400 font-bold">{agentId}</span> first. If <span className="text-slate-300 italic">{config.fallback?.strategy?.replace('_', ' ') || 'failure'}</span> occurs, traffic is instantly diverted to <span className="text-emerald-400 font-bold">{config.fallback?.targetAgentId || 'configured backup'}</span>.
+                 </p>
+               </div>
             </div>
           </div>
         )}
