@@ -419,7 +419,7 @@ export async function testLLMConnection(
   baseUrl?: string
 ): Promise<{ success: boolean; message: string; errorType?: string }> {
   try {
-    const response = await fetch('/api/test-connection', {
+    const response = await fetch('/api/test-conn-v2', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'

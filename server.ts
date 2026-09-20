@@ -353,13 +353,13 @@ async function handleModelsRequest(req: any, res: any) {
   }
 }
 
-app.all(['/api/proxy/models', '/api/proxy/models/', '/api/proxy/model-list', '/api/proxy/model-list/', '/api/proxy', '/api/proxy/'], async (req, res) => {
+app.all('/api/proxy/models', async (req, res) => {
   return handleModelsRequest(req, res);
 });
 
 // Test Connection Helper for LLM Providers
-app.post('/api/test-connection', async (req, res) => {
-  console.log(`[Express API Server] /api/test-connection received ${req.method} request`);
+app.post('/api/test-conn-v2', async (req, res) => {
+  console.log(`[Express API Server] /api/test-conn-v2 received ${req.method} request`);
   try {
     const { provider, apiKey, baseUrl } = req.body;
     const cleanProvider = (provider || 'ollama').toLowerCase();
