@@ -1173,6 +1173,327 @@ vector_db_url = "http://everos:8080"
               }));
             }
           }
+        },
+        {
+          pattern: /^\/api\/health(\/)?$/i,
+          methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+          handler: async () => {
+            res.setHeader('Content-Type', 'application/json');
+            return res.end(JSON.stringify({ status: 'ok', uptime: process.uptime(), timestamp }));
+          }
+        },
+        {
+          pattern: /^\/api\/docker\/status(\/)?$/i,
+          methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+          handler: async () => {
+            res.setHeader('Content-Type', 'application/json');
+            const runningCount = Object.values(agentStates).filter((s: any) => s.status === 'running').length;
+            const totalCount = Math.max(4, Object.keys(agentStates).length);
+            return res.end(JSON.stringify({
+              dockerAvailable: true,
+              daemonVersion: '26.1.4-ce',
+              operatingSystem: 'Linux Container (Cloud/Host)',
+              totalContainers: totalCount,
+              runningContainers: runningCount,
+              socketPath: '/var/run/docker.sock',
+              environment: 'linux_native',
+              timestamp
+            }));
+          }
+        },
+        {
+          pattern: /^\/api\/docker\/containers(\/)?$/i,
+          methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+          handler: async () => {
+            res.setHeader('Content-Type', 'application/json');
+            return res.end(JSON.stringify({
+              success: true,
+              containers: Object.entries(agentStates).map(([id, st]: [string, any]) => ({
+                id: st.containerId || 'c_' + id,
+                name: st.containerName || id,
+                status: st.status,
+                image: st.dockerImage || `clawdock-${id}:latest`,
+                state: st.status === 'running' ? 'running' : 'stopped'
+              })),
+              timestamp
+            }));
+          }
+        },
+        {
+          pattern: /^\/api\/state(\/)?$/i,
+          methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+          handler: async () => {
+            res.setHeader('Content-Type', 'application/json');
+            if (method === 'GET') {
+              return res.end(JSON.stringify({ success: true, agentStates: { ...agentStates }, timestamp }));
+            }
+            if (method === 'POST' || method === 'PUT') {
+              const body = await readRequestBody(req);
+              if (body && body.agentStates) {
+                agentStates = { ...agentStates, ...body.agentStates };
+              }
+              return res.end(JSON.stringify({ success: true, agentStates: { ...agentStates }, timestamp }));
+            }
+            return res.end(JSON.stringify({ success: true, agentStates: { ...agentStates }, timestamp }));
+          }
+        },
+        {
+          pattern: /^\/api\/diagnostics\/request-logs(\/)?$/i,
+          methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+          handler: async () => {
+            res.setHeader('Content-Type', 'application/json');
+            return res.end(JSON.stringify({ success: true, logs: serverRequestLogs, total: serverRequestLogs.length, timestamp }));
+          }
+        },
+        {
+          pattern: /^\/api\/agents\/all\/config(s)?(\/)?$/i,
+          methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+          handler: async () => {
+            res.setHeader('Content-Type', 'application/json');
+            const agentIds = ['hermes-agent', 'zeroclaw', 'openclaw', 'picoclaw'];
+            const configs: Record<string, any> = {};
+            for (const id of agentIds) {
+              configs[id] = getAgentConfig(id);
+            }
+            return res.end(JSON.stringify({ success: true, configs }));
+          }
+        },
+        {
+          pattern: /^\/api\/persistence(\/)?$/i,
+          methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+          handler: async () => {
+            res.setHeader('Content-Type', 'application/json');
+            const persistenceFile = path.join(dataDir, 'persistence.json');
+            if (method === 'GET') {
+              let data: any = {};
+              try {
+                if (fs.existsSync(persistenceFile)) {
+                  data = JSON.parse(fs.readFileSync(persistenceFile, 'utf8'));
+                }
+              } catch {}
+              return res.end(JSON.stringify({ success: true, data }));
+            }
+            const body = await readRequestBody(req);
+            let existing: any = {};
+            try {
+              if (fs.existsSync(persistenceFile)) {
+                existing = JSON.parse(fs.readFileSync(persistenceFile, 'utf8'));
+              }
+            } catch {}
+            if (body && body.key && body.value !== undefined) {
+              existing[body.key] = body.value;
+            } else if (body && body.data && typeof body.data === 'object') {
+              existing = { ...existing, ...body.data };
+            } else if (body && typeof body === 'object') {
+              existing = { ...existing, ...body };
+            }
+            try {
+              fs.writeFileSync(persistenceFile, JSON.stringify(existing, null, 2), 'utf8');
+            } catch {}
+            return res.end(JSON.stringify({ success: true, data: existing }));
+          }
+        },
+        {
+          pattern: /^\/api\/diagnostics\/logs(\/)?$/i,
+          methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+          handler: async () => {
+            res.setHeader('Content-Type', 'application/json');
+            return res.end(JSON.stringify({
+              logs: [
+                `[${timestamp}] [SYSTEM] Clawdock container daemon v2.4 initialized.`,
+                `[${timestamp}] [DOCKER] Bridge network clawdock-net active at 172.28.0.0/16.`
+              ]
+            }));
+          }
+        },
+        {
+          pattern: /^\/api\/chat(\/)?$/i,
+          methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+          handler: async () => {
+            res.setHeader('Content-Type', 'application/json');
+            const body = await readRequestBody(req);
+            return res.end(JSON.stringify({
+              success: true,
+              response: `[Clawdock Simulator] Received message "${body?.message || ''}". Agent active.`
+            }));
+          }
+        },
+        {
+          pattern: /^\/api\/models(\/)?$|^\/api\/model\/list(\/)?$|^\/api\/agents\/models(\/)?$/i,
+          methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+          handler: async () => {
+            res.setHeader('Content-Type', 'application/json');
+            let body: any = {};
+            if (method === 'POST' || method === 'PUT') {
+              try {
+                body = (await readRequestBody(req)) || {};
+              } catch {}
+            }
+            const { agentId, provider, baseUrl } = extractModelQueryParams(parsedUrl, body, pathname);
+            let liveOllamaModels: string[] = [];
+            if (baseUrl && (provider === 'ollama' || provider === 'custom' || baseUrl.includes('11434'))) {
+              try {
+                const cleanBase = baseUrl.replace(/\/v1\/?$/, '').replace(/\/+$/, '');
+                const resp = await fetch(`${cleanBase}/api/tags`, { signal: AbortSignal.timeout(2000) });
+                if (resp.ok) {
+                  const json: any = await resp.json();
+                  if (Array.isArray(json.models)) {
+                    liveOllamaModels = json.models.map((m: any) => m.name || m.model).filter(Boolean);
+                  }
+                }
+              } catch {}
+            }
+            const models = [
+              { value: 'gemma4-soul:latest', label: 'gemma4-soul:latest (Local Edge)', tag: 'Active' },
+              { value: 'qwen2.5-coder:7b', label: 'qwen2.5-coder:7b', tag: 'Local' },
+              { value: 'deepseek-r1', label: 'DeepSeek-R1', tag: 'Reasoning' }
+            ];
+            for (const m of liveOllamaModels) {
+              if (!models.some(x => x.value === m)) {
+                models.unshift({ value: m, label: `${m} (Live Ollama)`, tag: 'Live' });
+              }
+            }
+            return res.end(JSON.stringify({ success: true, provider, baseUrl, agentId, modelsCount: models.length, models }));
+          }
+        },
+        {
+          pattern: /^\/api\/openclaw\/(skills-sync|skills|sync|mcp)(\/)?$|^\/api\/agents\/openclaw\/(skills|skills-sync|mcp)(\/)?$/i,
+          methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+          handler: async () => {
+            res.setHeader('Content-Type', 'application/json');
+            if (pathname.includes('/mcp')) {
+              return res.end(JSON.stringify({
+                success: true,
+                agentId: 'openclaw',
+                mcpServers: [{ id: 'mcp-openclaw-vps-hub', name: 'OpenClaw VPS Remote MCP Hub', status: 'connected' }]
+              }));
+            }
+            return res.end(JSON.stringify({
+              success: true,
+              agentId: 'openclaw',
+              skills: OPENCLAW_SYNCHRONOUS_CATALOG.skills,
+              mcpServers: OPENCLAW_SYNCHRONOUS_CATALOG.mcpServers
+            }));
+          }
+        },
+        {
+          pattern: /^\/api\/agents\/([^/]+)\/config(\/)?$/i,
+          methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+          handler: async () => {
+            const match = pathname.match(/^\/api\/agents\/([^/]+)\/config(\/)?$/i);
+            const agentId = match ? match[1] : 'hermes-agent';
+            res.setHeader('Content-Type', 'application/json');
+            if (agentId === 'all') {
+              const configs: Record<string, any> = {};
+              ['hermes-agent', 'zeroclaw', 'openclaw', 'picoclaw'].forEach(id => { configs[id] = getAgentConfig(id); });
+              return res.end(JSON.stringify({ success: true, configs }));
+            }
+            if (method === 'GET') {
+              return res.end(JSON.stringify(getAgentConfig(agentId)));
+            }
+            const body = await readRequestBody(req);
+            const nativeContent = body.nativeContent;
+            const fallback = defaultNativeFiles[agentId] || defaultNativeFiles['hermes-agent'];
+            const filePath = path.join(dataDir, fallback.fileName);
+            if (typeof nativeContent === 'string') {
+              try { fs.writeFileSync(filePath, nativeContent, 'utf8'); } catch {}
+            }
+            return res.end(JSON.stringify({ success: true, agentId, nativeContent }));
+          }
+        },
+        {
+          pattern: /^\/api\/export\/code(\/)?$/i,
+          methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+          handler: async () => {
+            res.setHeader('Content-Type', 'application/json');
+            return res.end(JSON.stringify({ success: true, message: 'Code export archive generated successfully' }));
+          }
+        },
+        {
+          pattern: /^\/api\/containers\/restart-all(\/)?$/i,
+          methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+          handler: async () => {
+            res.setHeader('Content-Type', 'application/json');
+            return res.end(JSON.stringify({ success: true, message: 'All agent containers restart sequence initiated.' }));
+          }
+        },
+        {
+          pattern: /^\/api\/agents\/([^/]+)\/(start|stop|restart|install|detect|logs|docker-exec-config|doctor-fix)(\/)?$/i,
+          methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+          handler: async () => {
+            const match = pathname.match(/^\/api\/agents\/([^/]+)\/(start|stop|restart|install|detect|logs|docker-exec-config|doctor-fix)(\/)?$/i);
+            const agentId = match ? match[1] : 'hermes-agent';
+            const action = match ? match[2] : 'logs';
+            res.setHeader('Content-Type', 'application/json');
+            if (action === 'logs') {
+              return res.end(JSON.stringify({ success: true, logs: agentStates[agentId]?.logs || [] }));
+            }
+            return res.end(JSON.stringify({ success: true, status: 'running', action }));
+          }
+        },
+        {
+          pattern: /^\/api\/agents\/([^/]+)\/models(\/)?$/i,
+          methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+          handler: async () => {
+            const match = pathname.match(/^\/api\/agents\/([^/]+)\/models(\/)?$/i);
+            const agentId = match ? match[1] : 'hermes-agent';
+            res.setHeader('Content-Type', 'application/json');
+            return res.end(JSON.stringify({
+              success: true,
+              agentId,
+              models: [{ value: 'gemma4-soul:latest', label: 'gemma4-soul:latest', tag: 'Active' }]
+            }));
+          }
+        },
+        {
+          pattern: /^\/api\/everos(\/.*)?$/i,
+          methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+          handler: async () => {
+            res.setHeader('Content-Type', 'application/json');
+            return res.end(JSON.stringify({ status: 'online', totalMemories: 1420 }));
+          }
+        },
+        {
+          pattern: /^\/api\/.*$/i,
+          methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+          handler: async () => {
+            console.warn(`[Vite API Server 404] [${timestamp}] Unhandled API route: ${method} ${pathname}`);
+            console.warn(`[Vite API Server Debug] Incoming Request URL: ${req.url}`);
+            console.warn(`[Vite API Server Debug] Incoming Request Headers:`, req.headers);
+            console.warn(`[Vite API Server Debug] Incoming URL Parameters:`, Object.fromEntries(parsedUrl.searchParams.entries()));
+
+            const misconfigs: string[] = [];
+            if (!req.url.includes('?') && !['/api/health', '/api/docker/status', '/api/docker/containers', '/api/diagnostics/request-logs', '/api/diagnostics/logs', '/api/export/code', '/api/containers/restart-all'].includes(pathname)) {
+              misconfigs.push('Missing query parameters (e.g. ?baseUrl= or ?provider=)');
+            }
+            if (rawPath.endsWith('/') && rawPath.length > 5) {
+              misconfigs.push('Trailing slash detected in API pathname');
+            }
+            if (pathname !== pathname.toLowerCase()) {
+              misconfigs.push('Case sensitivity issue: Path contains uppercase letters in API route');
+            }
+            if (pathname.includes('/proxy') && !pathname.includes('/models')) {
+              misconfigs.push('Proxy subpath without /models endpoint specifier');
+            }
+
+            if (misconfigs.length > 0) {
+              console.warn(`[Vite API Server Debug] Possible misconfigurations detected for ${method} ${pathname}:`, misconfigs);
+            }
+
+            res.statusCode = 404;
+            res.setHeader('Content-Type', 'application/json');
+            return res.end(JSON.stringify({
+              error: 'Not Found',
+              status: 404,
+              message: `API endpoint ${method} ${pathname} was not found on this server.`,
+              possibleMisconfigurations: misconfigs,
+              requestHeaders: req.headers,
+              queryParams: Object.fromEntries(parsedUrl.searchParams.entries()),
+              pathname,
+              method,
+              timestamp: new Date().toISOString()
+            }));
+          }
         }
       ];
 

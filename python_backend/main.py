@@ -16,6 +16,7 @@ import datetime
 import subprocess
 import time
 import re
+import httpx
 
 from config_schema import AgentFullConfigSchema
 from docker_manager import DockerManager
