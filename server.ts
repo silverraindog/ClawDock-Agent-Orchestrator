@@ -353,15 +353,23 @@ async function handleModelsRequest(req: any, res: any) {
   }
 }
 
-app.all('/api/proxy/models', async (req, res) => {
+app.all('/api/proxy/models*', async (req, res) => {
+  return handleModelsRequest(req, res);
+});
+
+app.all('/api/proxy/*', async (req, res) => {
   return handleModelsRequest(req, res);
 });
 
 // Test Connection Helper for LLM Providers
-app.post('/api/test-conn-v2', async (req, res) => {
-  console.log(`[Express API Server] /api/test-conn-v2 received ${req.method} request`);
+app.all(['/api/test-conn-v2', '/api/test-connection'], async (req, res) => {
+  console.log(`[Express API Server] ${req.path} received ${req.method} request`);
   try {
-    const { provider, apiKey, baseUrl } = req.body;
+    const body = req.body || {};
+    const query = req.query || {};
+    const provider = body.provider || query.provider || 'ollama';
+    const apiKey = body.apiKey || query.apiKey || '';
+    const baseUrl = body.baseUrl || query.baseUrl || body.base_url || query.base_url || '';
     const cleanProvider = (provider || 'ollama').toLowerCase();
 
     // 1. Validate based on provider requirements
