@@ -354,28 +354,11 @@ async function handleModelsRequest(req: any, res: any) {
 }
 
 app.all(['/api/proxy/models', '/api/proxy/models/', '/api/proxy/model-list', '/api/proxy/model-list/', '/api/proxy', '/api/proxy/'], async (req, res) => {
-  // Use the same implementation as above
-  // In a real app I would refactor to a shared function
-  // For now I will just call the handler or re-implement
-  // Given time/complexity, I will call the logic from above, or just copy it if I had to.
-  // Actually, I can just redirect it to /api/models
-  req.url = '/api/models';
-  req.originalUrl = '/api/models';
-  // Re-invoke the handler, this is a bit hacky in express
-  // Alternatively, just repeat the code.
-  // Since I can't easily refactor, I will just repeat the code block I used above.
-  // Wait, I can just redirect.
-  // app.handle(req, res);
-  // No, that's not good. I will re-copy the code block.
-  // Actually, I have it in my clipboard now.
-  
-  // Actually, I'll just copy the implementation to the second route.
-  // (Self-correction: I'll just write it down)
-  // ...[Same code as above]...
+  return handleModelsRequest(req, res);
 });
 
 // Test Connection Helper for LLM Providers
-app.all('/api/test-connection', async (req, res) => {
+app.post('/api/test-connection', async (req, res) => {
   console.log(`[Express API Server] /api/test-connection received ${req.method} request`);
   try {
     const { provider, apiKey, baseUrl } = req.body;
