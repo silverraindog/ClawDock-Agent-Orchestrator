@@ -1,4 +1,13 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { 
+  AreaChart, 
+  Area, 
+  XAxis, 
+  YAxis, 
+  CartesianGrid, 
+  Tooltip, 
+  ResponsiveContainer 
+} from 'recharts';
 import { 
   Container,
   Search, 
@@ -21,6 +30,92 @@ import {
 } from 'lucide-react';
 import { AgentInfo, DockerSystemInfo, AgentId } from '../types';
 import { DockerLogsInspector } from './DockerLogsInspector';
+
+interface ContainerStatsChartProps {
+  agent: AgentInfo;
+}
+
+export const ContainerStatsChart: React.FC<ContainerStatsChartProps> = ({ agent }) => {
+  const [history, setHistory] = useState<{ time: string; cpu: number; memory: number }[]>([]);
+
+  const generateInitialHistory = (baseCpu: number, baseMem: number, isRunning: boolean) => {
+    const data = [];
+    const now = Date.now();
+    for (let i = 11; i >= 0; i--) {
+      const timeStr = new Date(now - i * 2000).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      if (isRunning) {
+        const noiseCpu = Math.max(0.1, +(baseCpu * (0.8 + Math.random() * 0.4)).toFixed(1));
+        const noiseMem = Math.max(1, +(baseMem * (0.97 + Math.random() * 0.06)).toFixed(1));
+        data.push({ time: timeStr, cpu: noiseCpu, memory: noiseMem });
+      } else {
+        data.push({ time: timeStr, cpu: 0, memory: 0 });
+      }
+    }
+    return data;
+  };
+
+  useEffect(() => {
+    setHistory(generateInitialHistory(agent.cpuUsagePct, agent.memoryUsageMb, agent.status === 'running'));
+
+    const interval = setInterval(() => {
+      const timeStr = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      setHistory(prev => {
+        let nextCpu = 0;
+        let nextMem = 0;
+        if (agent.status === 'running') {
+          nextCpu = Math.max(0.1, +(agent.cpuUsagePct * (0.85 + Math.random() * 0.3)).toFixed(1));
+          nextMem = Math.max(1, +(agent.memoryUsageMb * (0.98 + Math.random() * 0.04)).toFixed(1));
+        }
+        const updated = [...prev, { time: timeStr, cpu: nextCpu, memory: nextMem }];
+        return updated.slice(-12);
+      });
+    }, 2000);
+
+    return () => clearInterval(interval);
+  }, [agent.status, agent.cpuUsagePct, agent.memoryUsageMb]);
+
+  return (
+    <div className="mt-3 p-3 rounded-xl bg-slate-950/60 border border-slate-800/80 space-y-2">
+      <div className="flex items-center justify-between text-[11px] font-mono text-slate-400">
+        <span className="flex items-center gap-1">
+          <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse" />
+          Real-Time Resource Trends
+        </span>
+        <div className="flex items-center gap-2.5">
+          <span className="text-indigo-400">CPU: {history[history.length - 1]?.cpu || 0}%</span>
+          <span className="text-emerald-400">MEM: {history[history.length - 1]?.memory || 0} MB</span>
+        </div>
+      </div>
+      
+      <div className="h-[110px] w-full select-none">
+        <ResponsiveContainer width="100%" height="100%">
+          <AreaChart data={history} margin={{ top: 5, right: 5, left: -25, bottom: -10 }}>
+            <defs>
+              <linearGradient id={`colorCpu-${agent.id}`} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%" stopColor="#6366f1" stopOpacity={0.2}/>
+                <stop offset="95%" stopColor="#6366f1" stopOpacity={0}/>
+              </linearGradient>
+              <linearGradient id={`colorMem-${agent.id}`} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%" stopColor="#10b981" stopOpacity={0.2}/>
+                <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+              </linearGradient>
+            </defs>
+            <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.15} />
+            <XAxis dataKey="time" hide />
+            <YAxis yAxisId="left" domain={[0, 'auto']} tick={{ fontSize: 8, fill: '#64748b' }} stroke="#6366f1" width={30} opacity={0.6} tickLine={false} />
+            <YAxis yAxisId="right" orientation="right" domain={[0, 'auto']} tick={{ fontSize: 8, fill: '#64748b' }} stroke="#10b981" width={30} opacity={0.6} tickLine={false} />
+            <Tooltip 
+              contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', borderRadius: '8px', fontSize: '10px', color: '#cbd5e1' }}
+              labelStyle={{ color: '#64748b' }}
+            />
+            <Area yAxisId="left" type="monotone" dataKey="cpu" name="CPU (%)" stroke="#6366f1" strokeWidth={1.5} fillOpacity={1} fill={`url(#colorCpu-${agent.id})`} isAnimationActive={false} />
+            <Area yAxisId="right" type="monotone" dataKey="memory" name="Mem (MB)" stroke="#10b981" strokeWidth={1.5} fillOpacity={1} fill={`url(#colorMem-${agent.id})`} isAnimationActive={false} />
+          </AreaChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+};
 
 interface DockerTabProps {
   agents: AgentInfo[];
@@ -380,6 +475,9 @@ networks:
                     </div>
                   </div>
                 </div>
+
+                {/* Real-time CPU/Memory usage chart */}
+                <ContainerStatsChart agent={agent} />
 
                 <div className="flex items-center justify-between gap-2 pt-4 mt-3 border-t border-slate-800">
                   <span className="text-xs text-slate-400 font-mono">

@@ -506,6 +506,104 @@ app.post('/api/test-connection', async (req, res) => {
   }
 });
 
+// Benchmark Latency Route for LLM Provider base URLs
+app.post('/api/benchmark', async (req, res) => {
+  try {
+    const { provider, baseUrl } = req.body;
+    const cleanProvider = (provider || 'ollama').toLowerCase();
+
+    let targetUrl = '';
+    let headers: Record<string, string> = {
+      'Content-Type': 'application/json'
+    };
+
+    if (cleanProvider === 'ollama') {
+      const roots = baseUrl && baseUrl.trim()
+        ? [baseUrl.trim()]
+        : ['http://host.docker.internal:11434', 'http://localhost:11434', 'http://127.0.0.1:11434'];
+      targetUrl = `${roots[0].replace(/\/+$/, '')}/api/tags`;
+    } else if (cleanProvider === 'openai') {
+      targetUrl = baseUrl && baseUrl.trim() ? `${baseUrl.trim().replace(/\/+$/, '')}/v1/models` : 'https://api.openai.com/v1/models';
+    } else if (cleanProvider === 'anthropic') {
+      targetUrl = baseUrl && baseUrl.trim() ? `${baseUrl.trim().replace(/\/+$/, '')}/v1/models` : 'https://api.anthropic.com/v1/models';
+      headers['x-api-key'] = 'benchmark-dummy-key';
+      headers['anthropic-version'] = '2023-06-01';
+    } else if (cleanProvider === 'gemini') {
+      targetUrl = `https://generativelanguage.googleapis.com/v1beta/models`;
+    } else if (cleanProvider === 'deepseek') {
+      targetUrl = baseUrl && baseUrl.trim() ? `${baseUrl.trim().replace(/\/+$/, '')}/models` : 'https://api.deepseek.com/models';
+    } else if (cleanProvider === 'groq') {
+      targetUrl = baseUrl && baseUrl.trim() ? `${baseUrl.trim().replace(/\/+$/, '')}/v1/models` : 'https://api.groq.com/openai/v1/models';
+    } else if (cleanProvider === 'mistral') {
+      targetUrl = baseUrl && baseUrl.trim() ? `${baseUrl.trim().replace(/\/+$/, '')}/v1/models` : 'https://api.mistral.ai/v1/models';
+    } else if (cleanProvider === 'openrouter') {
+      targetUrl = baseUrl && baseUrl.trim() ? `${baseUrl.trim().replace(/\/+$/, '')}/v1/models` : 'https://openrouter.ai/api/v1/models';
+    } else if (cleanProvider === 'custom') {
+      if (!baseUrl || !baseUrl.trim()) {
+        return res.json({
+          success: false,
+          message: 'Base URL is required to benchmark custom providers.'
+        });
+      }
+      targetUrl = baseUrl.trim();
+    }
+
+    const start = performance.now();
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000); // 5s timeout
+
+    try {
+      const response = await fetch(targetUrl, {
+        method: 'GET',
+        headers,
+        signal: controller.signal
+      });
+      clearTimeout(timer);
+      const elapsed = Math.round(performance.now() - start);
+
+      return res.json({
+        success: true,
+        latencyMs: elapsed,
+        statusCode: response.status,
+        message: `Standard metadata request returned with status ${response.status} in ${elapsed}ms.`
+      });
+    } catch (err: any) {
+      clearTimeout(timer);
+      const elapsed = Math.round(performance.now() - start);
+      const isTimeout = err.name === 'AbortError' || err.message?.includes('aborted');
+
+      if (isTimeout) {
+        return res.json({
+          success: false,
+          latencyMs: 5000,
+          message: 'Connection timed out after 5000ms.'
+        });
+      }
+
+      // If it failed because of invalid auth headers but was reachable, report latency!
+      if (err.message?.includes('401') || err.message?.includes('403') || err.message?.includes('unauthorized')) {
+        return res.json({
+          success: true,
+          latencyMs: elapsed,
+          message: `Endpoint is reachable (responded in ${elapsed}ms with authorization requirement).`
+        });
+      }
+
+      return res.json({
+        success: false,
+        latencyMs: elapsed,
+        message: `Network failure or DNS error: ${err.message || 'Host unreachable'}`
+      });
+    }
+
+  } catch (err: any) {
+    return res.status(500).json({
+      success: false,
+      message: `Internal server failure in /api/benchmark: ${err.message}`
+    });
+  }
+});
+
 // OpenClaw MCP endpoint
 app.all(['/api/openclaw/mcp', '/api/agents/openclaw/mcp'], (req, res) => {
   res.json({

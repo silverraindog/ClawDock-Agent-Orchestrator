@@ -451,6 +451,46 @@ export async function testLLMConnection(
 }
 
 /**
+ * Benchmark LLM provider latency using standard metadata requests.
+ */
+export async function benchmarkLLMProvider(
+  provider: string,
+  baseUrl: string
+): Promise<{ success: boolean; latencyMs: number; message: string }> {
+  try {
+    const response = await fetch('/api/benchmark', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ provider, baseUrl })
+    });
+
+    if (!response.ok) {
+      return {
+        success: false,
+        latencyMs: 5000,
+        message: `HTTP Server Error (${response.status})`
+      };
+    }
+
+    const data = await response.json();
+    return {
+      success: !!data.success,
+      latencyMs: typeof data.latencyMs === 'number' ? data.latencyMs : 5000,
+      message: data.message || ''
+    };
+  } catch (err: any) {
+    console.error('[API Bridge] Latency benchmark failed:', err);
+    return {
+      success: false,
+      latencyMs: 5000,
+      message: `Benchmark request failed: ${err.message || 'Network failure'}`
+    };
+  }
+}
+
+/**
  * Robust model list fetcher with multi-tier fallback mechanism.
  * Always targets and fetches models strictly for the specific provider selected via server proxy.
  */
@@ -459,7 +499,8 @@ export async function fetchModelsWithFallback(
   baseUrl: string = '',
   agentId: string = 'hermes-agent',
   currentModel?: string,
-  useProxy: boolean = true
+  useProxy: boolean = true,
+  forceProxyModelsPath: boolean = false
 ): Promise<{ models: ModelOptionItem[]; isFallback: boolean; isLocalFallback: boolean; source: string; provider: string }> {
   const normProvider = (provider || 'ollama').toLowerCase();
   const isLocalTarget = (
@@ -504,7 +545,9 @@ export async function fetchModelsWithFallback(
     useProxy: useProxy ? 'true' : 'false',
     t: String(timestamp)
   });
-  const endpointUrl = `/api/models?${params.toString()}`;
+  const endpointUrl = forceProxyModelsPath
+    ? `/api/proxy/models?${params.toString()}`
+    : `/api/models?${params.toString()}`;
 
   try {
     const controller = new AbortController();

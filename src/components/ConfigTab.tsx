@@ -56,6 +56,7 @@ import {
   saveAgentConfigToBackend, 
   fetchModelsWithFallback, 
   testLLMConnection,
+  benchmarkLLMProvider,
   logApiFailure, 
   DEFAULT_LOCAL_MODELS, 
   DEFAULT_GENERIC_MODELS,
@@ -377,6 +378,14 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
   const [secondaryProvider, setSecondaryProvider] = useState<LLMProvider>('ollama');
   const [appliedMoaPreset, setAppliedMoaPreset] = useState<string | null>(null);
   const [showRawMoaInput, setShowRawMoaInput] = useState<boolean>(false);
+  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState<boolean>(false);
+  const [proxyModelsEnabled, setProxyModelsEnabled] = useState<boolean>(() => {
+    return localStorage.getItem('proxyModelsEnabled') !== 'false';
+  });
+  const [isBenchmarking, setIsBenchmarking] = useState<boolean>(false);
+  const [benchmarkLatency, setBenchmarkLatency] = useState<number | null>(null);
+  const [benchmarkMessage, setBenchmarkMessage] = useState<string>('');
+  const [isModelDropdownOpen, setIsModelDropdownOpen] = useState<boolean>(false);
   const [selectedPurpose, setSelectedPurpose] = useState<AgentPurpose>(() => getAgentDefaultPurpose(agentId));
 
   useEffect(() => {
@@ -404,6 +413,21 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
       setPingLatencyMs(elapsed > 0 ? elapsed : 32);
     } finally {
       setIsPinging(false);
+    }
+  };
+
+  const handleBenchmarkProvider = async () => {
+    setIsBenchmarking(true);
+    setBenchmarkLatency(null);
+    setBenchmarkMessage('');
+    try {
+      const result = await benchmarkLLMProvider(config.model.provider, config.model.baseUrl || '');
+      setBenchmarkLatency(result.latencyMs);
+      setBenchmarkMessage(result.message);
+    } catch (err: any) {
+      setBenchmarkMessage(err.message || 'Benchmark failed.');
+    } finally {
+      setIsBenchmarking(false);
     }
   };
 
@@ -481,7 +505,8 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
         config.model.baseUrl,
         agentId,
         config.model.model,
-        config.model.useProxy !== false
+        config.model.useProxy !== false,
+        proxyModelsEnabled
       );
 
       let fetchedModels = result.models;
@@ -690,7 +715,19 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
 
   useEffect(() => {
     handleFetchModels();
-  }, [config.model.provider, config.model.baseUrl, config.model.useProxy, agentId]);
+  }, [config.model.provider, config.model.baseUrl, config.model.useProxy, proxyModelsEnabled, agentId]);
+
+  // Periodic Auto-refresh of models catalog
+  useEffect(() => {
+    if (!autoRefreshEnabled) return;
+
+    const interval = setInterval(() => {
+      // Periodic background probe
+      handleFetchModels();
+    }, 15000); // 15 seconds standard interval
+
+    return () => clearInterval(interval);
+  }, [autoRefreshEnabled, config.model.provider, config.model.baseUrl, config.model.useProxy, proxyModelsEnabled, agentId]);
 
   useEffect(() => {
     handleFetchFallbackModels();
@@ -1174,6 +1211,19 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
                       <Activity className={`w-3 h-3 text-emerald-400 ${isPinging ? 'animate-pulse' : ''}`} />
                       {isPinging ? 'Pinging...' : pingLatencyMs !== null ? `${pingLatencyMs}ms` : 'Ping'}
                     </button>
+
+                    {/* Benchmark Button */}
+                    <button
+                      type="button"
+                      onClick={handleBenchmarkProvider}
+                      disabled={isBenchmarking}
+                      title="Run a speed benchmark against the LLM provider base URL"
+                      className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 text-[11px] font-medium transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                    >
+                      <Zap className={`w-3 h-3 text-amber-400 ${isBenchmarking ? 'animate-spin' : ''}`} />
+                      {isBenchmarking ? 'Benchmarking...' : benchmarkLatency !== null ? `${benchmarkLatency}ms` : 'Benchmark'}
+                    </button>
+
                     <button
                       id="compare-models-btn"
                       type="button"
@@ -1275,6 +1325,58 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
                   </div>
                 </div>
 
+                {/* Advanced Sync & Proxy Options Row */}
+                <div className="flex flex-wrap items-center gap-4 px-1 py-1 text-xs">
+                  {/* Proxy Models Toggle */}
+                  <label className="flex items-center gap-2 cursor-pointer select-none">
+                    <div className="relative">
+                      <input
+                        type="checkbox"
+                        checked={proxyModelsEnabled}
+                        onChange={(e) => {
+                          const val = e.target.checked;
+                          setProxyModelsEnabled(val);
+                          localStorage.setItem('proxyModelsEnabled', String(val));
+                        }}
+                        className="sr-only"
+                      />
+                      <div className={`w-8 h-4 rounded-full transition-colors duration-200 ${proxyModelsEnabled ? 'bg-indigo-600' : 'bg-slate-700'}`} />
+                      <div className={`absolute left-0.5 top-0.5 w-3 h-3 rounded-full bg-white transition-transform duration-200 ${proxyModelsEnabled ? 'translate-x-4' : 'translate-x-0'}`} />
+                    </div>
+                    <span className="text-slate-300 font-medium text-[11px] flex items-center gap-1">
+                      Proxy Models {proxyModelsEnabled ? (
+                        <span className="text-indigo-400 font-bold font-sans">(API Proxy)</span>
+                      ) : (
+                        <span className="text-slate-500">(Direct Browser)</span>
+                      )}
+                    </span>
+                  </label>
+
+                  {/* Auto-refresh Toggle */}
+                  <label className="flex items-center gap-2 cursor-pointer select-none">
+                    <div className="relative">
+                      <input
+                        type="checkbox"
+                        checked={autoRefreshEnabled}
+                        onChange={(e) => setAutoRefreshEnabled(e.target.checked)}
+                        className="sr-only"
+                      />
+                      <div className={`w-8 h-4 rounded-full transition-colors duration-200 ${autoRefreshEnabled ? 'bg-indigo-600' : 'bg-slate-700'}`} />
+                      <div className={`absolute left-0.5 top-0.5 w-3 h-3 rounded-full bg-white transition-transform duration-200 ${autoRefreshEnabled ? 'translate-x-4' : 'translate-x-0'}`} />
+                    </div>
+                    <span className="text-slate-300 font-medium text-[11px] flex items-center gap-1">
+                      Auto-refresh {autoRefreshEnabled ? (
+                        <span className="text-emerald-400 font-bold font-sans flex items-center gap-1">
+                          <span className="w-1 h-1 rounded-full bg-emerald-400 animate-ping" />
+                          On (15s)
+                        </span>
+                      ) : (
+                        <span className="text-slate-500">(Manual)</span>
+                      )}
+                    </span>
+                  </label>
+                </div>
+
                 {/* Live Provider Verification Badge & Filter */}
                 <div className="flex items-center justify-between gap-2 px-1 py-1 text-xs">
                   <div className="flex items-center gap-1.5 flex-wrap">
@@ -1307,31 +1409,140 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
                   )}
                 </div>
 
-                {/* Main Select Dropdown */}
+                {/* Main Searchable Dropdown */}
                 <div className="relative">
-                  <select
-                    id="model-name-select"
-                    value={config.model.model}
-                    onChange={(e) => onChangeConfig({
-                      ...config,
-                      model: { ...config.model, model: e.target.value }
-                    })}
-                    className="w-full appearance-none px-3.5 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-slate-100 text-xs focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-colors pr-10 font-mono"
+                  <div
+                    id="custom-searchable-dropdown-trigger"
+                    onClick={() => setIsModelDropdownOpen(!isModelDropdownOpen)}
+                    className="w-full cursor-pointer flex items-center justify-between px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-750 border border-slate-700 text-slate-100 text-xs transition-colors pr-10 font-mono select-none"
                   >
-                    {!filteredModelList.some((m) => m.value === config.model.model) && config.model.model && (
-                      <option value={config.model.model}>
-                        {config.model.model} (Active)
-                      </option>
-                    )}
-                    {filteredModelList.map((m) => (
-                      <option key={m.value} value={m.value}>
-                        {m.label} {m.tag ? `[${m.tag}]` : ''}
-                      </option>
-                    ))}
-                    <option value="custom">-- Enter Custom Model Name --</option>
-                  </select>
-                  <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-3 pointer-events-none" />
+                    <span className="truncate flex items-center gap-2">
+                      <Cpu className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+                      {config.model.model || 'Select Model...'}
+                    </span>
+                    <ChevronDown className={`w-4 h-4 text-slate-400 absolute right-3 top-3 transition-transform ${isModelDropdownOpen ? 'rotate-180' : ''}`} />
+                  </div>
+
+                  {isModelDropdownOpen && (
+                    <>
+                      {/* Invisible backdrop to close the dropdown */}
+                      <div 
+                        className="fixed inset-0 z-40" 
+                        onClick={() => setIsModelDropdownOpen(false)} 
+                      />
+                      
+                      <div className="absolute left-0 right-0 mt-1.5 p-2 rounded-xl bg-slate-900 border border-slate-800 shadow-xl shadow-black/80 z-50 max-h-80 flex flex-col gap-2 overflow-hidden animate-in slide-in-from-top-2 duration-150">
+                        {/* Dropdown Local Search Bar */}
+                        <div className="relative shrink-0">
+                          <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5 pointer-events-none" />
+                          <input
+                            type="text"
+                            autoFocus
+                            placeholder="Type name, provider, or capability tag..."
+                            value={modelSearchQuery}
+                            onChange={(e) => setModelSearchQuery(e.target.value)}
+                            className="w-full pl-9 pr-8 py-1.5 rounded-lg bg-slate-950 text-slate-200 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 font-sans placeholder:text-slate-500"
+                          />
+                          {modelSearchQuery && (
+                            <button
+                              type="button"
+                              onClick={() => setModelSearchQuery('')}
+                              className="absolute right-2.5 top-2 text-slate-400 hover:text-white"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+
+                        {/* Dropdown Items List */}
+                        <div className="overflow-y-auto max-h-56 divide-y divide-slate-850/50 space-y-0.5 custom-scrollbar pr-1">
+                          {filteredModelList.length === 0 ? (
+                            <div className="p-3 text-center text-slate-500 text-[11px]">
+                              No matching models found. Try clearing your search query.
+                            </div>
+                          ) : (
+                            filteredModelList.map((m) => {
+                              const badges = getMetadataBadges(m.value, config.model.provider, m.tag);
+                              const isSelected = config.model.model === m.value;
+                              return (
+                                <div
+                                  key={m.value}
+                                  onClick={() => {
+                                    onChangeConfig({
+                                      ...config,
+                                      model: { ...config.model, model: m.value }
+                                    });
+                                    setIsModelDropdownOpen(false);
+                                  }}
+                                  className={`p-2 rounded-lg cursor-pointer flex flex-col gap-1 text-[11px] font-mono transition-colors ${
+                                    isSelected 
+                                      ? 'bg-indigo-600/20 text-white border border-indigo-500/30' 
+                                      : 'hover:bg-slate-800/80 text-slate-300'
+                                  }`}
+                                >
+                                  <div className="flex items-center justify-between gap-2">
+                                    <span className="font-semibold truncate">{m.label}</span>
+                                    {isSelected && <Check className="w-3 h-3 text-indigo-400 shrink-0" />}
+                                  </div>
+                                  
+                                  {/* Capability Tags Badges Row */}
+                                  {badges.length > 0 && (
+                                    <div className="flex items-center gap-1 flex-wrap">
+                                      {badges.map((badge, idx) => (
+                                        <span 
+                                          key={idx} 
+                                          className={`px-1.5 py-0.2 rounded text-[9px] font-semibold border ${
+                                            badge.includes('Reasoning') 
+                                              ? 'bg-purple-950/45 text-purple-300 border-purple-500/20'
+                                              : badge.includes('Live') || badge.includes('Active')
+                                              ? 'bg-emerald-950/45 text-emerald-300 border-emerald-500/20'
+                                              : badge.includes('Local')
+                                              ? 'bg-amber-950/45 text-amber-300 border-amber-500/20'
+                                              : 'bg-slate-850 text-slate-400 border-slate-750'
+                                          }`}
+                                        >
+                                          {badge}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })
+                          )}
+                          <div
+                            onClick={() => {
+                              onChangeConfig({
+                                ...config,
+                                model: { ...config.model, model: 'custom' }
+                              });
+                              setIsModelDropdownOpen(false);
+                            }}
+                            className="p-2 rounded-lg cursor-pointer hover:bg-slate-800/80 text-indigo-300 text-[11px] font-semibold transition-colors mt-1 border-t border-slate-850"
+                          >
+                            + Enter Custom Model Name
+                          </div>
+                        </div>
+                      </div>
+                    </>
+                  )}
                 </div>
+
+                {/* Benchmark Display alert */}
+                {benchmarkMessage && (
+                  <div className={`p-2.5 rounded-lg border text-[11px] flex items-start gap-2 animate-in fade-in duration-200 ${
+                    benchmarkLatency !== null && benchmarkLatency < 1200
+                      ? 'bg-emerald-500/5 border-emerald-500/20 text-emerald-300'
+                      : 'bg-amber-500/5 border-amber-500/20 text-amber-300'
+                  }`}>
+                    <Zap className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
+                    <div>
+                      <span className="font-semibold">Benchmark latency result: </span>
+                      {benchmarkLatency !== null ? `${benchmarkLatency}ms. ` : ''}
+                      <span className="opacity-90">{benchmarkMessage}</span>
+                    </div>
+                  </div>
+                )}
 
                 {/* Bulk Select Checkboxes Panel */}
                 {bulkSelectMode && (
