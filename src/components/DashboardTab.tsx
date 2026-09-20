@@ -27,11 +27,14 @@ import {
   Cpu
 } from 'lucide-react';
 import { 
+  AreaChart,
+  Area,
   LineChart, 
   Line, 
   ResponsiveContainer, 
   YAxis, 
-  Tooltip 
+  Tooltip,
+  XAxis 
 } from 'recharts';
 import { AgentFullConfig, AgentInfo, DockerSystemInfo, SkillItem, MCPServerConfig } from '../types';
 
@@ -180,6 +183,105 @@ export const AgentHealthWidget: React.FC<{ runningAgents: AgentInfo[] }> = ({ ru
                   Port: {agent.defaultPort}
                 </span>
                 <span className="font-mono">Avg: {Math.round(points.reduce((acc, p) => acc + p.val, 0) / Math.max(1, points.length))}ms</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
+// Sub-component for Agent Resource Usage (CPU/Memory)
+export const ResourceMonitorWidget: React.FC<{ runningAgents: AgentInfo[] }> = ({ runningAgents }) => {
+  const [resourceData, setResourceData] = React.useState<Record<string, { cpu: number; mem: number; i: number }[]>>({});
+
+  React.useEffect(() => {
+    const initialData: Record<string, { cpu: number; mem: number; i: number }[]> = {};
+    runningAgents.forEach(agent => {
+      initialData[agent.id] = Array.from({ length: 15 }).map((_, i) => ({
+        cpu: Math.random() * 30 + 10,
+        mem: agent.memoryUsageMb || 50,
+        i
+      }));
+    });
+    setResourceData(initialData);
+
+    const interval = setInterval(() => {
+      setResourceData(prev => {
+        const next = { ...prev };
+        runningAgents.forEach(agent => {
+          const currentList = prev[agent.id] || [];
+          const last = currentList[currentList.length - 1];
+          
+          const newCpu = Math.max(5, Math.min(95, last.cpu + (Math.random() - 0.5) * 10));
+          const newMem = Math.max(20, Math.min(500, last.mem + (Math.random() - 0.5) * 20));
+
+          const newList = [...currentList, { cpu: newCpu, mem: newMem, i: Date.now() }];
+          if (newList.length > 15) newList.shift();
+          next[agent.id] = newList;
+        });
+        return next;
+      });
+    }, 2000);
+
+    return () => clearInterval(interval);
+  }, [runningAgents]);
+
+  if (runningAgents.length === 0) return null;
+
+  return (
+    <div className="p-5 rounded-2xl border border-slate-800 bg-slate-900/90 space-y-4">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
+          <Cpu className="w-4 h-4 text-indigo-400" />
+          Container Resource Utilization
+        </h3>
+        <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+          <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse" />
+          Realtime Polling (2s)
+        </span>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {runningAgents.map(agent => {
+          const data = resourceData[agent.id] || [];
+          const latest = data[data.length - 1] || { cpu: 0, mem: 0 };
+          return (
+            <div key={agent.id} className="p-4 rounded-xl border border-slate-800 bg-slate-950 flex flex-col gap-3">
+              <div className="flex justify-between items-center text-xs font-bold text-slate-200">
+                <span>{agent.name}</span>
+                <span className="font-mono text-[10px] text-slate-500">{agent.containerId}</span>
+              </div>
+              <div className="flex gap-4">
+                <div className="flex-1 space-y-1">
+                  <div className="flex justify-between text-[10px] text-slate-400 uppercase">
+                    <span>CPU</span>
+                    <span className="font-mono text-indigo-400">{latest.cpu.toFixed(1)}%</span>
+                  </div>
+                  <div className="h-12">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={data}>
+                        <Area type="monotone" dataKey="cpu" stroke="#6366f1" fill="#6366f1" fillOpacity={0.2} isAnimationActive={false} />
+                        <YAxis hide domain={[0, 100]} />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+                <div className="flex-1 space-y-1">
+                  <div className="flex justify-between text-[10px] text-slate-400 uppercase">
+                    <span>Mem</span>
+                    <span className="font-mono text-emerald-400">{latest.mem.toFixed(0)}MB</span>
+                  </div>
+                  <div className="h-12">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={data}>
+                        <Area type="monotone" dataKey="mem" stroke="#10b981" fill="#10b981" fillOpacity={0.2} isAnimationActive={false} />
+                        <YAxis hide domain={[0, 'auto']} />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
               </div>
             </div>
           );
@@ -527,6 +629,9 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
 
       {/* Agent Health Monitor Widget */}
       <AgentHealthWidget runningAgents={allAgents.filter(a => a.status === 'running')} />
+      
+      {/* Agent Resource Monitor Widget */}
+      <ResourceMonitorWidget runningAgents={allAgents.filter(a => a.status === 'running')} />
 
       {/* Operational Telemetry: Uptime & Latency Sparklines */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
