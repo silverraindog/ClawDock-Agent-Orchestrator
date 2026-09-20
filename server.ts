@@ -115,6 +115,7 @@ async function handleModelsRequest(req: any, res: any) {
 
     const provider = (getParam('provider', 'modelProvider', 'model_provider', 'model-provider', 'prov', 'type') || 'ollama').toLowerCase();
     const baseUrl = getParam('baseUrl', 'base_url', 'base-url', 'url', 'endpoint', 'apiBase', 'api_base') || '';
+    const apiKey = getParam('apiKey', 'api_key', 'api-key', 'key', 'auth') || '';
     const agentId = getParam('agentId', 'agent_id', 'agent-id', 'agent', 'id', 'agentName', 'botId') || p.id || 'hermes-agent';
     const timestamp = new Date().toLocaleTimeString();
 
@@ -299,7 +300,36 @@ async function handleModelsRequest(req: any, res: any) {
     else if (provider === 'groq') models = [...GROQ_CATALOG];
     else if (provider === 'gemini') models = [...GEMINI_CATALOG];
     else if (provider === 'mistral') models = [...MISTRAL_CATALOG];
-    else if (provider === 'openrouter') models = [...OPENROUTER_CATALOG];
+    else if (provider === 'openrouter') {
+      let openRouterLiveModels: any[] = [];
+      if (apiKey || baseUrl) {
+        try {
+          const targetUrl = baseUrl && baseUrl.trim() ? `${baseUrl.trim().replace(/\/+$/, '')}/v1/models` : 'https://openrouter.ai/api/v1/models';
+          const headers: Record<string, string> = { 'Accept': 'application/json' };
+          if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+          
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 2500);
+          const resp = await fetch(targetUrl, { headers, signal: controller.signal });
+          clearTimeout(timer);
+          
+          if (resp.ok) {
+            const json: any = await resp.json();
+            const list = Array.isArray(json.data) ? json.data : Array.isArray(json.models) ? json.models : [];
+            if (list.length > 0) {
+              openRouterLiveModels = list.slice(0, 60).map((m: any) => ({
+                value: m.id || m.name,
+                label: m.name ? `${m.name} (${m.id || ''})` : m.id,
+                tag: 'OpenRouter'
+              })).filter((m: any) => m.value);
+            }
+          }
+        } catch (e) {
+          console.warn('[Express API Server] Live probe for OpenRouter models failed/timed out, using catalog');
+        }
+      }
+      models = openRouterLiveModels.length > 0 ? openRouterLiveModels : [...OPENROUTER_CATALOG];
+    }
     else if (provider === 'custom') {
       if (liveOllamaModels.length > 0) {
         models = liveOllamaModels.map(m => ({ value: m, label: `${m} (Live on Provider)`, tag: 'Live' }));
@@ -353,11 +383,14 @@ async function handleModelsRequest(req: any, res: any) {
   }
 }
 
-app.all('/api/proxy/models*', async (req, res) => {
-  return handleModelsRequest(req, res);
-});
-
-app.all('/api/proxy/*', async (req, res) => {
+app.all([
+  '/api/models',
+  '/api/models/*',
+  '/api/proxy/models',
+  '/api/proxy/models/*',
+  '/api/proxy/*',
+  '/api/agents/:id/models'
+], async (req, res) => {
   return handleModelsRequest(req, res);
 });
 
