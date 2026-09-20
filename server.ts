@@ -156,11 +156,20 @@ app.all(['/api/models', '/api/models/', '/api/model/list', '/api/model/list/', '
       const uniqueRoots = Array.from(new Set(candidateRoots));
 
       const probeRoot = async (root: string): Promise<string[] | null> => {
+        const headers: Record<string, string> = {
+          'Accept': 'application/json'
+        };
+        const apiKey = getParam('apiKey', 'api_key', 'api-key', 'key', 'auth');
+        if (apiKey) {
+          headers['Authorization'] = `Bearer ${apiKey}`;
+          headers['x-api-key'] = apiKey;
+        }
+
         // 1. Try /api/tags (Ollama native)
         try {
           const controller = new AbortController();
           const timer = setTimeout(() => controller.abort(), 900);
-          const resp = await fetch(`${root}/api/tags`, { signal: controller.signal });
+          const resp = await fetch(`${root}/api/tags`, { headers, signal: controller.signal });
           clearTimeout(timer);
           if (resp.ok) {
             const json: any = await resp.json();
@@ -175,7 +184,7 @@ app.all(['/api/models', '/api/models/', '/api/model/list', '/api/model/list/', '
         try {
           const controller = new AbortController();
           const timer = setTimeout(() => controller.abort(), 900);
-          const resp = await fetch(`${root}/v1/models`, { signal: controller.signal });
+          const resp = await fetch(`${root}/v1/models`, { headers, signal: controller.signal });
           clearTimeout(timer);
           if (resp.ok) {
             const json: any = await resp.json();
@@ -191,7 +200,7 @@ app.all(['/api/models', '/api/models/', '/api/model/list', '/api/model/list/', '
         try {
           const controller = new AbortController();
           const timer = setTimeout(() => controller.abort(), 900);
-          const resp = await fetch(`${root}/models`, { signal: controller.signal });
+          const resp = await fetch(`${root}/models`, { headers, signal: controller.signal });
           clearTimeout(timer);
           if (resp.ok) {
             const json: any = await resp.json();
@@ -458,6 +467,14 @@ app.post('/api/test-connection', async (req, res) => {
           parsedErr = js.error?.message || js.message || parsedErr;
         } catch {
           if (text) parsedErr = text.slice(0, 150);
+        }
+
+        // Handle 405 Method Not Allowed as successful reachability
+        if (response.status === 405) {
+          return res.json({
+            success: true,
+            message: `Successfully reached the provider endpoint. (Server responded with 405 Method Not Allowed, confirming the host is online, reachable, and active).`
+          });
         }
 
         // Differentiate unauthorized keys

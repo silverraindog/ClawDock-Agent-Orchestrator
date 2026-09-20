@@ -574,13 +574,16 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
       const fbBaseUrl = config.fallback?.baseUrl || '';
       const fbModel = config.fallback?.fallbackModel || config.fallback?.model || '';
       const fbUseProxy = config.fallback?.useProxy !== false;
+      const fbApiKey = config.fallback?.apiKey || '';
 
       const result = await fetchModelsWithFallback(
         fbProvider as string,
         fbBaseUrl,
         agentId,
         fbModel,
-        fbUseProxy
+        fbUseProxy,
+        true, // forceProxyModelsPath to use backend proxy
+        fbApiKey
       );
 
       let fetchedModels = result.models;

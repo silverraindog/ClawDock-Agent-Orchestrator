@@ -500,7 +500,8 @@ export async function fetchModelsWithFallback(
   agentId: string = 'hermes-agent',
   currentModel?: string,
   useProxy: boolean = true,
-  forceProxyModelsPath: boolean = false
+  forceProxyModelsPath: boolean = false,
+  apiKey: string = ''
 ): Promise<{ models: ModelOptionItem[]; isFallback: boolean; isLocalFallback: boolean; source: string; provider: string }> {
   const normProvider = (provider || 'ollama').toLowerCase();
   const isLocalTarget = (
@@ -543,6 +544,7 @@ export async function fetchModelsWithFallback(
     baseUrl: baseUrl || '',
     agentId: agentId || 'hermes-agent',
     useProxy: useProxy ? 'true' : 'false',
+    apiKey: apiKey || '',
     t: String(timestamp)
   });
   const endpointUrl = forceProxyModelsPath
