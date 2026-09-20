@@ -40,7 +40,9 @@ import {
   Brain,
   Target,
   Bot,
-  ShieldAlert
+  ShieldAlert,
+  Eye,
+  EyeOff
 } from 'lucide-react';
 import { 
   AgentFullConfig, 
@@ -91,6 +93,65 @@ export {
   PURPOSE_METADATA
 };
 export type { AgentPurpose, ModelCombinationSuggestion };
+
+/**
+ * Reactive hook to map the failover provider connection status into
+ * beautifully designed visual states (connected / disconnected / testing / untested).
+ */
+export const useFailoverVisualStatus = (
+  status: 'untested' | 'testing' | 'connected' | 'failed'
+) => {
+  return React.useMemo(() => {
+    switch (status) {
+      case 'connected':
+        return {
+          label: 'Connected',
+          className: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/35',
+          dotColor: 'bg-emerald-400',
+          icon: 'Check'
+        };
+      case 'failed':
+        return {
+          label: 'Disconnected',
+          className: 'bg-rose-500/15 text-rose-300 border-rose-500/35',
+          dotColor: 'bg-rose-400',
+          icon: 'AlertCircle'
+        };
+      case 'testing':
+        return {
+          label: 'Verifying...',
+          className: 'bg-amber-500/15 text-amber-300 border-amber-500/35 animate-pulse',
+          dotColor: 'bg-amber-400',
+          icon: 'RefreshCw'
+        };
+      default:
+        return {
+          label: 'Disconnected',
+          className: 'bg-slate-800 text-slate-400 border-slate-700/85',
+          dotColor: 'bg-slate-500',
+          icon: 'AlertCircle'
+        };
+    }
+  }, [status]);
+};
+
+interface FailoverStatusBadgeProps {
+  status: 'untested' | 'testing' | 'connected' | 'failed';
+}
+
+export const FailoverStatusBadge: React.FC<FailoverStatusBadgeProps> = ({ status }) => {
+  const visual = useFailoverVisualStatus(status);
+
+  return (
+    <span 
+      id="failover-status-badge" 
+      className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold border transition-all ${visual.className}`}
+    >
+      <span className={`w-1.5 h-1.5 rounded-full ${visual.dotColor} ${status === 'testing' ? 'animate-ping' : ''}`} />
+      <span>{visual.label}</span>
+    </span>
+  );
+};
 
 interface ConfigTabProps {
   agentId: AgentId;
@@ -197,6 +258,7 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
   const [isFetchingLive, setIsFetchingLive] = useState(false);
   const [activeLogInspection, setActiveLogInspection] = useState<VerboseLogData | null>(null);
   const [isInspectorOpen, setIsInspectorOpen] = useState(false);
+  const [showFallbackApiKey, setShowFallbackApiKey] = useState(false);
   
   // Default native config info initialized from DEFAULT_NATIVE_FILES
   const [nativeConfigInfo, setNativeConfigInfo] = useState<{ fileName: string; format: string; content: string }>(() => {
@@ -3699,31 +3761,7 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
                           </span>
                         )}
                         {/* Visual indicator for Connection/Authentication Status */}
-                        <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[9px] font-bold border transition-all ${
-                          fallbackConnectionStatus.status === 'connected'
-                            ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/35'
-                            : fallbackConnectionStatus.status === 'failed'
-                            ? 'bg-rose-500/15 text-rose-300 border-rose-500/35'
-                            : fallbackConnectionStatus.status === 'testing'
-                            ? 'bg-amber-500/15 text-amber-300 border-amber-500/35 animate-pulse'
-                            : 'bg-slate-800 text-slate-400 border-slate-700/85'
-                        }`}>
-                          {fallbackConnectionStatus.status === 'connected' ? (
-                            <>
-                              <Check className="w-2.5 h-2.5 text-emerald-400" /> Connected & Authenticated
-                            </>
-                          ) : fallbackConnectionStatus.status === 'failed' ? (
-                            <>
-                              <AlertCircle className="w-2.5 h-2.5 text-rose-400" /> Connection Failed
-                            </>
-                          ) : fallbackConnectionStatus.status === 'testing' ? (
-                            <>
-                              <RefreshCw className="w-2.5 h-2.5 text-amber-400 animate-spin" /> Verifying...
-                            </>
-                          ) : (
-                            'Untested'
-                          )}
-                        </span>
+                        <FailoverStatusBadge status={fallbackConnectionStatus.status} />
                       </div>
                       
                       <div className="flex items-center gap-2">
@@ -3780,7 +3818,7 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
                         <div className="relative">
                           <input
                             id="fallback-api-key-input"
-                            type="password"
+                            type={showFallbackApiKey ? "text" : "password"}
                             placeholder="sk-..."
                             value={config.fallback?.apiKey || ''}
                             onChange={(e) => onChangeConfig({
@@ -3790,9 +3828,20 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
                                 apiKey: e.target.value
                               }
                             })}
-                            className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-slate-100 text-xs font-mono focus:outline-none focus:border-indigo-500"
+                            className="w-full pl-3 pr-10 py-2 rounded-lg bg-slate-900 border border-slate-700 text-slate-100 text-xs font-mono focus:outline-none focus:border-indigo-500"
                           />
-                          <Lock className="w-3.5 h-3.5 text-slate-500 absolute right-3 top-2.5" />
+                          <button
+                            type="button"
+                            onClick={() => setShowFallbackApiKey(prev => !prev)}
+                            className="absolute right-3 top-2.5 text-slate-500 hover:text-slate-300 focus:outline-none transition-colors"
+                            title={showFallbackApiKey ? "Hide API Key" : "Show API Key"}
+                          >
+                            {showFallbackApiKey ? (
+                              <EyeOff className="w-3.5 h-3.5" />
+                            ) : (
+                              <Eye className="w-3.5 h-3.5" />
+                            )}
+                          </button>
                         </div>
                       </div>
 
