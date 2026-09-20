@@ -964,6 +964,16 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
           )}
 
           <button
+            id="quick-reset-btn"
+            onClick={() => fetchLiveConfig(false)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-amber-300 hover:text-white bg-amber-950/60 hover:bg-amber-900/60 border border-amber-500/30 transition-colors"
+            title="Discard all unsaved local changes and reload from container config file"
+          >
+            <RotateCcw className="w-3.5 h-3.5 text-amber-400" />
+            Quick Reset
+          </button>
+
+          <button
             id="reset-config-btn"
             onClick={onResetDefaults}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 border border-slate-700 transition-colors"

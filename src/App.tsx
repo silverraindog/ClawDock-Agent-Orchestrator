@@ -1713,6 +1713,7 @@ export default function App() {
               onInstallAgent={() => handleInstallAgent(selectedAgentId)}
               onDetectAgent={handleDetectAgents}
               onOpenDiscovery={() => setIsDiscoveryOpen(true)}
+              allAgents={agents}
             />
           )}
 
