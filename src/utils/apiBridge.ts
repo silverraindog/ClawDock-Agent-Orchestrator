@@ -411,6 +411,46 @@ export async function fetchProxyModels(
 }
 
 /**
+ * Test Connection helper that validates credentials and endpoint health.
+ */
+export async function testLLMConnection(
+  provider: string,
+  apiKey: string,
+  baseUrl?: string
+): Promise<{ success: boolean; message: string; errorType?: string }> {
+  try {
+    const response = await fetch('/api/test-connection', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ provider, apiKey, baseUrl })
+    });
+    
+    if (!response.ok) {
+      const errText = await response.text();
+      return {
+        success: false,
+        message: `HTTP Server Error (${response.status}): ${errText || response.statusText}`
+      };
+    }
+
+    const data = await response.json();
+    return {
+      success: data.success,
+      message: data.message || 'Verification complete.',
+      errorType: data.errorType
+    };
+  } catch (err: any) {
+    console.error('[API Bridge] Connection test failed:', err);
+    return {
+      success: false,
+      message: `Failed to invoke backend connection tester: ${err.message || 'Unknown network error'}`
+    };
+  }
+}
+
+/**
  * Robust model list fetcher with multi-tier fallback mechanism.
  * Always targets and fetches models strictly for the specific provider selected via server proxy.
  */

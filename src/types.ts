@@ -143,6 +143,9 @@ export interface FallbackConfig {
   fallbackModel?: string;
   provider?: LLMProvider | string;
   model?: string;
+  apiKey?: string;
+  baseUrl?: string;
+  useProxy?: boolean;
 }
 
 export interface AgentFullConfig {

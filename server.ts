@@ -350,6 +350,162 @@ app.all(['/api/models', '/api/models/', '/api/model/list', '/api/model/list/', '
   }
 });
 
+// Test Connection Helper for LLM Providers
+app.post('/api/test-connection', async (req, res) => {
+  try {
+    const { provider, apiKey, baseUrl } = req.body;
+    const cleanProvider = (provider || 'ollama').toLowerCase();
+
+    // 1. Validate based on provider requirements
+    if (cleanProvider !== 'ollama' && (!apiKey || !apiKey.trim())) {
+      return res.json({
+        success: false,
+        errorType: 'MISSING_API_KEY',
+        message: `API Key is required to authenticate with ${provider.toUpperCase()}.`
+      });
+    }
+
+    let url = '';
+    let headers: Record<string, string> = {
+      'Content-Type': 'application/json'
+    };
+
+    if (cleanProvider === 'ollama') {
+      const roots = baseUrl && baseUrl.trim() 
+        ? [baseUrl.trim()]
+        : ['http://host.docker.internal:11434', 'http://localhost:11434', 'http://127.0.0.1:11434'];
+      
+      let ollamaSuccess = false;
+      let errorMsg = 'Could not establish connection to local Ollama. Ensure Ollama is running.';
+
+      for (const root of roots) {
+        try {
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 1200);
+          const response = await fetch(`${root.replace(/\/+$/, '')}/api/tags`, { signal: controller.signal });
+          clearTimeout(timer);
+          if (response.ok) {
+            ollamaSuccess = true;
+            break;
+          }
+        } catch (err: any) {
+          errorMsg = err.message || errorMsg;
+        }
+      }
+
+      if (ollamaSuccess) {
+        return res.json({ success: true, message: 'Successfully connected to Ollama instance.' });
+      } else {
+        return res.json({ success: false, errorType: 'CONNECTION_FAILURE', message: errorMsg });
+      }
+    }
+
+    // Configure headers & endpoints for other third-party models
+    if (cleanProvider === 'openai') {
+      url = baseUrl && baseUrl.trim() ? `${baseUrl.trim().replace(/\/+$/, '')}/v1/models` : 'https://api.openai.com/v1/models';
+      headers['Authorization'] = `Bearer ${apiKey.trim()}`;
+    } else if (cleanProvider === 'anthropic') {
+      url = baseUrl && baseUrl.trim() ? `${baseUrl.trim().replace(/\/+$/, '')}/v1/models` : 'https://api.anthropic.com/v1/models';
+      headers['x-api-key'] = apiKey.trim();
+      headers['anthropic-version'] = '2023-06-01';
+    } else if (cleanProvider === 'gemini') {
+      url = `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey.trim()}`;
+    } else if (cleanProvider === 'deepseek') {
+      url = baseUrl && baseUrl.trim() ? `${baseUrl.trim().replace(/\/+$/, '')}/models` : 'https://api.deepseek.com/models';
+      headers['Authorization'] = `Bearer ${apiKey.trim()}`;
+    } else if (cleanProvider === 'groq') {
+      url = baseUrl && baseUrl.trim() ? `${baseUrl.trim().replace(/\/+$/, '')}/v1/models` : 'https://api.groq.com/openai/v1/models';
+      headers['Authorization'] = `Bearer ${apiKey.trim()}`;
+    } else if (cleanProvider === 'mistral') {
+      url = baseUrl && baseUrl.trim() ? `${baseUrl.trim().replace(/\/+$/, '')}/v1/models` : 'https://api.mistral.ai/v1/models';
+      headers['Authorization'] = `Bearer ${apiKey.trim()}`;
+    } else if (cleanProvider === 'openrouter') {
+      url = baseUrl && baseUrl.trim() ? `${baseUrl.trim().replace(/\/+$/, '')}/v1/models` : 'https://openrouter.ai/api/v1/models';
+      headers['Authorization'] = `Bearer ${apiKey.trim()}`;
+    } else if (cleanProvider === 'custom') {
+      if (!baseUrl || !baseUrl.trim()) {
+        return res.json({
+          success: false,
+          errorType: 'MISSING_BASE_URL',
+          message: 'Base URL is required for Custom provider connections.'
+        });
+      }
+      url = `${baseUrl.trim().replace(/\/+$/, '')}/v1/models`;
+      headers['Authorization'] = `Bearer ${apiKey.trim()}`;
+    }
+
+    // Perform verification fetch request
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 6000); // 6s timeout
+    try {
+      const response = await fetch(url, {
+        method: 'GET',
+        headers,
+        signal: controller.signal
+      });
+      clearTimeout(timer);
+
+      if (response.ok) {
+        return res.json({
+          success: true,
+          message: `Successfully connected & authenticated with ${provider.toUpperCase()}.`
+        });
+      } else {
+        const text = await response.text();
+        let parsedErr = 'Authentication or connection rejected by server.';
+        try {
+          const js = JSON.parse(text);
+          parsedErr = js.error?.message || js.message || parsedErr;
+        } catch {
+          if (text) parsedErr = text.slice(0, 150);
+        }
+
+        // Differentiate unauthorized keys
+        if (response.status === 401 || response.status === 403) {
+          return res.json({
+            success: false,
+            errorType: 'INVALID_CREDENTIALS',
+            message: `Invalid API Key or unauthorized access. (${response.status}: ${parsedErr})`
+          });
+        }
+
+        return res.json({
+          success: false,
+          errorType: 'PROVIDER_REJECTED',
+          message: `Server returned status ${response.status}: ${parsedErr}`
+        });
+      }
+    } catch (fetchErr: any) {
+      clearTimeout(timer);
+      console.error(`[Test Connection Error] ${provider}:`, fetchErr);
+      
+      // Check if it is a real system error (network offline/DNS failure vs timeout)
+      const isTimeout = fetchErr.name === 'AbortError' || fetchErr.message?.includes('aborted') || fetchErr.message?.includes('timeout');
+      if (isTimeout) {
+        return res.json({
+          success: false,
+          errorType: 'TIMEOUT',
+          message: `Connection timed out while reaching ${provider.toUpperCase()}. Please check your connection or base URL.`
+        });
+      }
+
+      return res.json({
+        success: false,
+        errorType: 'NETWORK_ERROR',
+        message: `Network Error: Could not reach the provider endpoint. (${fetchErr.message || 'DNS resolution or route failed'})`
+      });
+    }
+
+  } catch (err: any) {
+    console.error('[Express API Server] Error in /api/test-connection handler:', err);
+    return res.status(500).json({
+      success: false,
+      errorType: 'INTERNAL_SERVER_ERROR',
+      message: `Internal server failure: ${err.message}`
+    });
+  }
+});
+
 // OpenClaw MCP endpoint
 app.all(['/api/openclaw/mcp', '/api/agents/openclaw/mcp'], (req, res) => {
   res.json({

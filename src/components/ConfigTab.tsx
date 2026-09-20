@@ -55,6 +55,7 @@ import {
   fetchAgentLiveConfig, 
   saveAgentConfigToBackend, 
   fetchModelsWithFallback, 
+  testLLMConnection,
   logApiFailure, 
   DEFAULT_LOCAL_MODELS, 
   DEFAULT_GENERIC_MODELS,
@@ -350,6 +351,17 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
   const [fetchedModelsMap, setFetchedModelsMap] = useState<Record<string, { value: string; label: string; tag?: string }[]>>({});
   const [providerLiveStatus, setProviderLiveStatus] = useState<Record<string, { isLive: boolean; source: string; count: number }>>({});
   const [onlyLiveFilter, setOnlyLiveFilter] = useState<boolean>(false);
+
+  const [isFetchingFallbackModels, setIsFetchingFallbackModels] = useState(false);
+  const [isTestingFallbackConnection, setIsTestingFallbackConnection] = useState(false);
+  const [fallbackConnectionStatus, setFallbackConnectionStatus] = useState<{
+    status: 'untested' | 'testing' | 'connected' | 'failed';
+    message?: string;
+  }>({ status: 'untested' });
+  const [showSaveValidationWarning, setShowSaveValidationWarning] = useState<boolean>(false);
+  const [pendingRestartParam, setPendingRestartParam] = useState<boolean | null>(null);
+  const [fallbackFetchedModelsMap, setFallbackFetchedModelsMap] = useState<Record<string, { value: string; label: string; tag?: string }[]>>({});
+  const [fallbackProviderLiveStatus, setFallbackProviderLiveStatus] = useState<Record<string, { isLive: boolean; source: string; count: number }>>({});
   const [isCompareModalOpen, setIsCompareModalOpen] = useState(false);
   const [secondaryModel, setSecondaryModel] = useState<string>('qwen2.5-coder:7b');
   const [comparisonMode, setComparisonMode] = useState<boolean>(false);
@@ -530,9 +542,174 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
 
   const handleFetchModules = handleFetchModels;
 
+  const handleFetchFallbackModels = async () => {
+    setIsFetchingFallbackModels(true);
+    try {
+      const fbProvider = config.fallback?.fallbackProvider || config.fallback?.provider || 'ollama';
+      const fbBaseUrl = config.fallback?.baseUrl || '';
+      const fbModel = config.fallback?.fallbackModel || config.fallback?.model || '';
+      const fbUseProxy = config.fallback?.useProxy !== false;
+
+      const result = await fetchModelsWithFallback(
+        fbProvider as string,
+        fbBaseUrl,
+        agentId,
+        fbModel,
+        fbUseProxy
+      );
+
+      let fetchedModels = result.models;
+      const isLive = result.source === 'live_probe';
+
+      setFallbackProviderLiveStatus(prev => ({
+        ...prev,
+        [fbProvider]: {
+          isLive,
+          source: result.source,
+          count: result.models.length
+        }
+      }));
+
+      if (fbModel && !fetchedModels.some(m => m.value === fbModel)) {
+        fetchedModels = [
+          { value: fbModel, label: `${fbModel} (Active)`, tag: 'Active' },
+          ...fetchedModels
+        ];
+      }
+
+      const formattedModels = fetchedModels.map(opt => ({
+        ...opt,
+        tag: opt.value === fbModel ? (opt.tag || 'Active') : opt.tag
+      }));
+
+      setFallbackFetchedModelsMap(prev => ({
+        ...prev,
+        [fbProvider]: formattedModels
+      }));
+
+      if (isLive) {
+        setFallbackConnectionStatus({
+          status: 'connected',
+          message: `Successfully connected & verified with ${fbProvider.toUpperCase()} (${result.models.length} models fetched).`
+        });
+      }
+    } catch (e: any) {
+      const prov = (config.fallback?.fallbackProvider || config.fallback?.provider || 'ollama') as string;
+      const fallbackList = DEFAULT_PROVIDER_MODELS[prov] || MODEL_OPTIONS[prov] || DEFAULT_LOCAL_MODELS;
+      setFallbackProviderLiveStatus(prev => ({
+        ...prev,
+        [prov]: {
+          isLive: false,
+          source: 'static_fallback',
+          count: fallbackList.length
+        }
+      }));
+      setFallbackFetchedModelsMap(prev => ({
+        ...prev,
+        [prov]: fallbackList
+      }));
+      setFallbackConnectionStatus({
+        status: 'failed',
+        message: `Connection test failed: Could not fetch models from ${prov.toUpperCase()}. Please check your API key, base URL, and proxy routing.`
+      });
+    } finally {
+      setIsFetchingFallbackModels(false);
+    }
+  };
+
+  const handleTestFallbackConnection = async () => {
+    setIsTestingFallbackConnection(true);
+    setFallbackConnectionStatus({ status: 'testing' });
+    try {
+      const fbProvider = config.fallback?.fallbackProvider || config.fallback?.provider || 'ollama';
+      const fbApiKey = config.fallback?.apiKey || '';
+      const fbBaseUrl = config.fallback?.baseUrl || '';
+
+      const result = await testLLMConnection(fbProvider as string, fbApiKey, fbBaseUrl);
+      if (result.success) {
+        setFallbackConnectionStatus({
+          status: 'connected',
+          message: result.message
+        });
+      } else {
+        setFallbackConnectionStatus({
+          status: 'failed',
+          message: result.message
+        });
+      }
+    } catch (err: any) {
+      setFallbackConnectionStatus({
+        status: 'failed',
+        message: err.message || 'Connection test encountered an unexpected error.'
+      });
+    } finally {
+      setIsTestingFallbackConnection(false);
+    }
+  };
+
+  const handleInterceptSave = async (restartContainer: boolean) => {
+    setShowSaveValidationWarning(false);
+    setPendingRestartParam(null);
+
+    if (config.fallback?.enabled) {
+      const fbProvider = config.fallback?.fallbackProvider || config.fallback?.provider || 'ollama';
+      const fbApiKey = config.fallback?.apiKey || '';
+      const fbBaseUrl = config.fallback?.baseUrl || '';
+
+      let currentStatus = fallbackConnectionStatus.status;
+      let currentMessage = fallbackConnectionStatus.message;
+
+      if (currentStatus === 'untested') {
+        setFallbackConnectionStatus({ status: 'testing' });
+        try {
+          const result = await testLLMConnection(fbProvider as string, fbApiKey, fbBaseUrl);
+          if (result.success) {
+            setFallbackConnectionStatus({ status: 'connected', message: result.message });
+            currentStatus = 'connected';
+          } else {
+            setFallbackConnectionStatus({ status: 'failed', message: result.message });
+            currentStatus = 'failed';
+            currentMessage = result.message;
+          }
+        } catch (e: any) {
+          setFallbackConnectionStatus({ status: 'failed', message: e.message || 'Verification failed.' });
+          currentStatus = 'failed';
+          currentMessage = e.message || 'Verification failed.';
+        }
+      }
+
+      if (currentStatus === 'failed') {
+        setPendingRestartParam(restartContainer);
+        setShowSaveValidationWarning(true);
+        return;
+      }
+    }
+
+    onSaveConfig(restartContainer);
+  };
+
   useEffect(() => {
     handleFetchModels();
   }, [config.model.provider, config.model.baseUrl, config.model.useProxy, agentId]);
+
+  useEffect(() => {
+    handleFetchFallbackModels();
+  }, [
+    config.fallback?.fallbackProvider,
+    config.fallback?.provider,
+    config.fallback?.baseUrl,
+    config.fallback?.useProxy,
+    agentId
+  ]);
+
+  useEffect(() => {
+    setFallbackConnectionStatus({ status: 'untested' });
+  }, [
+    config.fallback?.fallbackProvider,
+    config.fallback?.provider,
+    config.fallback?.apiKey,
+    config.fallback?.baseUrl
+  ]);
 
   const handleProviderChange = (provider: LLMProvider) => {
     const available = MODEL_OPTIONS[provider] || DEFAULT_PROVIDER_MODELS[provider] || [];
@@ -717,7 +894,7 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
 
           <button
             id="save-config-file-btn"
-            onClick={() => onSaveConfig(false)}
+            onClick={() => handleInterceptSave(false)}
             disabled={isSaving}
             className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold text-slate-200 bg-slate-800 hover:bg-slate-700 border border-slate-700 transition-all disabled:opacity-50"
             title="Save configuration to file (.hermes/config.yaml / clawdock mount)"
@@ -728,7 +905,7 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
 
           <button
             id="save-config-agent-btn"
-            onClick={() => onSaveConfig(true)}
+            onClick={() => handleInterceptSave(true)}
             disabled={isSaving}
             className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 transition-all shadow-md shadow-indigo-950/40 disabled:opacity-50"
             title="Save configuration to agent and execute docker container CLI config set / restart"
@@ -738,6 +915,43 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
           </button>
         </div>
       </div>
+
+      {showSaveValidationWarning && (
+        <div className="p-4 rounded-xl border border-rose-500/30 bg-rose-500/10 text-rose-200 text-xs flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-md shadow-rose-950/20">
+          <div className="flex items-start gap-2.5">
+            <AlertTriangle className="w-4 h-4 text-rose-400 mt-0.5 shrink-0" />
+            <div className="space-y-1">
+              <p className="font-bold">Failover Provider Connection Failed</p>
+              <p className="text-rose-300/90 leading-relaxed text-[11px]">
+                The test connection to your failover provider returned an error:
+                <span className="font-mono bg-rose-950/60 px-2 py-1 rounded text-rose-300 block mt-1">
+                  "{fallbackConnectionStatus.message || 'Unknown network or authentication error.'}"
+                </span>
+                Proceeding may cause errors if primary execution fails and failover is triggered.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0 self-end md:self-center">
+            <button
+              onClick={() => setShowSaveValidationWarning(false)}
+              className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 font-medium transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => {
+                setShowSaveValidationWarning(false);
+                if (pendingRestartParam !== null) {
+                  onSaveConfig(pendingRestartParam);
+                }
+              }}
+              className="px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-semibold shadow-sm transition-colors"
+            >
+              Proceed & Save Anyway
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Configuration Injection Status Alert Banner */}
       <ConfigInjectionAlert 
@@ -803,7 +1017,7 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
               <button
                 onClick={() => {
                   setIsRestartModalOpen(false);
-                  onSaveConfig(true);
+                  handleInterceptSave(true);
                 }}
                 className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-lg shadow-indigo-600/30 transition-all"
               >
@@ -3079,134 +3293,384 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
             </div>
 
             {/* Failback Provider & Fallback Model Configuration with Status Badges */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* Failback Provider Field */}
-              <div className="p-4 rounded-xl border border-slate-800 bg-slate-800/40 space-y-3">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-bold text-white flex items-center gap-1.5">
-                    <Cpu className="w-3.5 h-3.5 text-indigo-400" />
-                    Failback Provider
-                  </label>
-                  {/* Status Badge */}
-                  {fallbackValidation.providerSupported ? (
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                      <CheckCircle2 className="w-3 h-3" />
-                      Supported Provider
-                    </span>
-                  ) : !fallbackValidation.providerPresent ? (
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-rose-500/10 text-rose-400 border border-rose-500/20">
-                      <AlertTriangle className="w-3 h-3" />
-                      Provider Required
-                    </span>
-                  ) : (
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                      <AlertTriangle className="w-3 h-3" />
-                      Unsupported Provider
-                    </span>
-                  )}
+            {(() => {
+              const fallbackProv = config.fallback?.fallbackProvider || config.fallback?.provider || 'ollama';
+              const fallbackModelList = fallbackFetchedModelsMap[fallbackProv as string] || DEFAULT_PROVIDER_MODELS[fallbackProv as string] || MODEL_OPTIONS[fallbackProv as string] || [];
+              const isLocalOrCustom = fallbackProv === 'ollama' || fallbackProv === 'custom';
+              const fallbackLiveInfo = fallbackProviderLiveStatus[fallbackProv as string];
+
+              return (
+                <div className="space-y-6">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {/* Failback Provider Field */}
+                    <div className="p-4 rounded-xl border border-slate-800 bg-slate-800/40 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-bold text-white flex items-center gap-1.5">
+                          <Cpu className="w-3.5 h-3.5 text-indigo-400" />
+                          Failback Provider
+                        </label>
+                        {/* Status Badge */}
+                        {fallbackValidation.providerSupported ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                            <CheckCircle2 className="w-3 h-3" />
+                            Supported Provider
+                          </span>
+                        ) : !fallbackValidation.providerPresent ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-rose-500/10 text-rose-400 border border-rose-500/20">
+                            <AlertTriangle className="w-3 h-3" />
+                            Provider Required
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                            <AlertTriangle className="w-3 h-3" />
+                            Unsupported Provider
+                          </span>
+                        )}
+                      </div>
+
+                      <p className="text-[11px] text-slate-400">
+                        Select the underlying LLM provider executed when primary inference fails or switches to edge mode.
+                      </p>
+
+                      <select
+                        id="fallback-provider-select"
+                        value={config.fallback?.fallbackProvider || config.fallback?.provider || 'ollama'}
+                        onChange={(e) => {
+                          const newProvider = e.target.value;
+                          onChangeConfig({
+                            ...config,
+                            fallback: {
+                              ...(config.fallback || { enabled: false, strategy: 'on_offline' }),
+                              fallbackProvider: newProvider,
+                              provider: newProvider,
+                              // Reset or use corresponding model from standard options as fallback
+                              fallbackModel: (MODEL_OPTIONS[newProvider] || DEFAULT_PROVIDER_MODELS[newProvider] || [])[0]?.value || 'custom-model',
+                              model: (MODEL_OPTIONS[newProvider] || DEFAULT_PROVIDER_MODELS[newProvider] || [])[0]?.value || 'custom-model'
+                            }
+                          });
+                        }}
+                        className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-slate-200 text-xs font-mono focus:outline-none focus:border-indigo-500"
+                      >
+                        {VALID_PROVIDERS.map((p) => (
+                          <option key={p} value={p}>
+                            {p.toUpperCase()} {p === 'ollama' ? '(Local / Edge)' : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Fallback Model Field */}
+                    <div className="p-4 rounded-xl border border-slate-800 bg-slate-800/40 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-bold text-white flex items-center gap-1.5">
+                          <Zap className="w-3.5 h-3.5 text-amber-400" />
+                          Fallback Model
+                        </label>
+                        {/* Status Badge */}
+                        {fallbackValidation.modelValid ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                            <CheckCircle2 className="w-3 h-3" />
+                            Schema Valid
+                          </span>
+                        ) : !fallbackValidation.modelPresent ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-rose-500/10 text-rose-400 border border-rose-500/20">
+                            <AlertTriangle className="w-3 h-3" />
+                            Model Required
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                            <AlertTriangle className="w-3 h-3" />
+                            Invalid Model
+                          </span>
+                        )}
+                      </div>
+
+                      <p className="text-[11px] text-slate-400">
+                        Target model identifier dispatched during failover execution (e.g., local quant or edge SLM).
+                      </p>
+
+                      <div className="relative">
+                        <select
+                          id="fallback-model-select"
+                          value={config.fallback?.fallbackModel || config.fallback?.model || ''}
+                          onChange={(e) => {
+                            const newModel = e.target.value;
+                            onChangeConfig({
+                              ...config,
+                              fallback: {
+                                ...(config.fallback || { enabled: false, strategy: 'on_offline' }),
+                                fallbackModel: newModel,
+                                model: newModel
+                              }
+                            });
+                          }}
+                          className="w-full appearance-none px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-slate-200 text-xs font-mono focus:outline-none focus:border-indigo-500 pr-8"
+                        >
+                          {config.fallback?.fallbackModel && !fallbackModelList.some(m => m.value === config.fallback?.fallbackModel) && (
+                            <option value={config.fallback?.fallbackModel}>
+                              {config.fallback?.fallbackModel} (Active)
+                            </option>
+                          )}
+                          {fallbackModelList.map((m) => (
+                            <option key={m.value} value={m.value}>
+                              {m.label} {m.tag ? `[${m.tag}]` : ''}
+                            </option>
+                          ))}
+                          <option value="custom">-- Enter Custom Model Name --</option>
+                        </select>
+                        <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-2.5 pointer-events-none" />
+                      </div>
+
+                      {/* Fallback Custom Model input */}
+                      {(config.fallback?.fallbackModel === 'custom' || !fallbackModelList.some(m => m.value === config.fallback?.fallbackModel)) && (
+                        <div className="pt-1.5">
+                          <input
+                            id="fallback-model-custom-input"
+                            type="text"
+                            placeholder="e.g. gemma4-soul:latest or qwen2.5-coder:7b"
+                            value={config.fallback?.fallbackModel === 'custom' ? '' : (config.fallback?.fallbackModel || config.fallback?.model || '')}
+                            onChange={(e) => onChangeConfig({
+                              ...config,
+                              fallback: {
+                                ...(config.fallback || { enabled: false, strategy: 'on_offline' }),
+                                fallbackModel: e.target.value,
+                                model: e.target.value
+                              }
+                            })}
+                            className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-indigo-500/50 text-slate-100 text-xs focus:outline-none focus:border-indigo-400 font-mono"
+                          />
+                        </div>
+                      )}
+
+                      {/* Quick Model Suggestions */}
+                      <div className="flex flex-wrap gap-1.5 pt-1">
+                        {['llama3.2:3b', 'hermes-3-llama-3.1-8b', 'mistral-7b-instruct', 'deepseek-chat', 'gpt-4o-mini', 'picolm-1.1b'].map((m) => (
+                          <button
+                            key={m}
+                            type="button"
+                            onClick={() => {
+                              onChangeConfig({
+                                ...config,
+                                fallback: {
+                                  ...(config.fallback || { enabled: false, strategy: 'on_offline' }),
+                                  fallbackModel: m,
+                                  model: m
+                                }
+                              });
+                            }}
+                            className="px-2 py-0.5 rounded text-[10px] font-mono bg-slate-900 hover:bg-slate-750 text-slate-400 hover:text-slate-200 border border-slate-800 transition-colors"
+                          >
+                            +{m}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Fallback Connection & Credentials Settings Panel */}
+                  <div className="p-4 rounded-xl border border-slate-800 bg-slate-800/40 space-y-4">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <Lock className="w-3.5 h-3.5 text-indigo-400" />
+                        <h4 className="text-xs font-semibold text-white">
+                          Fallback Connection Settings ({fallbackProv.toUpperCase()})
+                        </h4>
+                        {fallbackLiveInfo && (
+                          <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                            fallbackLiveInfo.isLive 
+                              ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' 
+                              : 'bg-slate-500/10 text-slate-400 border border-slate-500/20'
+                          }`}>
+                            {fallbackLiveInfo.isLive ? `Live (${fallbackLiveInfo.count} models)` : 'Cached / Static'}
+                          </span>
+                        )}
+                        {/* Visual indicator for Connection/Authentication Status */}
+                        <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[9px] font-bold border transition-all ${
+                          fallbackConnectionStatus.status === 'connected'
+                            ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/35'
+                            : fallbackConnectionStatus.status === 'failed'
+                            ? 'bg-rose-500/15 text-rose-300 border-rose-500/35'
+                            : fallbackConnectionStatus.status === 'testing'
+                            ? 'bg-amber-500/15 text-amber-300 border-amber-500/35 animate-pulse'
+                            : 'bg-slate-800 text-slate-400 border-slate-700/85'
+                        }`}>
+                          {fallbackConnectionStatus.status === 'connected' ? (
+                            <>
+                              <Check className="w-2.5 h-2.5 text-emerald-400" /> Connected & Authenticated
+                            </>
+                          ) : fallbackConnectionStatus.status === 'failed' ? (
+                            <>
+                              <AlertCircle className="w-2.5 h-2.5 text-rose-400" /> Connection Failed
+                            </>
+                          ) : fallbackConnectionStatus.status === 'testing' ? (
+                            <>
+                              <RefreshCw className="w-2.5 h-2.5 text-amber-400 animate-spin" /> Verifying...
+                            </>
+                          ) : (
+                            'Untested'
+                          )}
+                        </span>
+                      </div>
+                      
+                      <div className="flex items-center gap-2">
+                        {/* Test Connection Button */}
+                        <button
+                          type="button"
+                          onClick={handleTestFallbackConnection}
+                          disabled={isTestingFallbackConnection}
+                          className="px-2.5 py-1 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/40 text-emerald-300 text-[11px] font-medium transition-all flex items-center gap-1.5 disabled:opacity-50"
+                          title="Verify API Key and endpoint health before saving"
+                        >
+                          {isTestingFallbackConnection ? (
+                            <>
+                              <RefreshCw className="w-3 h-3 animate-spin text-emerald-400" />
+                              Verifying...
+                            </>
+                          ) : (
+                            <>
+                              <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                              Test Connection
+                            </>
+                          )}
+                        </button>
+
+                        {/* Fetch Fallback Models Button */}
+                        <button
+                          type="button"
+                          onClick={handleFetchFallbackModels}
+                          disabled={isFetchingFallbackModels}
+                          className="px-2.5 py-1 rounded-lg bg-indigo-600/30 hover:bg-indigo-600/50 border border-indigo-500/40 text-indigo-300 text-[11px] font-medium transition-all flex items-center gap-1.5 disabled:opacity-50"
+                        >
+                          {isFetchingFallbackModels ? (
+                            <>
+                              <RefreshCw className="w-3 h-3 animate-spin text-indigo-400" />
+                              Fetching...
+                            </>
+                          ) : (
+                            <>
+                              <Download className="w-3 h-3" />
+                              Fetch Fallback Models
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {/* Fallback API Key */}
+                      <div className="space-y-1.5">
+                        <label className="block text-xs font-semibold text-slate-200 flex items-center justify-between">
+                          <span>Fallback API Key</span>
+                          <span className="text-[10px] text-slate-400 font-normal">Stored securely in container</span>
+                        </label>
+                        <div className="relative">
+                          <input
+                            id="fallback-api-key-input"
+                            type="password"
+                            placeholder="sk-..."
+                            value={config.fallback?.apiKey || ''}
+                            onChange={(e) => onChangeConfig({
+                              ...config,
+                              fallback: {
+                                ...(config.fallback || { enabled: false, strategy: 'on_offline' }),
+                                apiKey: e.target.value
+                              }
+                            })}
+                            className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-slate-100 text-xs font-mono focus:outline-none focus:border-indigo-500"
+                          />
+                          <Lock className="w-3.5 h-3.5 text-slate-500 absolute right-3 top-2.5" />
+                        </div>
+                      </div>
+
+                      {/* Custom Base URL */}
+                      <div className="space-y-1.5">
+                        <label className="block text-xs font-semibold text-slate-200">
+                          Fallback Custom Base URL (Optional)
+                        </label>
+                        <input
+                          id="fallback-base-url-input"
+                          type="text"
+                          placeholder="e.g. http://localhost:11434"
+                          value={config.fallback?.baseUrl || ''}
+                          onChange={(e) => onChangeConfig({
+                            ...config,
+                            fallback: {
+                              ...(config.fallback || { enabled: false, strategy: 'on_offline' }),
+                              baseUrl: e.target.value
+                            }
+                          })}
+                          className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-slate-100 text-xs font-mono focus:outline-none focus:border-indigo-500"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Backend Proxy Option for Fallback */}
+                    <div className="p-3 rounded-lg bg-slate-900/60 border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-2 shadow-sm">
+                      <div className="space-y-0.5">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-semibold text-slate-200">Use Backend Proxy (CORS Bypass)</span>
+                          <span className={`px-2 py-0.5 rounded-full text-[9px] font-medium border ${
+                            config.fallback?.useProxy !== false
+                              ? 'bg-emerald-950/80 text-emerald-300 border-emerald-500/30'
+                              : 'bg-amber-950/80 text-amber-300 border-amber-500/30'
+                          }`}>
+                            {config.fallback?.useProxy !== false ? 'Proxy Active' : 'Direct Browser'}
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-slate-400 leading-relaxed">
+                          Route fallback model requests through the backend proxy server to prevent CORS issues.
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2 self-end sm:self-center">
+                        <button
+                          type="button"
+                          onClick={() => onChangeConfig({
+                            ...config,
+                            fallback: {
+                              ...(config.fallback || { enabled: false, strategy: 'on_offline' }),
+                              useProxy: config.fallback?.useProxy === false
+                            }
+                          })}
+                          className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                            config.fallback?.useProxy !== false ? 'bg-indigo-600' : 'bg-slate-700'
+                          }`}
+                        >
+                          <span
+                            className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                              config.fallback?.useProxy !== false ? 'translate-x-4' : 'translate-x-0'
+                            }`}
+                          />
+                        </button>
+                      </div>
+                    </div>
+
+                    {fallbackConnectionStatus.status === 'failed' && fallbackConnectionStatus.message && (
+                      <div className="p-3 rounded-lg border border-rose-500/20 bg-rose-500/5 text-rose-300 text-xs flex gap-2">
+                        <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                        <div className="space-y-0.5">
+                          <p className="font-semibold">Connection Verification Failed</p>
+                          <p className="text-[11px] text-rose-300/80 leading-relaxed font-mono">
+                            {fallbackConnectionStatus.message}
+                          </p>
+                        </div>
+                      </div>
+                    )}
+
+                    {fallbackConnectionStatus.status === 'connected' && fallbackConnectionStatus.message && (
+                      <div className="p-3 rounded-lg border border-emerald-500/20 bg-emerald-500/5 text-emerald-300 text-xs flex gap-2">
+                        <Check className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                        <div className="space-y-0.5">
+                          <p className="font-semibold">Connection Successfully Verified</p>
+                          <p className="text-[11px] text-emerald-300/80 leading-relaxed font-sans">
+                            {fallbackConnectionStatus.message}
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
-
-                <p className="text-[11px] text-slate-400">
-                  Select the underlying LLM provider executed when primary inference fails or switches to edge mode.
-                </p>
-
-                <select
-                  id="fallback-provider-select"
-                  value={config.fallback?.fallbackProvider || config.fallback?.provider || 'ollama'}
-                  onChange={(e) => {
-                    const newProvider = e.target.value;
-                    onChangeConfig({
-                      ...config,
-                      fallback: {
-                        ...(config.fallback || { enabled: false, strategy: 'on_offline' }),
-                        fallbackProvider: newProvider,
-                        provider: newProvider
-                      }
-                    });
-                  }}
-                  className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-slate-200 text-xs font-mono focus:outline-none focus:border-indigo-500"
-                >
-                  {VALID_PROVIDERS.map((p) => (
-                    <option key={p} value={p}>
-                      {p.toUpperCase()} {p === 'ollama' ? '(Local / Edge)' : ''}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Fallback Model Field */}
-              <div className="p-4 rounded-xl border border-slate-800 bg-slate-800/40 space-y-3">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-bold text-white flex items-center gap-1.5">
-                    <Zap className="w-3.5 h-3.5 text-amber-400" />
-                    Fallback Model
-                  </label>
-                  {/* Status Badge */}
-                  {fallbackValidation.modelValid ? (
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                      <CheckCircle2 className="w-3 h-3" />
-                      Schema Valid
-                    </span>
-                  ) : !fallbackValidation.modelPresent ? (
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-rose-500/10 text-rose-400 border border-rose-500/20">
-                      <AlertTriangle className="w-3 h-3" />
-                      Model Required
-                    </span>
-                  ) : (
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                      <AlertTriangle className="w-3 h-3" />
-                      Invalid Model
-                    </span>
-                  )}
-                </div>
-
-                <p className="text-[11px] text-slate-400">
-                  Target model identifier dispatched during failover execution (e.g., local quant or edge SLM).
-                </p>
-
-                <input
-                  id="fallback-model-input"
-                  type="text"
-                  value={config.fallback?.fallbackModel || config.fallback?.model || ''}
-                  placeholder="e.g., llama3.2:3b, mistral-7b-instruct, gpt-4o-mini"
-                  onChange={(e) => {
-                    const newModel = e.target.value;
-                    onChangeConfig({
-                      ...config,
-                      fallback: {
-                        ...(config.fallback || { enabled: false, strategy: 'on_offline' }),
-                        fallbackModel: newModel,
-                        model: newModel
-                      }
-                    });
-                  }}
-                  className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-slate-200 text-xs font-mono focus:outline-none focus:border-indigo-500"
-                />
-
-                {/* Quick Model Suggestions */}
-                <div className="flex flex-wrap gap-1.5 pt-1">
-                  {['llama3.2:3b', 'hermes-3-llama-3.1-8b', 'mistral-7b-instruct', 'deepseek-chat', 'gpt-4o-mini', 'picolm-1.1b'].map((m) => (
-                    <button
-                      key={m}
-                      type="button"
-                      onClick={() => {
-                        onChangeConfig({
-                          ...config,
-                          fallback: {
-                            ...(config.fallback || { enabled: false, strategy: 'on_offline' }),
-                            fallbackModel: m,
-                            model: m
-                          }
-                        });
-                      }}
-                      className="px-2 py-0.5 rounded text-[10px] font-mono bg-slate-900 hover:bg-slate-750 text-slate-400 hover:text-slate-200 border border-slate-800 transition-colors"
-                    >
-                      +{m}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
+              );
+            })()}
 
             {/* Redundancy Visualizer Mock */}
             <div className="p-5 rounded-2xl border border-slate-800 bg-slate-950/50 space-y-4">
