@@ -1115,7 +1115,7 @@ def consolidate_everos_cases():
 
 @app.api_route("/api/test-connection", methods=["POST", "GET", "PUT", "OPTIONS"])
 @app.api_route("/api/test-conn-v2", methods=["POST", "PUT", "GET", "OPTIONS"])
-async def test_llm_connection(request: fastapi.Request):
+async def test_llm_connection(request: Request):
     if request.method == "OPTIONS":
         return {"success": True}
     try:
@@ -1204,7 +1204,7 @@ async def test_llm_connection(request: fastapi.Request):
 
 
 @app.api_route("/api/benchmark", methods=["POST", "GET", "PUT", "OPTIONS"])
-async def benchmark_llm_provider(request: fastapi.Request):
+async def benchmark_llm_provider(request: Request):
     if request.method == "OPTIONS":
         return {"success": True}
     import time
