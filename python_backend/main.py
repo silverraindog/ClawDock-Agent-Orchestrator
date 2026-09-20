@@ -3,6 +3,8 @@ ClawDock Agent Orchestrator - FastAPI Backend Application
 Multi-agent Docker controller, full configuration schema API, Skills Hub, and MCP Registry.
 """
 
+import fastapi
+import httpx
 from fastapi import FastAPI, HTTPException, Body, Request
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import PlainTextResponse, Response, FileResponse, JSONResponse
@@ -16,7 +18,6 @@ import datetime
 import subprocess
 import time
 import re
-import httpx
 
 from config_schema import AgentFullConfigSchema
 from docker_manager import DockerManager
