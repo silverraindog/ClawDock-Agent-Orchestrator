@@ -880,6 +880,313 @@ vector_db_url = "http://everos:8080"
         return res.end();
       }
 
+      // Dynamic Route Mapping Object mapping regex patterns to supported methods and handlers
+      const dynamicRouteMappings = [
+        {
+          pattern: /^\/api\/proxy(\/.*)?$/i,
+          methods: ['GET', 'POST', 'PUT', 'OPTIONS'],
+          handler: async () => {
+            res.setHeader('Content-Type', 'application/json');
+            res.setHeader('Access-Control-Allow-Origin', '*');
+            res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS');
+            res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept');
+
+            let body: any = {};
+            if (method === 'POST' || method === 'PUT' || method === 'GET') {
+              try {
+                body = (await readRequestBody(req)) || {};
+              } catch {}
+            }
+
+            const queryBaseUrl = parsedUrl.searchParams.get('baseUrl') ||
+                                parsedUrl.searchParams.get('base_url') ||
+                                parsedUrl.searchParams.get('url') ||
+                                body.baseUrl ||
+                                body.base_url ||
+                                body.url ||
+                                '';
+            const queryProvider = (
+              parsedUrl.searchParams.get('provider') ||
+              body.provider ||
+              'ollama'
+            ).toLowerCase().trim();
+
+            const targetBaseUrl = (queryBaseUrl || 'http://localhost:11434').trim();
+            console.log(`[Vite API Server Proxy] [${timestamp}] Fetching model list from baseUrl "${targetBaseUrl}" (Provider: ${queryProvider}) to bypass browser CORS`);
+
+            const cleanBase = targetBaseUrl.replace(/\/+$/, '').replace(/\/v1\/?$/, '');
+            const probeEndpoints: string[] = [];
+
+            if (queryProvider === 'ollama' || cleanBase.includes('11434')) {
+              probeEndpoints.push(`${cleanBase}/api/tags`);
+              probeEndpoints.push(`${cleanBase}/v1/models`);
+            } else {
+              probeEndpoints.push(`${cleanBase}/v1/models`);
+              probeEndpoints.push(`${cleanBase}/models`);
+              probeEndpoints.push(`${cleanBase}/api/tags`);
+            }
+
+            let fetchedModels: Array<{ value: string; label: string; tag: string }> = [];
+            let rawNames: string[] = [];
+            let fetchSuccessful = false;
+            let fetchError: string | null = null;
+
+            for (const endpoint of probeEndpoints) {
+              try {
+                const controller = new AbortController();
+                const timer = setTimeout(() => controller.abort(), 2500);
+                const probeHeaders = {
+                  'Accept': 'application/json',
+                  'User-Agent': 'Clawdock-Backend-Proxy/1.0',
+                  ...(body.apiKey || req.headers['authorization'] ? { 'Authorization': req.headers['authorization'] || `Bearer ${body.apiKey}` } : {})
+                };
+                console.log(`[Vite API Server Proxy] Probing exact URL: ${endpoint} with headers:`, probeHeaders);
+
+                const resp = await fetch(endpoint, {
+                  method: 'GET',
+                  signal: controller.signal,
+                  headers: probeHeaders
+                });
+                clearTimeout(timer);
+
+                if (resp.ok) {
+                  const data: any = await resp.json();
+                  if (data && Array.isArray(data.models)) {
+                    rawNames = data.models.map((m: any) => m.name || m.model).filter(Boolean);
+                    fetchedModels = rawNames.map((name: string) => ({
+                      value: name,
+                      label: `${name} (Local Backend Proxy)`,
+                      tag: 'Proxy'
+                    }));
+                    fetchSuccessful = true;
+                    console.log(`[Vite API Server Proxy] Successfully proxied ${rawNames.length} models from ${endpoint}`);
+                    break;
+                  } else if (data && Array.isArray(data.data)) {
+                    rawNames = data.data.map((m: any) => m.id || m.name).filter(Boolean);
+                    fetchedModels = rawNames.map((name: string) => ({
+                      value: name,
+                      label: `${name} (Backend Proxy)`,
+                      tag: 'Proxy'
+                    }));
+                    fetchSuccessful = true;
+                    console.log(`[Vite API Server Proxy] Successfully proxied ${rawNames.length} models from ${endpoint}`);
+                    break;
+                  }
+                }
+              } catch (err: any) {
+                fetchError = err?.message || String(err);
+              }
+            }
+
+            if (fetchSuccessful && fetchedModels.length > 0) {
+              return res.end(JSON.stringify({
+                success: true,
+                source: 'backend_proxy',
+                baseUrl: targetBaseUrl,
+                provider: queryProvider,
+                modelsCount: fetchedModels.length,
+                rawModelNames: rawNames,
+                models: fetchedModels,
+                timestamp
+              }));
+            }
+
+            const fallbackModels = [
+              { value: 'qwen2.5-coder:7b', label: 'qwen2.5-coder:7b (Local Proxy Fallback)', tag: 'Proxy Fallback' },
+              { value: 'qwen2.5-coder:14b', label: 'qwen2.5-coder:14b (Local Proxy Fallback)', tag: 'Proxy Fallback' },
+              { value: 'deepseek-r1:8b', label: 'deepseek-r1:8b (Local Proxy Fallback)', tag: 'Proxy Fallback' },
+              { value: 'llama3.3:70b', label: 'llama3.3:70b (Local Proxy Fallback)', tag: 'Proxy Fallback' },
+              { value: 'mistral-nemo:12b', label: 'mistral-nemo:12b (Local Proxy Fallback)', tag: 'Proxy Fallback' },
+              { value: 'gemma4-soul:latest', label: 'gemma4-soul:latest (Active Checkpoint)', tag: 'Active' }
+            ];
+
+            return res.end(JSON.stringify({
+              success: false,
+              source: 'backend_proxy_fallback',
+              baseUrl: targetBaseUrl,
+              provider: queryProvider,
+              error: fetchError || 'Connection to baseUrl timed out or was refused',
+              modelsCount: fallbackModels.length,
+              rawModelNames: fallbackModels.map(m => m.value),
+              models: fallbackModels,
+              timestamp
+            }));
+          }
+        },
+        {
+          pattern: /^\/api\/test-connection(\/)?$|^\/api\/test-conn-v2(\/)?$/i,
+          methods: ['GET', 'POST', 'PUT', 'OPTIONS'],
+          handler: async () => {
+            res.setHeader('Content-Type', 'application/json');
+            res.setHeader('Access-Control-Allow-Origin', '*');
+            res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS');
+            res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept');
+
+            let body: any = {};
+            try {
+              body = (await readRequestBody(req)) || {};
+            } catch {}
+
+            const provider = body.provider || parsedUrl.searchParams.get('provider') || 'ollama';
+            const apiKey = body.apiKey || parsedUrl.searchParams.get('apiKey') || '';
+            const baseUrl = body.baseUrl || parsedUrl.searchParams.get('baseUrl') || body.base_url || parsedUrl.searchParams.get('base_url') || '';
+            const cleanProvider = provider.toLowerCase();
+
+            console.log(`[Vite API Server] ${method} ${pathname} (Provider: ${cleanProvider})`);
+
+            if (cleanProvider !== 'ollama' && (!apiKey || !apiKey.trim())) {
+              return res.end(JSON.stringify({
+                success: false,
+                errorType: 'MISSING_API_KEY',
+                message: `API Key is required to authenticate with ${provider.toUpperCase()}.`
+              }));
+            }
+
+            let url = '';
+            let headers: Record<string, string> = { 'Content-Type': 'application/json' };
+
+            if (cleanProvider === 'ollama') {
+              const roots = baseUrl && baseUrl.trim() 
+                ? [baseUrl.trim()]
+                : ['http://host.docker.internal:11434', 'http://localhost:11434', 'http://127.0.0.1:11434'];
+              
+              let ollamaSuccess = false;
+              let errorMsg = 'Could not establish connection to local Ollama. Ensure Ollama is running.';
+
+              for (const root of roots) {
+                try {
+                  const controller = new AbortController();
+                  const timer = setTimeout(() => controller.abort(), 1200);
+                  const response = await fetch(`${root.replace(/\/+$/, '')}/api/tags`, { signal: controller.signal });
+                  clearTimeout(timer);
+                  if (response.ok) {
+                    ollamaSuccess = true;
+                    break;
+                  }
+                } catch (err: any) {
+                  errorMsg = err.message || errorMsg;
+                }
+              }
+
+              if (ollamaSuccess) {
+                return res.end(JSON.stringify({ success: true, message: 'Successfully connected to Ollama instance.' }));
+              } else {
+                return res.end(JSON.stringify({ success: false, errorType: 'CONNECTION_FAILURE', message: errorMsg }));
+              }
+            }
+
+            if (cleanProvider === 'openai') {
+              url = baseUrl && baseUrl.trim() ? `${baseUrl.trim().replace(/\/+$/, '')}/v1/models` : 'https://api.openai.com/v1/models';
+              headers['Authorization'] = `Bearer ${apiKey.trim()}`;
+            } else if (cleanProvider === 'anthropic') {
+              url = baseUrl && baseUrl.trim() ? `${baseUrl.trim().replace(/\/+$/, '')}/v1/models` : 'https://api.anthropic.com/v1/models';
+              headers['x-api-key'] = apiKey.trim();
+              headers['anthropic-version'] = '2023-06-01';
+            } else if (cleanProvider === 'gemini') {
+              url = `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey.trim()}`;
+            } else if (cleanProvider === 'deepseek') {
+              url = baseUrl && baseUrl.trim() ? `${baseUrl.trim().replace(/\/+$/, '')}/models` : 'https://api.deepseek.com/models';
+              headers['Authorization'] = `Bearer ${apiKey.trim()}`;
+            } else if (cleanProvider === 'groq') {
+              url = baseUrl && baseUrl.trim() ? `${baseUrl.trim().replace(/\/+$/, '')}/v1/models` : 'https://api.groq.com/openai/v1/models';
+              headers['Authorization'] = `Bearer ${apiKey.trim()}`;
+            } else if (cleanProvider === 'mistral') {
+              url = baseUrl && baseUrl.trim() ? `${baseUrl.trim().replace(/\/+$/, '')}/v1/models` : 'https://api.mistral.ai/v1/models';
+              headers['Authorization'] = `Bearer ${apiKey.trim()}`;
+            } else if (cleanProvider === 'openrouter') {
+              url = baseUrl && baseUrl.trim() ? `${baseUrl.trim().replace(/\/+$/, '')}/v1/models` : 'https://openrouter.ai/api/v1/models';
+              headers['Authorization'] = `Bearer ${apiKey.trim()}`;
+            } else if (cleanProvider === 'custom') {
+              if (!baseUrl || !baseUrl.trim()) {
+                return res.end(JSON.stringify({
+                  success: false,
+                  errorType: 'MISSING_BASE_URL',
+                  message: 'Base URL is required for Custom provider connections.'
+                }));
+              }
+              url = `${baseUrl.trim().replace(/\/+$/, '')}/v1/models`;
+              headers['Authorization'] = `Bearer ${apiKey.trim()}`;
+            } else {
+              url = baseUrl && baseUrl.trim() ? `${baseUrl.trim().replace(/\/+$/, '')}/v1/models` : 'https://api.openai.com/v1/models';
+              headers['Authorization'] = `Bearer ${apiKey.trim()}`;
+            }
+
+            try {
+              const controller = new AbortController();
+              const timer = setTimeout(() => controller.abort(), 6000);
+              const response = await fetch(url, {
+                method: 'GET',
+                headers,
+                signal: controller.signal
+              });
+              clearTimeout(timer);
+
+              if (response.ok) {
+                return res.end(JSON.stringify({
+                  success: true,
+                  message: `Successfully connected & authenticated with ${provider.toUpperCase()}.`
+                }));
+              } else {
+                const text = await response.text();
+                let parsedErr = 'Authentication or connection rejected by server.';
+                try {
+                  const js = JSON.parse(text);
+                  parsedErr = js.error?.message || js.message || parsedErr;
+                } catch {
+                  if (text) parsedErr = text.slice(0, 150);
+                }
+
+                if (response.status === 405) {
+                  return res.end(JSON.stringify({
+                    success: true,
+                    message: `Successfully reached the provider endpoint. (Server responded with 405 Method Not Allowed, confirming the host is online, reachable, and active).`
+                  }));
+                }
+
+                if (response.status === 401 || response.status === 403) {
+                  return res.end(JSON.stringify({
+                    success: false,
+                    errorType: 'INVALID_CREDENTIALS',
+                    message: `Invalid API Key or unauthorized access. (${response.status}: ${parsedErr})`
+                  }));
+                }
+
+                return res.end(JSON.stringify({
+                  success: false,
+                  errorType: 'PROVIDER_REJECTED',
+                  message: `Server returned status ${response.status}: ${parsedErr}`
+                }));
+              }
+            } catch (fetchErr: any) {
+              const isTimeout = fetchErr.name === 'AbortError' || fetchErr.message?.includes('aborted') || fetchErr.message?.includes('timeout');
+              if (isTimeout) {
+                return res.end(JSON.stringify({
+                  success: false,
+                  errorType: 'TIMEOUT',
+                  message: `Connection timed out while reaching ${provider.toUpperCase()}. Please check your connection or base URL.`
+                }));
+              }
+              return res.end(JSON.stringify({
+                success: false,
+                errorType: 'NETWORK_ERROR',
+                message: `Network Error: Could not reach the provider endpoint. (${fetchErr.message || 'DNS resolution or route failed'})`
+              }));
+            }
+          }
+        }
+      ];
+
+      for (const route of dynamicRouteMappings) {
+        if (route.pattern.test(pathname)) {
+          if (!route.methods.includes(method)) {
+            res.statusCode = 405;
+            res.setHeader('Content-Type', 'application/json');
+            return res.end(JSON.stringify({ error: 'Method Not Allowed', method, pathname }));
+          }
+          return await route.handler();
+        }
+      }
+
       // Centralized Request Router using switch statement
       switch (pathname) {
         // 1. Health endpoint
@@ -1046,6 +1353,168 @@ vector_db_url = "http://everos:8080"
           }));
         }
 
+        // 7b. Test Connection Endpoints
+        case '/api/test-connection':
+        case '/api/test-connection/':
+        case '/api/test-conn-v2':
+        case '/api/test-conn-v2/': {
+          res.setHeader('Content-Type', 'application/json');
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS');
+          res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept');
+
+          let body: any = {};
+          try {
+            body = (await readRequestBody(req)) || {};
+          } catch {}
+
+          const provider = body.provider || parsedUrl.searchParams.get('provider') || 'ollama';
+          const apiKey = body.apiKey || parsedUrl.searchParams.get('apiKey') || '';
+          const baseUrl = body.baseUrl || parsedUrl.searchParams.get('baseUrl') || body.base_url || parsedUrl.searchParams.get('base_url') || '';
+          const cleanProvider = provider.toLowerCase();
+
+          console.log(`[Vite API Server] ${method} ${pathname} (Provider: ${cleanProvider})`);
+
+          if (cleanProvider !== 'ollama' && (!apiKey || !apiKey.trim())) {
+            return res.end(JSON.stringify({
+              success: false,
+              errorType: 'MISSING_API_KEY',
+              message: `API Key is required to authenticate with ${provider.toUpperCase()}.`
+            }));
+          }
+
+          let url = '';
+          let headers: Record<string, string> = { 'Content-Type': 'application/json' };
+
+          if (cleanProvider === 'ollama') {
+            const roots = baseUrl && baseUrl.trim() 
+              ? [baseUrl.trim()]
+              : ['http://host.docker.internal:11434', 'http://localhost:11434', 'http://127.0.0.1:11434'];
+            
+            let ollamaSuccess = false;
+            let errorMsg = 'Could not establish connection to local Ollama. Ensure Ollama is running.';
+
+            for (const root of roots) {
+              try {
+                const controller = new AbortController();
+                const timer = setTimeout(() => controller.abort(), 1200);
+                const response = await fetch(`${root.replace(/\/+$/, '')}/api/tags`, { signal: controller.signal });
+                clearTimeout(timer);
+                if (response.ok) {
+                  ollamaSuccess = true;
+                  break;
+                }
+              } catch (err: any) {
+                errorMsg = err.message || errorMsg;
+              }
+            }
+
+            if (ollamaSuccess) {
+              return res.end(JSON.stringify({ success: true, message: 'Successfully connected to Ollama instance.' }));
+            } else {
+              return res.end(JSON.stringify({ success: false, errorType: 'CONNECTION_FAILURE', message: errorMsg }));
+            }
+          }
+
+          if (cleanProvider === 'openai') {
+            url = baseUrl && baseUrl.trim() ? `${baseUrl.trim().replace(/\/+$/, '')}/v1/models` : 'https://api.openai.com/v1/models';
+            headers['Authorization'] = `Bearer ${apiKey.trim()}`;
+          } else if (cleanProvider === 'anthropic') {
+            url = baseUrl && baseUrl.trim() ? `${baseUrl.trim().replace(/\/+$/, '')}/v1/models` : 'https://api.anthropic.com/v1/models';
+            headers['x-api-key'] = apiKey.trim();
+            headers['anthropic-version'] = '2023-06-01';
+          } else if (cleanProvider === 'gemini') {
+            url = `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey.trim()}`;
+          } else if (cleanProvider === 'deepseek') {
+            url = baseUrl && baseUrl.trim() ? `${baseUrl.trim().replace(/\/+$/, '')}/models` : 'https://api.deepseek.com/models';
+            headers['Authorization'] = `Bearer ${apiKey.trim()}`;
+          } else if (cleanProvider === 'groq') {
+            url = baseUrl && baseUrl.trim() ? `${baseUrl.trim().replace(/\/+$/, '')}/v1/models` : 'https://api.groq.com/openai/v1/models';
+            headers['Authorization'] = `Bearer ${apiKey.trim()}`;
+          } else if (cleanProvider === 'mistral') {
+            url = baseUrl && baseUrl.trim() ? `${baseUrl.trim().replace(/\/+$/, '')}/v1/models` : 'https://api.mistral.ai/v1/models';
+            headers['Authorization'] = `Bearer ${apiKey.trim()}`;
+          } else if (cleanProvider === 'openrouter') {
+            url = baseUrl && baseUrl.trim() ? `${baseUrl.trim().replace(/\/+$/, '')}/v1/models` : 'https://openrouter.ai/api/v1/models';
+            headers['Authorization'] = `Bearer ${apiKey.trim()}`;
+          } else if (cleanProvider === 'custom') {
+            if (!baseUrl || !baseUrl.trim()) {
+              return res.end(JSON.stringify({
+                success: false,
+                errorType: 'MISSING_BASE_URL',
+                message: 'Base URL is required for Custom provider connections.'
+              }));
+            }
+            url = `${baseUrl.trim().replace(/\/+$/, '')}/v1/models`;
+            headers['Authorization'] = `Bearer ${apiKey.trim()}`;
+          } else {
+            url = baseUrl && baseUrl.trim() ? `${baseUrl.trim().replace(/\/+$/, '')}/v1/models` : 'https://api.openai.com/v1/models';
+            headers['Authorization'] = `Bearer ${apiKey.trim()}`;
+          }
+
+          try {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), 6000);
+            const response = await fetch(url, {
+              method: 'GET',
+              headers,
+              signal: controller.signal
+            });
+            clearTimeout(timer);
+
+            if (response.ok) {
+              return res.end(JSON.stringify({
+                success: true,
+                message: `Successfully connected & authenticated with ${provider.toUpperCase()}.`
+              }));
+            } else {
+              const text = await response.text();
+              let parsedErr = 'Authentication or connection rejected by server.';
+              try {
+                const js = JSON.parse(text);
+                parsedErr = js.error?.message || js.message || parsedErr;
+              } catch {
+                if (text) parsedErr = text.slice(0, 150);
+              }
+
+              if (response.status === 405) {
+                return res.end(JSON.stringify({
+                  success: true,
+                  message: `Successfully reached the provider endpoint. (Server responded with 405 Method Not Allowed, confirming the host is online, reachable, and active).`
+                }));
+              }
+
+              if (response.status === 401 || response.status === 403) {
+                return res.end(JSON.stringify({
+                  success: false,
+                  errorType: 'INVALID_CREDENTIALS',
+                  message: `Invalid API Key or unauthorized access. (${response.status}: ${parsedErr})`
+                }));
+              }
+
+              return res.end(JSON.stringify({
+                success: false,
+                errorType: 'PROVIDER_REJECTED',
+                message: `Server returned status ${response.status}: ${parsedErr}`
+              }));
+            }
+          } catch (fetchErr: any) {
+            const isTimeout = fetchErr.name === 'AbortError' || fetchErr.message?.includes('aborted') || fetchErr.message?.includes('timeout');
+            if (isTimeout) {
+              return res.end(JSON.stringify({
+                success: false,
+                errorType: 'TIMEOUT',
+                message: `Connection timed out while reaching ${provider.toUpperCase()}. Please check your connection or base URL.`
+              }));
+            }
+            return res.end(JSON.stringify({
+              success: false,
+              errorType: 'NETWORK_ERROR',
+              message: `Network Error: Could not reach the provider endpoint. (${fetchErr.message || 'DNS resolution or route failed'})`
+            }));
+          }
+        }
+
         // 8a. Backend Proxy Endpoint to fetch model lists from baseUrl (bypassing browser CORS & 403 Forbidden restrictions)
         case '/api/proxy/models':
         case '/api/proxy/models/':
@@ -1059,7 +1528,7 @@ vector_db_url = "http://everos:8080"
           res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept');
 
           let body: any = {};
-          if (method === 'POST' || method === 'PUT') {
+          if (method === 'POST' || method === 'PUT' || method === 'GET') {
             try {
               body = (await readRequestBody(req)) || {};
             } catch {}
@@ -1698,12 +2167,29 @@ vector_db_url = "http://everos:8080"
 
           if (pathname.startsWith('/api/')) {
             console.warn(`[Vite API Server] [${timestamp}] Unhandled API route (Returning structured JSON 404): ${method} ${pathname}`);
+            
+            const misconfigs: string[] = [];
+            if (!req.url.includes('?')) {
+              misconfigs.push('Missing query parameters (e.g. ?baseUrl= or ?provider=)');
+            }
+            if (rawPath.endsWith('/') && rawPath.length > 5) {
+              misconfigs.push('Trailing slash detected in API pathname');
+            }
+            if (pathname.includes('/proxy') && !pathname.includes('/models')) {
+              misconfigs.push('Proxy subpath without /models endpoint specifier');
+            }
+
+            if (misconfigs.length > 0) {
+              console.warn(`[Vite API Server Debug] Possible misconfigurations detected for ${method} ${pathname}:`, misconfigs);
+            }
+
             res.statusCode = 404;
             res.setHeader('Content-Type', 'application/json');
             return res.end(JSON.stringify({
               error: 'Not Found',
               status: 404,
               message: `API endpoint ${method} ${pathname} was not found on this server.`,
+              possibleMisconfigurations: misconfigs,
               pathname,
               method,
               timestamp: new Date().toISOString()

@@ -1113,6 +1113,152 @@ def consolidate_everos_cases():
     }
 
 
+@app.api_route("/api/test-connection", methods=["POST", "GET", "PUT", "OPTIONS"])
+@app.api_route("/api/test-conn-v2", methods=["POST", "PUT", "GET", "OPTIONS"])
+async def test_llm_connection(request: fastapi.Request):
+    if request.method == "OPTIONS":
+        return {"success": True}
+    try:
+        body = await request.json() if request.method in ["POST", "PUT"] else dict(request.query_params)
+    except Exception:
+        body = {}
+    
+    provider = str(body.get("provider", "ollama")).lower()
+    api_key = str(body.get("apiKey", body.get("api_key", ""))).strip()
+    base_url = str(body.get("baseUrl", body.get("base_url", ""))).strip()
+
+    if provider != "ollama" and not api_key:
+        return {
+            "success": False,
+            "errorType": "MISSING_API_KEY",
+            "message": f"API Key is required to authenticate with {provider.upper()}."
+        }
+
+    url = ""
+    headers = {"Content-Type": "application/json"}
+
+    if provider == "ollama":
+        roots = [base_url] if base_url else ["http://host.docker.internal:11434", "http://localhost:11434", "http://127.0.0.1:11434"]
+        ollama_success = False
+        error_msg = "Could not establish connection to local Ollama. Ensure Ollama is running."
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            for root in roots:
+                try:
+                    r = await client.get(f"{root.rstrip('/')}/api/tags")
+                    if r.status_code == 200:
+                        ollama_success = True
+                        break
+                except Exception as e:
+                    error_msg = str(e)
+        if ollama_success:
+            return {"success": True, "message": "Successfully connected to Ollama instance."}
+        else:
+            return {"success": False, "errorType": "CONNECTION_FAILURE", "message": error_msg}
+
+    if provider == "openai":
+        url = f"{base_url.rstrip('/')}/v1/models" if base_url else "https://api.openai.com/v1/models"
+        headers["Authorization"] = f"Bearer {api_key}"
+    elif provider == "anthropic":
+        url = f"{base_url.rstrip('/')}/v1/models" if base_url else "https://api.anthropic.com/v1/models"
+        headers["x-api-key"] = api_key
+        headers["anthropic-version"] = "2023-06-01"
+    elif provider == "gemini":
+        url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
+    elif provider == "deepseek":
+        url = f"{base_url.rstrip('/')}/models" if base_url else "https://api.deepseek.com/models"
+        headers["Authorization"] = f"Bearer {api_key}"
+    elif provider == "groq":
+        url = f"{base_url.rstrip('/')}/v1/models" if base_url else "https://api.groq.com/openai/v1/models"
+        headers["Authorization"] = f"Bearer {api_key}"
+    elif provider == "mistral":
+        url = f"{base_url.rstrip('/')}/v1/models" if base_url else "https://api.mistral.ai/v1/models"
+        headers["Authorization"] = f"Bearer {api_key}"
+    elif provider == "openrouter":
+        url = f"{base_url.rstrip('/')}/v1/models" if base_url else "https://openrouter.ai/api/v1/models"
+        headers["Authorization"] = f"Bearer {api_key}"
+    elif provider == "custom":
+        if not base_url:
+            return {"success": False, "errorType": "MISSING_BASE_URL", "message": "Base URL is required for Custom provider connections."}
+        url = f"{base_url.rstrip('/')}/v1/models"
+        headers["Authorization"] = f"Bearer {api_key}"
+    else:
+        url = f"{base_url.rstrip('/')}/v1/models" if base_url else "https://api.openai.com/v1/models"
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+
+    try:
+        async with httpx.AsyncClient(timeout=6.0) as client:
+            resp = await client.get(url, headers=headers)
+            if resp.status_code == 200:
+                return {"success": True, "message": f"Successfully connected & authenticated with {provider.upper()}."}
+            elif resp.status_code == 405:
+                return {"success": True, "message": f"Successfully reached the provider endpoint. (Server responded with 405 Method Not Allowed, confirming the host is online, reachable, and active)."}
+            elif resp.status_code in [401, 403]:
+                return {"success": False, "errorType": "INVALID_CREDENTIALS", "message": f"Invalid API Key or unauthorized access. ({resp.status_code}: {resp.text[:150]})"}
+            else:
+                return {"success": False, "errorType": "PROVIDER_REJECTED", "message": f"Server returned status {resp.status_code}: {resp.text[:150]}"}
+    except httpx.TimeoutException:
+        return {"success": False, "errorType": "TIMEOUT", "message": f"Connection timed out while reaching {provider.upper()}. Please check your connection or base URL."}
+    except Exception as e:
+        return {"success": False, "errorType": "NETWORK_ERROR", "message": f"Network Error: Could not reach the provider endpoint. ({str(e)})"}
+
+
+@app.api_route("/api/benchmark", methods=["POST", "GET", "PUT", "OPTIONS"])
+async def benchmark_llm_provider(request: fastapi.Request):
+    if request.method == "OPTIONS":
+        return {"success": True}
+    import time
+    try:
+        body = await request.json() if request.method in ["POST", "PUT"] else dict(request.query_params)
+    except Exception:
+        body = {}
+    provider = str(body.get("provider", "ollama")).lower()
+    base_url = str(body.get("baseUrl", body.get("base_url", ""))).strip()
+
+    target_url = "https://api.openai.com/v1/models"
+    headers = {"Content-Type": "application/json"}
+
+    if provider == "ollama":
+        roots = [base_url] if base_url else ["http://host.docker.internal:11434", "http://localhost:11434", "http://127.0.0.1:11434"]
+        target_url = f"{roots[0].rstrip('/')}/api/tags"
+    elif provider == "openai":
+        target_url = f"{base_url.rstrip('/')}/v1/models" if base_url else "https://api.openai.com/v1/models"
+    elif provider == "anthropic":
+        target_url = f"{base_url.rstrip('/')}/v1/models" if base_url else "https://api.anthropic.com/v1/models"
+        headers["x-api-key"] = "benchmark-dummy-key"
+        headers["anthropic-version"] = "2023-06-01"
+    elif provider == "gemini":
+        target_url = "https://generativelanguage.googleapis.com/v1beta/models"
+    elif provider == "deepseek":
+        target_url = f"{base_url.rstrip('/')}/models" if base_url else "https://api.deepseek.com/models"
+    elif provider == "groq":
+        target_url = f"{base_url.rstrip('/')}/v1/models" if base_url else "https://api.groq.com/openai/v1/models"
+    elif provider == "mistral":
+        target_url = f"{base_url.rstrip('/')}/v1/models" if base_url else "https://api.mistral.ai/v1/models"
+    elif provider == "openrouter":
+        target_url = f"{base_url.rstrip('/')}/v1/models" if base_url else "https://openrouter.ai/api/v1/models"
+    elif provider == "custom":
+        target_url = f"{base_url.rstrip('/')}/v1/models" if base_url else "https://api.openai.com/v1/models"
+
+    start_t = time.time()
+    try:
+        async with httpx.AsyncClient(timeout=4.0) as client:
+            resp = await client.get(target_url, headers=headers)
+            latency_ms = int((time.time() - start_t) * 1000)
+            return {
+                "success": True,
+                "latencyMs": latency_ms,
+                "message": f"Successfully benchmarked {provider} in {latency_ms}ms"
+            }
+    except Exception as e:
+        latency_ms = int((time.time() - start_t) * 1000)
+        return {
+            "success": False,
+            "latencyMs": max(latency_ms, 3500),
+            "message": f"Benchmark ping failed: {str(e)}"
+        }
+
+
 # Serve static frontend files if built into dist/
 if os.path.exists("dist"):
     from fastapi.staticfiles import StaticFiles
