@@ -322,6 +322,79 @@ vector_db_url = "http://everos:8080"
     }
   };
 
+  function convertConfigToNativeContent(agentId: string, cfg: any, format: string): string {
+    const modelProv = cfg?.model?.provider || 'anthropic';
+    const modelName = cfg?.model?.model || cfg?.model?.default || 'claude-3-7-sonnet';
+    const temp = cfg?.model?.temperature ?? 0.3;
+    const maxTok = cfg?.model?.max_tokens ?? 4096;
+    const ctxWin = cfg?.model?.context_window ?? 128000;
+    const baseUrl = cfg?.model?.baseUrl || cfg?.model?.base_url || '';
+    const apiKey = cfg?.model?.apiKey || cfg?.model?.api_key || '';
+    const systemPrompt = cfg?.system?.system_prompt || cfg?.system?.systemPrompt || 'Autonomous agent.';
+    const preset = cfg?.system?.preset || 'engineer';
+
+    const fb = cfg?.fallback || {};
+    const fbEn = fb.enabled !== undefined ? fb.enabled : true;
+    const fbProv = fb.provider || fb.fallbackProvider || 'ollama';
+    const fbMod = fb.model || fb.fallbackModel || 'gemma4-soul:latest';
+    const fbKey = fb.apiKey || '';
+    const fbBase = fb.baseUrl || '';
+
+    if (format === 'toml') {
+      return `version = "1.0.0"
+agent_id = "${agentId}"
+agent_name = "${cfg?.agentName || agentId}"
+system_preset = "${preset}"
+
+[model]
+provider = "${modelProv}"
+model = "${modelName}"
+temperature = ${temp}
+max_tokens = ${maxTok}
+context_window = ${ctxWin}
+base_url = "${baseUrl}"
+api_key = "${apiKey}"
+
+[system]
+system_prompt = "${systemPrompt.replace(/"/g, '\\"')}"
+
+[fallback]
+enabled = ${fbEn}
+provider = "${fbProv}"
+model = "${fbMod}"
+base_url = "${fbBase}"
+api_key = "${fbKey}"
+`;
+    } else {
+      return `version: "1.0.0"
+agent_id: "${agentId}"
+agent_name: "${cfg?.agentName || agentId}"
+persona: "Hermes Prime"
+system_preset: "${preset}"
+
+model:
+  provider: "${modelProv}"
+  model: "${modelName}"
+  temperature: ${temp}
+  max_tokens: ${maxTok}
+  context_window: ${ctxWin}
+  base_url: "${baseUrl}"
+  api_key: "${apiKey}"
+
+system:
+  system_prompt: "${systemPrompt.replace(/"/g, '\\"')}"
+  language: "en-US"
+
+fallback:
+  enabled: ${fbEn}
+  provider: "${fbProv}"
+  model: "${fbMod}"
+  base_url: "${fbBase}"
+  api_key: "${fbKey}"
+`;
+    }
+  }
+
   function parseConfigSchema(agentId: string, nativeContent: string, format: string) {
     const detectedFormat = format || (nativeContent.trim().startsWith('{') ? 'json' : nativeContent.includes('=') ? 'toml' : 'yaml');
     let parsedAgentName = agentId;
@@ -2564,21 +2637,28 @@ vector_db_url = "http://everos:8080"
             if (method === 'PUT' || method === 'POST') {
               const body = await readRequestBody(req);
               console.log(`[Vite API Server] [${timestamp}] 200 OK: ${method} /api/agents/${agentId}/config - Writing config`);
-              const nativeContent = body.nativeContent;
               const restart = body.restart !== false && body.restartContainer !== false;
 
               const fallback = defaultNativeFiles[agentId] || defaultNativeFiles['hermes-agent'];
               const fileName = fallback.fileName;
               const filePath = path.join(dataDir, fileName);
 
-              if (typeof nativeContent === 'string') {
+              let contentToWrite = body.nativeContent;
+              if (body.config || (typeof contentToWrite === 'string' && contentToWrite.trim().startsWith('{'))) {
+                const cfgObj = body.config || (() => {
+                  try { return JSON.parse(contentToWrite); } catch { return {}; }
+                })();
+                contentToWrite = convertConfigToNativeContent(agentId, cfgObj, fallback.format);
+              }
+
+              if (typeof contentToWrite === 'string') {
                 try {
-                  fs.writeFileSync(filePath, nativeContent, 'utf8');
+                  fs.writeFileSync(filePath, contentToWrite, 'utf8');
                 } catch {}
                 try {
                   const rootPath = `/data/clawdock/${fileName}`;
                   if (fs.existsSync('/data/clawdock')) {
-                    fs.writeFileSync(rootPath, nativeContent, 'utf8');
+                    fs.writeFileSync(rootPath, contentToWrite, 'utf8');
                   }
                 } catch {}
               }
