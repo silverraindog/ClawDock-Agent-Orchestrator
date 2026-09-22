@@ -753,15 +753,48 @@ PROVIDER_MODEL_CATALOGS = {
     ]
 }
 
-@app.api_route("/api/models", methods=["GET", "POST", "PUT"])
-@app.api_route("/api/models/", methods=["GET", "POST", "PUT"])
-@app.api_route("/api/model/list", methods=["GET", "POST", "PUT"])
-@app.api_route("/api/agents/models", methods=["GET", "POST", "PUT"])
-def list_available_models(provider: str = "ollama", baseUrl: str = "", base_url: str = "", agentId: str = "hermes-agent", agent_id: str = "", t: str = ""):
+@app.api_route("/api/models", methods=["GET", "POST", "PUT", "OPTIONS"])
+@app.api_route("/api/models/", methods=["GET", "POST", "PUT", "OPTIONS"])
+@app.api_route("/api/model/list", methods=["GET", "POST", "PUT", "OPTIONS"])
+@app.api_route("/api/model/list/", methods=["GET", "POST", "PUT", "OPTIONS"])
+@app.api_route("/api/proxy/models", methods=["GET", "POST", "PUT", "OPTIONS"])
+@app.api_route("/api/proxy/models/", methods=["GET", "POST", "PUT", "OPTIONS"])
+@app.api_route("/api/proxy/model-list", methods=["GET", "POST", "PUT", "OPTIONS"])
+@app.api_route("/api/proxy/model-list/", methods=["GET", "POST", "PUT", "OPTIONS"])
+@app.api_route("/api/proxy", methods=["GET", "POST", "PUT", "OPTIONS"])
+@app.api_route("/api/proxy/", methods=["GET", "POST", "PUT", "OPTIONS"])
+@app.api_route("/api/agents/models", methods=["GET", "POST", "PUT", "OPTIONS"])
+@app.api_route("/api/agents/models/", methods=["GET", "POST", "PUT", "OPTIONS"])
+async def list_available_models(
+    request: Request,
+    provider: str = "ollama",
+    baseUrl: str = "",
+    base_url: str = "",
+    url: str = "",
+    agentId: str = "hermes-agent",
+    agent_id: str = "",
+    apiKey: str = "",
+    api_key: str = "",
+    key: str = "",
+    useProxy: str = "",
+    use_proxy: str = "",
+    t: str = ""
+):
+    if request.method == "OPTIONS":
+        return JSONResponse(content={"success": True}, headers={"Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "*", "Access-Control-Allow-Methods": "*"})
     try:
-        prov = (provider or "ollama").lower()
-        effective_base_url = (baseUrl or base_url or "").strip()
-        effective_agent_id = agentId or agent_id or "hermes-agent"
+        body = {}
+        if request.method in ["POST", "PUT", "PATCH"]:
+            try:
+                body = await request.json()
+            except Exception:
+                body = {}
+
+        qp = dict(request.query_params)
+        prov = (qp.get("provider") or body.get("provider") or provider or "ollama").lower().strip()
+        effective_base_url = (qp.get("baseUrl") or qp.get("base_url") or qp.get("url") or body.get("baseUrl") or body.get("base_url") or body.get("url") or baseUrl or base_url or url or "").strip()
+        effective_agent_id = (qp.get("agentId") or qp.get("agent_id") or body.get("agentId") or body.get("agent_id") or agentId or agent_id or "hermes-agent").strip()
+        effective_api_key = (qp.get("apiKey") or qp.get("api_key") or qp.get("key") or body.get("apiKey") or body.get("api_key") or body.get("key") or apiKey or api_key or key or "").strip()
 
         if prov == "custom" and not effective_base_url:
             return {
@@ -775,60 +808,117 @@ def list_available_models(provider: str = "ollama", baseUrl: str = "", base_url:
             }
 
         live_models = []
-        is_local_probe = prov == "ollama" or bool(effective_base_url)
-        if is_local_probe:
-            candidates = []
-            if effective_base_url:
-                clean = effective_base_url.rstrip("/")
-                if clean.endswith("/v1"):
-                    clean = clean[:-3]
-                candidates.append(clean)
-                if "localhost" in clean or "127.0.0.1" in clean:
-                    candidates.append(clean.replace("localhost", "host.docker.internal").replace("127.0.0.1", "host.docker.internal"))
-            elif prov == "ollama":
-                candidates.extend([
-                    "http://host.docker.internal:11434",
-                    "http://localhost:11434",
-                    "http://127.0.0.1:11434",
-                    "http://ollama:11434"
-                ])
-            import urllib.request, json
-            for root in list(dict.fromkeys(candidates)):
-                if live_models:
-                    break
-                # Try /api/tags
-                try:
-                    req = urllib.request.Request(f"{root}/api/tags", headers={"User-Agent": "ClawDock"})
-                    with urllib.request.urlopen(req, timeout=1.2) as resp:
-                        if resp.status == 200:
-                            payload = json.loads(resp.read().decode())
-                            if isinstance(payload.get("models"), list) and payload["models"]:
-                                live_models = [m.get("name") or m.get("model") for m in payload["models"] if (m.get("name") or m.get("model"))]
-                                break
-                except Exception:
-                    pass
-                # Try /v1/models
-                try:
-                    req = urllib.request.Request(f"{root}/v1/models", headers={"User-Agent": "ClawDock"})
-                    with urllib.request.urlopen(req, timeout=1.2) as resp:
-                        if resp.status == 200:
-                            payload = json.loads(resp.read().decode())
-                            mlist = payload.get("data") if isinstance(payload.get("data"), list) else payload.get("models")
-                            if isinstance(mlist, list) and mlist:
-                                live_models = [m.get("id") or m.get("name") or m.get("model") for m in mlist if (m.get("id") or m.get("name") or m.get("model"))]
-                                break
-                except Exception:
-                    pass
+        is_live = False
+        import urllib.request, json
 
-        if live_models:
-            catalog = [{"value": m, "label": f"{m} (Live on Provider)", "tag": "Live"} for m in live_models]
-            is_live = True
-        elif prov in PROVIDER_MODEL_CATALOGS:
-            catalog = list(PROVIDER_MODEL_CATALOGS[prov])
-            is_live = False
+        if prov == "openrouter":
+            openrouter_models = []
+            if effective_api_key or effective_base_url:
+                target_url = f"{effective_base_url.rstrip('/')}/v1/models" if effective_base_url else "https://openrouter.ai/api/v1/models"
+                headers = {
+                    "Accept": "application/json",
+                    "User-Agent": "ClawDock/1.0"
+                }
+                if effective_api_key:
+                    headers["Authorization"] = f"Bearer {effective_api_key}"
+                try:
+                    req = urllib.request.Request(target_url, headers=headers)
+                    with urllib.request.urlopen(req, timeout=3.0) as resp:
+                        if resp.status == 200:
+                            data = json.loads(resp.read().decode())
+                            mlist = data.get("data") if isinstance(data.get("data"), list) else data.get("models")
+                            if isinstance(mlist, list) and mlist:
+                                for m in mlist[:60]:
+                                    mid = m.get("id") or m.get("name")
+                                    mname = m.get("name") or mid
+                                    if mid:
+                                        label = f"{mname} ({mid})" if mname and mname != mid else str(mid)
+                                        openrouter_models.append({
+                                            "value": str(mid),
+                                            "label": label,
+                                            "tag": "OpenRouter"
+                                        })
+                except Exception as e:
+                    logger.warning(f"[FastAPI Models] OpenRouter probe failed/timed out: {e}")
+
+            if openrouter_models:
+                catalog = openrouter_models
+                is_live = True
+            else:
+                catalog = list(PROVIDER_MODEL_CATALOGS.get("openrouter", []))
+                is_live = False
+
         else:
-            catalog = [{"value": "custom-model", "label": "Custom Model (Manual entry)", "tag": "Custom"}] if prov == "custom" else list(DEFAULT_LOCAL_MODEL_CATALOG if is_local_probe else DEFAULT_GENERIC_MODEL_CATALOG)
-            is_live = False
+            is_local_probe = prov == "ollama" or bool(effective_base_url)
+            if is_local_probe:
+                candidates = []
+                if effective_base_url:
+                    clean = effective_base_url.rstrip("/")
+                    if clean.endswith("/v1"):
+                        clean = clean[:-3]
+                    candidates.append(clean)
+                    if "localhost" in clean or "127.0.0.1" in clean:
+                        candidates.append(clean.replace("localhost", "host.docker.internal").replace("127.0.0.1", "host.docker.internal"))
+                elif prov == "ollama":
+                    candidates.extend([
+                        "http://host.docker.internal:11434",
+                        "http://localhost:11434",
+                        "http://127.0.0.1:11434",
+                        "http://ollama:11434"
+                    ])
+
+                for root in list(dict.fromkeys(candidates)):
+                    if live_models:
+                        break
+                    # Try /api/tags
+                    try:
+                        req = urllib.request.Request(f"{root}/api/tags", headers={"User-Agent": "ClawDock"})
+                        with urllib.request.urlopen(req, timeout=1.2) as resp:
+                            if resp.status == 200:
+                                payload = json.loads(resp.read().decode())
+                                if isinstance(payload.get("models"), list) and payload["models"]:
+                                    live_models = [m.get("name") or m.get("model") for m in payload["models"] if (m.get("name") or m.get("model"))]
+                                    break
+                    except Exception:
+                        pass
+                    # Try /v1/models
+                    try:
+                        req = urllib.request.Request(f"{root}/v1/models", headers={"User-Agent": "ClawDock"})
+                        with urllib.request.urlopen(req, timeout=1.2) as resp:
+                            if resp.status == 200:
+                                payload = json.loads(resp.read().decode())
+                                mlist = payload.get("data") if isinstance(payload.get("data"), list) else payload.get("models")
+                                if isinstance(mlist, list) and mlist:
+                                    live_models = [m.get("id") or m.get("name") or m.get("model") for m in mlist if (m.get("id") or m.get("name") or m.get("model"))]
+                                    break
+                    except Exception:
+                        pass
+
+            if live_models:
+                catalog = [{"value": m, "label": f"{m} (Live on Provider)", "tag": "Live"} for m in live_models]
+                is_live = True
+            elif prov in PROVIDER_MODEL_CATALOGS:
+                catalog = list(PROVIDER_MODEL_CATALOGS[prov])
+                is_live = False
+            else:
+                catalog = [{"value": "custom-model", "label": "Custom Model (Manual entry)", "tag": "Custom"}] if prov == "custom" else list(DEFAULT_LOCAL_MODEL_CATALOG if is_local_probe else DEFAULT_GENERIC_MODEL_CATALOG)
+                is_live = False
+
+        # If agent has an active model in saved config, ensure it's at the front
+        try:
+            config_file = os.path.join(CONFIG_STORE_DIR, f"{effective_agent_id}_config.json")
+            if os.path.exists(config_file):
+                with open(config_file, "r") as f:
+                    cfg_data = json.load(f)
+                    active_model = cfg_data.get("model", {}).get("model") or cfg_data.get("configSchema", {}).get("model", {}).get("model")
+                    if active_model and not any(m.get("value") == active_model for m in catalog):
+                        catalog.insert(0, {
+                            "value": active_model,
+                            "label": f"{active_model} (Container Active Checkpoint)",
+                            "tag": "Active"
+                        })
+        except Exception:
+            pass
 
         return {
             "success": True,
@@ -851,8 +941,30 @@ def list_available_models(provider: str = "ollama", baseUrl: str = "", base_url:
             "warning": str(err)
         }
 
-@app.api_route("/api/agents/{agent_id}/models", methods=["GET", "POST", "PUT"])
-def list_agent_specific_models(agent_id: str, provider: str = "custom", baseUrl: str = ""):
+@app.api_route("/api/proxy/llm", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
+async def proxy_llm_request(request: Request):
+    if request.method == "OPTIONS":
+        return Response(status_code=200, headers={"Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "*", "Access-Control-Allow-Methods": "*"})
+    target_url = request.query_params.get("url") or request.headers.get("x-target-url")
+    if not target_url:
+        return Response(content=json.dumps({"error": "Missing target url parameter"}), status_code=400, media_type="application/json")
+    try:
+        method = request.method
+        headers = {}
+        if "content-type" in request.headers:
+            headers["Content-Type"] = request.headers["content-type"]
+        if "authorization" in request.headers:
+            headers["Authorization"] = request.headers["authorization"]
+
+        body = await request.body() if method not in ["GET", "HEAD"] else None
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.request(method, target_url, headers=headers, content=body)
+            return Response(content=resp.content, status_code=resp.status_code, media_type=resp.headers.get("content-type", "application/json"))
+    except Exception as err:
+        return Response(content=json.dumps({"error": "Proxy request failed", "message": str(err)}), status_code=502, media_type="application/json")
+
+@app.api_route("/api/agents/{agent_id}/models", methods=["GET", "POST", "PUT", "OPTIONS"])
+async def list_agent_specific_models(request: Request, agent_id: str, provider: str = "custom", baseUrl: str = ""):
     prov = provider
     if not prov or prov == "custom":
         provider_map = {

@@ -741,40 +741,7 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
     setShowSaveValidationWarning(false);
     setPendingRestartParam(null);
 
-    if (config.fallback?.enabled) {
-      const fbProvider = config.fallback?.fallbackProvider || config.fallback?.provider || 'ollama';
-      const fbApiKey = config.fallback?.apiKey || '';
-      const fbBaseUrl = config.fallback?.baseUrl || '';
-
-      let currentStatus = fallbackConnectionStatus.status;
-      let currentMessage = fallbackConnectionStatus.message;
-
-      if (currentStatus === 'untested') {
-        setFallbackConnectionStatus({ status: 'testing' });
-        try {
-          const result = await testLLMConnection(fbProvider as string, fbApiKey, fbBaseUrl);
-          if (result.success) {
-            setFallbackConnectionStatus({ status: 'connected', message: result.message });
-            currentStatus = 'connected';
-          } else {
-            setFallbackConnectionStatus({ status: 'failed', message: result.message });
-            currentStatus = 'failed';
-            currentMessage = result.message;
-          }
-        } catch (e: any) {
-          setFallbackConnectionStatus({ status: 'failed', message: e.message || 'Verification failed.' });
-          currentStatus = 'failed';
-          currentMessage = e.message || 'Verification failed.';
-        }
-      }
-
-      if (currentStatus === 'failed') {
-        setPendingRestartParam(restartContainer);
-        setShowSaveValidationWarning(true);
-        return;
-      }
-    }
-
+    // Always persist configuration and API keys immediately so user inputs are never lost
     onSaveConfig(restartContainer);
   };
 

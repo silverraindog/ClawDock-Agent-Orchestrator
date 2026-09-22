@@ -1,4 +1,4 @@
-import { AgentFullConfig, AgentId, ChannelConfig, LLMProvider, ModelConfig, MoAConfig } from '../types';
+import { AgentFullConfig, AgentId, ChannelConfig, FallbackConfig, LLMProvider, ModelConfig, MoAConfig } from '../types';
 import { DEFAULT_NATIVE_FILES } from '../data/defaults';
 import { mergeWithDefaultConfig } from './apiBridge';
 
@@ -139,6 +139,7 @@ export function parseNativeConfigToSchema(
   let parsedProposerModels: string[] | undefined;
   let parsedMoaEnabled: boolean | undefined;
   let parsedChannels: Partial<ChannelConfig> | undefined;
+  let parsedFallback: Partial<FallbackConfig> | undefined;
 
   // 1. JSON Parsing (Handles both OpenClaw v1 and OpenClaw v2)
   if (detectedFormat === 'json') {
@@ -316,6 +317,23 @@ export function parseNativeConfigToSchema(
             };
           }
         }
+
+        if (json.fallback && typeof json.fallback === 'object') {
+          const fb = json.fallback;
+          parsedFallback = {
+            enabled: fb.enabled !== undefined ? Boolean(fb.enabled) : false,
+            targetAgentId: fb.targetAgentId || fb.target_agent_id || 'zeroclaw',
+            strategy: fb.strategy || 'on_offline',
+            latencyThresholdMs: Number(fb.latencyThresholdMs || fb.latency_threshold_ms || 3000),
+            fallbackProvider: fb.fallbackProvider || fb.fallback_provider || fb.provider || 'ollama',
+            fallbackModel: fb.fallbackModel || fb.fallback_model || fb.model || '',
+            provider: fb.provider || fb.fallbackProvider || fb.fallback_provider || 'ollama',
+            model: fb.model || fb.fallbackModel || fb.fallback_model || '',
+            apiKey: fb.apiKey || fb.api_key || '',
+            baseUrl: fb.baseUrl || fb.base_url || '',
+            useProxy: fb.useProxy !== undefined ? Boolean(fb.useProxy) : fb.use_proxy !== undefined ? Boolean(fb.use_proxy) : true
+          };
+        }
       }
     } catch {}
   } else if (detectedFormat === 'toml') {
@@ -381,6 +399,34 @@ export function parseNativeConfigToSchema(
           mode: 'polling'
         };
       }
+    }
+
+    const fallbackMatch = nativeContent.match(/\[fallback\]([\s\S]*?)(?=\n\[|$)/i);
+    if (fallbackMatch) {
+      const fbText = fallbackMatch[1];
+      const en = fbText.match(/enabled\s*=\s*(true|false)/i);
+      const prov = fbText.match(/(?:provider|fallback_provider)\s*=\s*["']([^"']+)["']/i);
+      const mod = fbText.match(/(?:model|fallback_model)\s*=\s*["']([^"']+)["']/i);
+      const key = fbText.match(/(?:api_key|apiKey)\s*=\s*["']([^"']+)["']/i);
+      const base = fbText.match(/(?:base_url|baseUrl)\s*=\s*["']([^"']+)["']/i);
+      const strat = fbText.match(/strategy\s*=\s*["']([^"']+)["']/i);
+      const target = fbText.match(/(?:target_agent_id|targetAgentId)\s*=\s*["']([^"']+)["']/i);
+      const lat = fbText.match(/(?:latency_threshold_ms|latencyThresholdMs)\s*=\s*([0-9]+)/i);
+      const proxy = fbText.match(/(?:use_proxy|useProxy)\s*=\s*(true|false)/i);
+
+      parsedFallback = {
+        enabled: en ? en[1].toLowerCase() === 'true' : false,
+        fallbackProvider: (prov ? prov[1] : 'mistral') as LLMProvider,
+        fallbackModel: mod ? mod[1] : 'mistral-7b-instruct',
+        provider: (prov ? prov[1] : 'mistral') as LLMProvider,
+        model: mod ? mod[1] : 'mistral-7b-instruct',
+        apiKey: key ? key[1] : '',
+        baseUrl: base ? base[1] : '',
+        strategy: (strat ? strat[1] : 'on_offline') as any,
+        targetAgentId: (target ? target[1] : 'picoclaw') as AgentId,
+        latencyThresholdMs: lat ? Number(lat[1]) : 3000,
+        useProxy: proxy ? proxy[1].toLowerCase() === 'true' : true
+      };
     }
   } else {
     // 3. YAML Parsing
@@ -464,6 +510,35 @@ export function parseNativeConfigToSchema(
         botToken: '',
         allowedUsers: '@developer',
         mode: 'polling'
+      };
+    }
+
+    // Fallback parsing in YAML
+    const fallbackBlockMatch = nativeContent.match(/fallback:\s*\n([\s\S]*?)(?=\n[a-z_]+:|$)/i);
+    if (fallbackBlockMatch) {
+      const fbText = fallbackBlockMatch[1];
+      const en = fbText.match(/enabled:\s*(true|false)/i);
+      const prov = fbText.match(/(?:provider|fallback_provider):\s*["']?([^"'\n\r]+)["']?/i);
+      const mod = fbText.match(/(?:model|fallback_model):\s*["']?([^"'\n\r]+)["']?/i);
+      const key = fbText.match(/(?:api_key|apiKey):\s*["']?([^"'\n\r]+)["']?/i);
+      const base = fbText.match(/(?:base_url|baseUrl):\s*["']?([^"'\n\r]+)["']?/i);
+      const strat = fbText.match(/strategy:\s*["']?([^"'\n\r]+)["']?/i);
+      const target = fbText.match(/(?:target_agent_id|targetAgentId):\s*["']?([^"'\n\r]+)["']?/i);
+      const lat = fbText.match(/(?:latency_threshold_ms|latencyThresholdMs):\s*([0-9]+)/i);
+      const proxy = fbText.match(/(?:use_proxy|useProxy):\s*(true|false)/i);
+
+      parsedFallback = {
+        enabled: en ? en[1].toLowerCase() === 'true' : false,
+        fallbackProvider: (prov ? prov[1].trim() : 'ollama') as LLMProvider,
+        fallbackModel: mod ? mod[1].trim() : 'hermes-3-llama-3.1-8b',
+        provider: (prov ? prov[1].trim() : 'ollama') as LLMProvider,
+        model: mod ? mod[1].trim() : 'hermes-3-llama-3.1-8b',
+        apiKey: key ? key[1].trim() : '',
+        baseUrl: base ? base[1].trim() : '',
+        strategy: (strat ? strat[1].trim() : 'on_offline') as any,
+        targetAgentId: (target ? target[1].trim() : 'zeroclaw') as AgentId,
+        latencyThresholdMs: lat ? Number(lat[1]) : 3000,
+        useProxy: proxy ? proxy[1].toLowerCase() === 'true' : true
       };
     }
   }
@@ -552,6 +627,10 @@ export function parseNativeConfigToSchema(
 
   if (parsedChannels) {
     result.channels = parsedChannels as ChannelConfig;
+  }
+
+  if (parsedFallback) {
+    result.fallback = parsedFallback as FallbackConfig;
   }
 
   if (agentId === 'openclaw') {
@@ -651,6 +730,21 @@ export function enhanceConfigWithNative(
   } else if (agentId === 'picoclaw') {
     baseMerged.channels.discord.enabled = true;
     baseMerged.channels.telegram.enabled = false;
+  }
+
+  if (nativeParsed.fallback) {
+    baseMerged.fallback = {
+      ...baseMerged.fallback,
+      ...nativeParsed.fallback,
+      apiKey: nativeParsed.fallback.apiKey || candidateConfig.fallback?.apiKey || baseMerged.fallback?.apiKey || '',
+      baseUrl: nativeParsed.fallback.baseUrl || candidateConfig.fallback?.baseUrl || baseMerged.fallback?.baseUrl || '',
+      useProxy: nativeParsed.fallback.useProxy !== undefined ? nativeParsed.fallback.useProxy : (candidateConfig.fallback?.useProxy !== undefined ? candidateConfig.fallback.useProxy : baseMerged.fallback?.useProxy !== false)
+    };
+  } else if (candidateConfig.fallback) {
+    baseMerged.fallback = {
+      ...baseMerged.fallback,
+      ...candidateConfig.fallback
+    };
   }
 
   return baseMerged;

@@ -736,14 +736,17 @@ export function mergeWithDefaultConfig(agentId: AgentId, custom?: Partial<AgentF
       ...(custom.customEnv || {})
     },
     fallback: {
-      enabled: custom.fallback?.enabled ?? base.fallback.enabled,
-      targetAgentId: custom.fallback?.targetAgentId || base.fallback.targetAgentId,
-      strategy: custom.fallback?.strategy || base.fallback.strategy,
-      latencyThresholdMs: custom.fallback?.latencyThresholdMs || base.fallback.latencyThresholdMs,
-      fallbackProvider: custom.fallback?.fallbackProvider || custom.fallback?.provider || base.fallback.fallbackProvider,
-      fallbackModel: custom.fallback?.fallbackModel || custom.fallback?.model || base.fallback.fallbackModel,
-      provider: custom.fallback?.provider || custom.fallback?.fallbackProvider || base.fallback.provider,
-      model: custom.fallback?.model || custom.fallback?.fallbackModel || base.fallback.model,
+      enabled: custom.fallback?.enabled ?? base.fallback?.enabled ?? false,
+      targetAgentId: custom.fallback?.targetAgentId || base.fallback?.targetAgentId,
+      strategy: custom.fallback?.strategy || base.fallback?.strategy || 'on_offline',
+      latencyThresholdMs: custom.fallback?.latencyThresholdMs || base.fallback?.latencyThresholdMs,
+      fallbackProvider: custom.fallback?.fallbackProvider || custom.fallback?.provider || base.fallback?.fallbackProvider || 'ollama',
+      fallbackModel: custom.fallback?.fallbackModel || custom.fallback?.model || base.fallback?.fallbackModel || '',
+      provider: custom.fallback?.provider || custom.fallback?.fallbackProvider || base.fallback?.provider || 'ollama',
+      model: custom.fallback?.model || custom.fallback?.fallbackModel || base.fallback?.model || '',
+      apiKey: custom.fallback?.apiKey !== undefined ? custom.fallback.apiKey : (base.fallback?.apiKey || ''),
+      baseUrl: custom.fallback?.baseUrl !== undefined ? custom.fallback.baseUrl : (base.fallback?.baseUrl || ''),
+      useProxy: custom.fallback?.useProxy !== undefined ? custom.fallback.useProxy : (base.fallback?.useProxy !== false),
     }
   };
 }
@@ -973,7 +976,21 @@ export async function fetchAllAgentConfigs(): Promise<Record<AgentId, AgentFullC
           const data = await res.json();
           const schema = data?.configSchema || data?.config || (data?.model ? data : null);
           if (schema) {
-            merged[id] = mergeWithDefaultConfig(id, schema);
+            const remoteMerged = mergeWithDefaultConfig(id, schema);
+            // Retain locally persisted fallback apiKey and baseUrl if remote schema returns empty strings
+            const localFallback = merged[id]?.fallback;
+            if (localFallback) {
+              if (!remoteMerged.fallback.apiKey && localFallback.apiKey) {
+                remoteMerged.fallback.apiKey = localFallback.apiKey;
+              }
+              if (!remoteMerged.fallback.baseUrl && localFallback.baseUrl) {
+                remoteMerged.fallback.baseUrl = localFallback.baseUrl;
+              }
+              if (remoteMerged.fallback.enabled === undefined && localFallback.enabled !== undefined) {
+                remoteMerged.fallback.enabled = localFallback.enabled;
+              }
+            }
+            merged[id] = remoteMerged;
           }
         } else {
           logApiFailure({

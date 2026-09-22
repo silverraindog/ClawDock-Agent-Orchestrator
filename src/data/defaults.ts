@@ -203,7 +203,10 @@ export const DEFAULT_CONFIGS: Record<AgentId, AgentFullConfig> = {
       fallbackProvider: 'ollama',
       fallbackModel: 'hermes-3-llama-3.1-8b',
       provider: 'ollama',
-      model: 'hermes-3-llama-3.1-8b'
+      model: 'hermes-3-llama-3.1-8b',
+      apiKey: '',
+      baseUrl: '',
+      useProxy: true
     },
   },
   'zeroclaw': {
@@ -299,7 +302,10 @@ export const DEFAULT_CONFIGS: Record<AgentId, AgentFullConfig> = {
       fallbackProvider: 'mistral',
       fallbackModel: 'mistral-7b-instruct',
       provider: 'mistral',
-      model: 'mistral-7b-instruct'
+      model: 'mistral-7b-instruct',
+      apiKey: '',
+      baseUrl: '',
+      useProxy: true
     },
   },
   'openclaw': {
@@ -402,7 +408,10 @@ export const DEFAULT_CONFIGS: Record<AgentId, AgentFullConfig> = {
       fallbackProvider: 'deepseek',
       fallbackModel: 'deepseek-chat',
       provider: 'deepseek',
-      model: 'deepseek-chat'
+      model: 'deepseek-chat',
+      apiKey: '',
+      baseUrl: '',
+      useProxy: true
     },
   },
   'picoclaw': {
@@ -500,7 +509,10 @@ export const DEFAULT_CONFIGS: Record<AgentId, AgentFullConfig> = {
       fallbackProvider: 'ollama',
       fallbackModel: 'picolm-1.1b',
       provider: 'ollama',
-      model: 'picolm-1.1b'
+      model: 'picolm-1.1b',
+      apiKey: '',
+      baseUrl: '',
+      useProxy: true
     },
   }
 };

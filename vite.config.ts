@@ -338,6 +338,34 @@ vector_db_url = "http://everos:8080"
     let parsedProposerModels: string[] | null = null;
     let parsedMoaEnabled = agentId === 'hermes-agent';
 
+    let parsedFallback: any = {
+      enabled: agentId === 'hermes-agent' || agentId === 'openclaw',
+      targetAgentId: agentId === 'zeroclaw' ? 'picoclaw' : agentId === 'openclaw' ? 'hermes-agent' : 'zeroclaw',
+      strategy: agentId === 'picoclaw' ? 'on_latency' : agentId === 'openclaw' ? 'on_error' : 'on_offline',
+      latencyThresholdMs: 3000,
+      fallbackProvider: agentId === 'zeroclaw' ? 'mistral' : agentId === 'openclaw' ? 'deepseek' : 'ollama',
+      fallbackModel: agentId === 'zeroclaw' ? 'mistral-7b-instruct' : agentId === 'openclaw' ? 'deepseek-chat' : agentId === 'picoclaw' ? 'picolm-1.1b' : 'hermes-3-llama-3.1-8b',
+      provider: agentId === 'zeroclaw' ? 'mistral' : agentId === 'openclaw' ? 'deepseek' : 'ollama',
+      model: agentId === 'zeroclaw' ? 'mistral-7b-instruct' : agentId === 'openclaw' ? 'deepseek-chat' : agentId === 'picoclaw' ? 'picolm-1.1b' : 'hermes-3-llama-3.1-8b',
+      apiKey: '',
+      baseUrl: '',
+      useProxy: true
+    };
+
+    try {
+      const pFile = path.join(dataDir, 'persistence.json');
+      if (fs.existsSync(pFile)) {
+        const pObj = JSON.parse(fs.readFileSync(pFile, 'utf8'));
+        const stored = pObj?.configs?.[agentId];
+        if (stored?.fallback) {
+          parsedFallback = {
+            ...parsedFallback,
+            ...stored.fallback
+          };
+        }
+      }
+    } catch {}
+
     try {
       if (format === 'json') {
         const json = JSON.parse(nativeContent);
@@ -365,6 +393,18 @@ vector_db_url = "http://everos:8080"
           if (json.moa.proposer_models || json.moa.proposerModels) parsedProposerModels = json.moa.proposer_models || json.moa.proposerModels;
           if (typeof json.moa.enabled === 'boolean') parsedMoaEnabled = json.moa.enabled;
         }
+        if (json.fallback && typeof json.fallback === 'object') {
+          const fb = json.fallback;
+          parsedFallback = {
+            ...parsedFallback,
+            ...fb,
+            enabled: fb.enabled !== undefined ? Boolean(fb.enabled) : parsedFallback.enabled,
+            apiKey: fb.apiKey || fb.api_key || parsedFallback.apiKey || '',
+            baseUrl: fb.baseUrl || fb.base_url || parsedFallback.baseUrl || '',
+            provider: fb.provider || fb.fallbackProvider || fb.fallback_provider || parsedFallback.provider,
+            model: fb.model || fb.fallbackModel || fb.fallback_model || parsedFallback.model
+          };
+        }
       } else if (format === 'toml') {
         const matchName = nativeContent.match(/agent_name\s*=\s*["']([^"']+)["']/);
         if (matchName) parsedAgentName = matchName[1];
@@ -384,6 +424,29 @@ vector_db_url = "http://everos:8080"
         if (matchPrompt) parsedSystemPrompt = matchPrompt[1];
         const matchPreset = nativeContent.match(/preset\s*=\s*["']([^"']+)["']/);
         if (matchPreset) parsedPreset = matchPreset[1];
+
+        const fbMatch = nativeContent.match(/\[fallback\]([\s\S]*?)(?=\n\[|$)/i);
+        if (fbMatch) {
+          const fbText = fbMatch[1];
+          const en = fbText.match(/enabled\s*=\s*(true|false)/i);
+          const prov = fbText.match(/(?:provider|fallback_provider)\s*=\s*["']([^"']+)["']/i);
+          const mod = fbText.match(/(?:model|fallback_model)\s*=\s*["']([^"']+)["']/i);
+          const key = fbText.match(/(?:api_key|apiKey)\s*=\s*["']([^"']+)["']/i);
+          const base = fbText.match(/(?:base_url|baseUrl)\s*=\s*["']([^"']+)["']/i);
+          const strat = fbText.match(/strategy\s*=\s*["']([^"']+)["']/i);
+          const target = fbText.match(/(?:target_agent_id|targetAgentId)\s*=\s*["']([^"']+)["']/i);
+          const lat = fbText.match(/(?:latency_threshold_ms|latencyThresholdMs)\s*=\s*([0-9]+)/i);
+          const proxy = fbText.match(/(?:use_proxy|useProxy)\s*=\s*(true|false)/i);
+          if (en) parsedFallback.enabled = en[1].toLowerCase() === 'true';
+          if (prov) { parsedFallback.provider = prov[1]; parsedFallback.fallbackProvider = prov[1]; }
+          if (mod) { parsedFallback.model = mod[1]; parsedFallback.fallbackModel = mod[1]; }
+          if (key && key[1]) parsedFallback.apiKey = key[1];
+          if (base && base[1]) parsedFallback.baseUrl = base[1];
+          if (strat) parsedFallback.strategy = strat[1];
+          if (target) parsedFallback.targetAgentId = target[1];
+          if (lat) parsedFallback.latencyThresholdMs = Number(lat[1]);
+          if (proxy) parsedFallback.useProxy = proxy[1].toLowerCase() === 'true';
+        }
       } else {
         // YAML
         const matchName = nativeContent.match(/agent_name:\s*"([^"]+)"|agent_name:\s*([^\n]+)/);
@@ -431,6 +494,29 @@ vector_db_url = "http://everos:8080"
           if (aggMatch && aggMatch[1]) parsedAggregatorModel = aggMatch[1].trim();
           const enMatch = moaBlock.match(/enabled:\s*(true|false)/i);
           if (enMatch) parsedMoaEnabled = enMatch[1].toLowerCase() === 'true';
+        }
+
+        const fbMatch = nativeContent.match(/fallback:\s*\n([\s\S]*?)(?=\n[a-z_]+:|$)/i);
+        if (fbMatch) {
+          const fbText = fbMatch[1];
+          const en = fbText.match(/enabled:\s*(true|false)/i);
+          const prov = fbText.match(/(?:provider|fallback_provider):\s*["']?([^"'\n\r]+)["']?/i);
+          const mod = fbText.match(/(?:model|fallback_model):\s*["']?([^"'\n\r]+)["']?/i);
+          const key = fbText.match(/(?:api_key|apiKey):\s*["']?([^"'\n\r]+)["']?/i);
+          const base = fbText.match(/(?:base_url|baseUrl):\s*["']?([^"'\n\r]+)["']?/i);
+          const strat = fbText.match(/strategy:\s*["']?([^"'\n\r]+)["']?/i);
+          const target = fbText.match(/(?:target_agent_id|targetAgentId):\s*["']?([^"'\n\r]+)["']?/i);
+          const lat = fbText.match(/(?:latency_threshold_ms|latencyThresholdMs):\s*([0-9]+)/i);
+          const proxy = fbText.match(/(?:use_proxy|useProxy):\s*(true|false)/i);
+          if (en) parsedFallback.enabled = en[1].toLowerCase() === 'true';
+          if (prov) { parsedFallback.provider = prov[1].trim(); parsedFallback.fallbackProvider = prov[1].trim(); }
+          if (mod) { parsedFallback.model = mod[1].trim(); parsedFallback.fallbackModel = mod[1].trim(); }
+          if (key && key[1].trim()) parsedFallback.apiKey = key[1].trim();
+          if (base && base[1].trim()) parsedFallback.baseUrl = base[1].trim();
+          if (strat) parsedFallback.strategy = strat[1].trim();
+          if (target) parsedFallback.targetAgentId = target[1].trim();
+          if (lat) parsedFallback.latencyThresholdMs = Number(lat[1]);
+          if (proxy) parsedFallback.useProxy = proxy[1].toLowerCase() === 'true';
         }
       }
 
@@ -579,7 +665,8 @@ vector_db_url = "http://everos:8080"
       customEnv: {
         CONTAINER_MOUNT_DIR: `/workspace/${agentId}`,
         LOG_LEVEL: 'info'
-      }
+      },
+      fallback: parsedFallback
     };
   }
 
@@ -602,6 +689,27 @@ vector_db_url = "http://everos:8080"
     } catch {}
 
     const configSchema = parseConfigSchema(agentId, content, fallback.format);
+
+    // Merge persistent overrides from persistence.json if available
+    try {
+      const pFile = path.join(dataDir, 'persistence.json');
+      if (fs.existsSync(pFile)) {
+        const pObj = JSON.parse(fs.readFileSync(pFile, 'utf8'));
+        const stored = pObj?.configs?.[agentId];
+        if (stored) {
+          if (stored.fallback) {
+            configSchema.fallback = {
+              ...(configSchema.fallback || {}),
+              ...stored.fallback,
+              apiKey: stored.fallback.apiKey || configSchema.fallback?.apiKey || '',
+              baseUrl: stored.fallback.baseUrl || configSchema.fallback?.baseUrl || '',
+              useProxy: stored.fallback.useProxy !== undefined ? stored.fallback.useProxy : (configSchema.fallback?.useProxy !== false)
+            };
+          }
+        }
+      }
+    } catch {}
+
     return {
       success: true,
       agentId,
@@ -1319,10 +1427,18 @@ vector_db_url = "http://everos:8080"
           }
         },
         {
-          pattern: /^\/api\/models(\/)?$|^\/api\/model\/list(\/)?$|^\/api\/agents\/models(\/)?$/i,
+          pattern: /^\/api\/models(\/)?$|^\/api\/model\/list(\/)?$|^\/api\/agents\/models(\/)?$|^\/api\/proxy\/models(\/)?$|^\/api\/proxy\/model-list(\/)?$|^\/api\/proxy(\/)?$/i,
           methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
           handler: async () => {
             res.setHeader('Content-Type', 'application/json');
+            res.setHeader('Access-Control-Allow-Origin', '*');
+            res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS');
+            res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept');
+
+            if (method === 'OPTIONS') {
+              return res.end(JSON.stringify({ success: true }));
+            }
+
             let body: any = {};
             if (method === 'POST' || method === 'PUT') {
               try {
@@ -1330,6 +1446,62 @@ vector_db_url = "http://everos:8080"
               } catch {}
             }
             const { agentId, provider, baseUrl } = extractModelQueryParams(parsedUrl, body, pathname);
+            const apiKey = parsedUrl.searchParams.get('apiKey') ||
+                           parsedUrl.searchParams.get('api_key') ||
+                           parsedUrl.searchParams.get('key') ||
+                           body.apiKey ||
+                           body.api_key ||
+                           body.key ||
+                           '';
+
+            if (provider === 'openrouter') {
+              let openrouterModels: Array<{ value: string; label: string; tag: string }> = [];
+              if (apiKey || baseUrl) {
+                const targetUrl = baseUrl ? `${baseUrl.replace(/\/+$/, '')}/v1/models` : 'https://openrouter.ai/api/v1/models';
+                try {
+                  const controller = new AbortController();
+                  const timer = setTimeout(() => controller.abort(), 2500);
+                  const headers: Record<string, string> = {
+                    'Accept': 'application/json',
+                    'User-Agent': 'ClawDock/1.0'
+                  };
+                  if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+                  const resp = await fetch(targetUrl, { signal: controller.signal, headers });
+                  clearTimeout(timer);
+                  if (resp.ok) {
+                    const json: any = await resp.json();
+                    const list = Array.isArray(json.data) ? json.data : (Array.isArray(json.models) ? json.models : []);
+                    if (list.length > 0) {
+                      openrouterModels = list.slice(0, 60).map((m: any) => {
+                        const mid = m.id || m.name;
+                        const mname = m.name || mid;
+                        return {
+                          value: String(mid),
+                          label: mname && mname !== mid ? `${mname} (${mid})` : String(mid),
+                          tag: 'OpenRouter'
+                        };
+                      });
+                    }
+                  }
+                } catch {}
+              }
+              const catalog = openrouterModels.length > 0 ? openrouterModels : [
+                { value: 'anthropic/claude-3.7-sonnet', label: 'OpenRouter: Claude 3.7 Sonnet', tag: 'Proxy' },
+                { value: 'deepseek/deepseek-r1', label: 'OpenRouter: DeepSeek R1', tag: 'Proxy' },
+                { value: 'meta-llama/llama-3.3-70b-instruct', label: 'OpenRouter: Llama 3.3 70B', tag: 'Proxy' },
+                { value: 'openai/gpt-4o', label: 'OpenRouter: GPT-4o', tag: 'Proxy' }
+              ];
+              return res.end(JSON.stringify({
+                success: true,
+                provider: 'openrouter',
+                baseUrl,
+                agentId,
+                modelsCount: catalog.length,
+                isLiveProbed: openrouterModels.length > 0,
+                models: catalog
+              }));
+            }
+
             let liveOllamaModels: string[] = [];
             if (baseUrl && (provider === 'ollama' || provider === 'custom' || baseUrl.includes('11434'))) {
               try {
@@ -1344,7 +1516,8 @@ vector_db_url = "http://everos:8080"
               } catch {}
             }
             const models = [
-              { value: 'gemma4-soul:latest', label: 'gemma4-soul:latest (Local Edge)', tag: 'Active' },
+              { value: 'claude-3-7-sonnet', label: 'claude-3-7-sonnet (Container Active Checkpoint)', tag: 'Active' },
+              { value: 'gemma4-soul:latest', label: 'gemma4-soul:latest (Local Edge / Active)', tag: 'Active' },
               { value: 'qwen2.5-coder:7b', label: 'qwen2.5-coder:7b', tag: 'Local' },
               { value: 'deepseek-r1', label: 'DeepSeek-R1', tag: 'Reasoning' }
             ];
@@ -1451,48 +1624,6 @@ vector_db_url = "http://everos:8080"
           handler: async () => {
             res.setHeader('Content-Type', 'application/json');
             return res.end(JSON.stringify({ status: 'online', totalMemories: 1420 }));
-          }
-        },
-        {
-          pattern: /^\/api\/.*$/i,
-          methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-          handler: async () => {
-            console.warn(`[Vite API Server 404] [${timestamp}] Unhandled API route: ${method} ${pathname}`);
-            console.warn(`[Vite API Server Debug] Incoming Request URL: ${req.url}`);
-            console.warn(`[Vite API Server Debug] Incoming Request Headers:`, req.headers);
-            console.warn(`[Vite API Server Debug] Incoming URL Parameters:`, Object.fromEntries(parsedUrl.searchParams.entries()));
-
-            const misconfigs: string[] = [];
-            if (!req.url.includes('?') && !['/api/health', '/api/docker/status', '/api/docker/containers', '/api/diagnostics/request-logs', '/api/diagnostics/logs', '/api/export/code', '/api/containers/restart-all'].includes(pathname)) {
-              misconfigs.push('Missing query parameters (e.g. ?baseUrl= or ?provider=)');
-            }
-            if (rawPath.endsWith('/') && rawPath.length > 5) {
-              misconfigs.push('Trailing slash detected in API pathname');
-            }
-            if (pathname !== pathname.toLowerCase()) {
-              misconfigs.push('Case sensitivity issue: Path contains uppercase letters in API route');
-            }
-            if (pathname.includes('/proxy') && !pathname.includes('/models')) {
-              misconfigs.push('Proxy subpath without /models endpoint specifier');
-            }
-
-            if (misconfigs.length > 0) {
-              console.warn(`[Vite API Server Debug] Possible misconfigurations detected for ${method} ${pathname}:`, misconfigs);
-            }
-
-            res.statusCode = 404;
-            res.setHeader('Content-Type', 'application/json');
-            return res.end(JSON.stringify({
-              error: 'Not Found',
-              status: 404,
-              message: `API endpoint ${method} ${pathname} was not found on this server.`,
-              possibleMisconfigurations: misconfigs,
-              requestHeaders: req.headers,
-              queryParams: Object.fromEntries(parsedUrl.searchParams.entries()),
-              pathname,
-              method,
-              timestamp: new Date().toISOString()
-            }));
           }
         }
       ];
@@ -1848,6 +1979,10 @@ vector_db_url = "http://everos:8080"
           res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS');
           res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept');
 
+          if (method === 'OPTIONS') {
+            return res.end(JSON.stringify({ success: true }));
+          }
+
           let body: any = {};
           if (method === 'POST' || method === 'PUT' || method === 'GET') {
             try {
@@ -1868,9 +2003,81 @@ vector_db_url = "http://everos:8080"
             'ollama'
           ).toLowerCase().trim();
 
-          const targetBaseUrl = (queryBaseUrl || 'http://localhost:11434').trim();
-          console.log(`[Vite API Server Proxy] [${timestamp}] Fetching model list from baseUrl "${targetBaseUrl}" (Provider: ${queryProvider}) to bypass browser CORS`);
+          const apiKey = parsedUrl.searchParams.get('apiKey') ||
+                         parsedUrl.searchParams.get('api_key') ||
+                         parsedUrl.searchParams.get('key') ||
+                         body.apiKey ||
+                         body.api_key ||
+                         body.key ||
+                         '';
 
+          const agentId = parsedUrl.searchParams.get('agentId') ||
+                          parsedUrl.searchParams.get('agent_id') ||
+                          body.agentId ||
+                          body.agent_id ||
+                          'hermes-agent';
+
+          console.log(`[Vite API Server Proxy] [${timestamp}] Fetching model list for provider "${queryProvider}" (Agent: ${agentId})`);
+
+          if (queryProvider === 'openrouter') {
+            let openrouterModels: Array<{ value: string; label: string; tag: string }> = [];
+            const targetUrl = queryBaseUrl && queryBaseUrl.trim()
+              ? `${queryBaseUrl.trim().replace(/\/+$/, '')}/v1/models`
+              : 'https://openrouter.ai/api/v1/models';
+
+            if (apiKey || queryBaseUrl) {
+              try {
+                const controller = new AbortController();
+                const timer = setTimeout(() => controller.abort(), 3500);
+                const headers: Record<string, string> = {
+                  'Accept': 'application/json',
+                  'User-Agent': 'ClawDock/1.0'
+                };
+                if (apiKey) headers['Authorization'] = `Bearer ${apiKey.trim()}`;
+                const resp = await fetch(targetUrl, { signal: controller.signal, headers });
+                clearTimeout(timer);
+                if (resp.ok) {
+                  const json: any = await resp.json();
+                  const list = Array.isArray(json.data) ? json.data : (Array.isArray(json.models) ? json.models : []);
+                  if (list.length > 0) {
+                    openrouterModels = list.slice(0, 60).map((m: any) => {
+                      const mid = m.id || m.name;
+                      const mname = m.name || mid;
+                      return {
+                        value: String(mid),
+                        label: mname && mname !== mid ? `${mname} (${mid})` : String(mid),
+                        tag: 'OpenRouter'
+                      };
+                    });
+                  }
+                }
+              } catch (e: any) {
+                console.warn(`[Vite API Server Proxy] OpenRouter probe error:`, e?.message || e);
+              }
+            }
+
+            const catalog = openrouterModels.length > 0 ? openrouterModels : [
+              { value: 'anthropic/claude-3.7-sonnet', label: 'OpenRouter: Claude 3.7 Sonnet', tag: 'Proxy' },
+              { value: 'deepseek/deepseek-r1', label: 'OpenRouter: DeepSeek R1', tag: 'Proxy' },
+              { value: 'meta-llama/llama-3.3-70b-instruct', label: 'OpenRouter: Llama 3.3 70B', tag: 'Proxy' },
+              { value: 'openai/gpt-4o', label: 'OpenRouter: GPT-4o', tag: 'Proxy' }
+            ];
+
+            return res.end(JSON.stringify({
+              success: true,
+              source: openrouterModels.length > 0 ? 'backend_proxy_live' : 'backend_proxy_catalog',
+              baseUrl: queryBaseUrl,
+              provider: 'openrouter',
+              agentId,
+              isLiveProbed: openrouterModels.length > 0,
+              modelsCount: catalog.length,
+              rawModelNames: catalog.map(m => m.value),
+              models: catalog,
+              timestamp
+            }));
+          }
+
+          const targetBaseUrl = (queryBaseUrl || 'http://localhost:11434').trim();
           const cleanBase = targetBaseUrl.replace(/\/+$/, '').replace(/\/v1\/?$/, '');
           const probeEndpoints: string[] = [];
 
@@ -1937,6 +2144,7 @@ vector_db_url = "http://everos:8080"
               source: 'backend_proxy',
               baseUrl: targetBaseUrl,
               provider: queryProvider,
+              agentId,
               modelsCount: fetchedModels.length,
               rawModelNames: rawNames,
               models: fetchedModels,
@@ -1954,11 +2162,11 @@ vector_db_url = "http://everos:8080"
           ];
 
           return res.end(JSON.stringify({
-            success: false,
+            success: true,
             source: 'backend_proxy_fallback',
             baseUrl: targetBaseUrl,
             provider: queryProvider,
-            error: fetchError || 'Connection to baseUrl timed out or was refused',
+            agentId,
             modelsCount: fallbackModels.length,
             rawModelNames: fallbackModels.map(m => m.value),
             models: fallbackModels,
@@ -2279,7 +2487,15 @@ vector_db_url = "http://everos:8080"
                   pObj = JSON.parse(fs.readFileSync(pFile, 'utf8'));
                 }
                 if (!pObj.configs) pObj.configs = {};
-                pObj.configs[agentId] = body.config || body;
+                const incoming = body.config || body || {};
+                pObj.configs[agentId] = {
+                  ...(pObj.configs[agentId] || {}),
+                  ...incoming,
+                  fallback: {
+                    ...(pObj.configs[agentId]?.fallback || {}),
+                    ...(incoming.fallback || {})
+                  }
+                };
                 fs.writeFileSync(pFile, JSON.stringify(pObj, null, 2), 'utf8');
               } catch {}
 

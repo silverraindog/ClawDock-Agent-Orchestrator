@@ -388,7 +388,8 @@ app.all([
   '/api/models/*',
   '/api/proxy/models',
   '/api/proxy/models/*',
-  '/api/proxy/*',
+  '/api/proxy/model-list',
+  '/api/proxy/model-list/*',
   '/api/agents/:id/models'
 ], async (req, res) => {
   return handleModelsRequest(req, res);
@@ -2459,6 +2460,31 @@ function getAgentConfigData(agentId: string, requestedFormatVersion?: string) {
   let moaEnabled = agentId === 'hermes-agent';
   let detectedOpenClawVersion: 'v1' | 'v2' = 'v2';
 
+  let parsedFallback: any = {
+    enabled: agentId === 'hermes-agent' || agentId === 'openclaw',
+    targetAgentId: agentId === 'zeroclaw' ? 'picoclaw' : agentId === 'openclaw' ? 'hermes-agent' : 'zeroclaw',
+    strategy: agentId === 'picoclaw' ? 'on_latency' : agentId === 'openclaw' ? 'on_error' : 'on_offline',
+    latencyThresholdMs: 3000,
+    fallbackProvider: agentId === 'zeroclaw' ? 'mistral' : agentId === 'openclaw' ? 'deepseek' : 'ollama',
+    fallbackModel: agentId === 'zeroclaw' ? 'mistral-7b-instruct' : agentId === 'openclaw' ? 'deepseek-chat' : agentId === 'picoclaw' ? 'picolm-1.1b' : 'hermes-3-llama-3.1-8b',
+    provider: agentId === 'zeroclaw' ? 'mistral' : agentId === 'openclaw' ? 'deepseek' : 'ollama',
+    model: agentId === 'zeroclaw' ? 'mistral-7b-instruct' : agentId === 'openclaw' ? 'deepseek-chat' : agentId === 'picoclaw' ? 'picolm-1.1b' : 'hermes-3-llama-3.1-8b',
+    apiKey: '',
+    baseUrl: '',
+    useProxy: true
+  };
+
+  try {
+    const persist = loadClawdockPersistence();
+    const stored = persist?.configs?.[agentId];
+    if (stored?.fallback) {
+      parsedFallback = {
+        ...parsedFallback,
+        ...stored.fallback
+      };
+    }
+  } catch {}
+
   try {
     if (nativeFormat === 'json') {
       const parsedJson = JSON.parse(nativeContent);
@@ -2508,6 +2534,19 @@ function getAgentConfigData(agentId: string, requestedFormatVersion?: string) {
         }
         if (parsedJson.system?.systemPrompt) parsedSystemPrompt = parsedJson.system.systemPrompt;
       }
+
+      if (parsedJson.fallback && typeof parsedJson.fallback === 'object') {
+        const fb = parsedJson.fallback;
+        parsedFallback = {
+          ...parsedFallback,
+          ...fb,
+          enabled: fb.enabled !== undefined ? Boolean(fb.enabled) : parsedFallback.enabled,
+          apiKey: fb.apiKey || fb.api_key || parsedFallback.apiKey || '',
+          baseUrl: fb.baseUrl || fb.base_url || parsedFallback.baseUrl || '',
+          provider: fb.provider || fb.fallbackProvider || fb.fallback_provider || parsedFallback.provider,
+          model: fb.model || fb.fallbackModel || fb.fallback_model || parsedFallback.model
+        };
+      }
     } else if (nativeFormat === 'toml') {
       const parsedToml: any = TOML.parse(nativeContent);
       if (parsedToml.agent?.name) parsedAgentName = parsedToml.agent.name;
@@ -2517,6 +2556,18 @@ function getAgentConfigData(agentId: string, requestedFormatVersion?: string) {
       if (parsedToml.model?.temperature !== undefined) parsedTemperature = Number(parsedToml.model.temperature);
       if (parsedToml.system?.systemPrompt || parsedToml.agent?.systemPrompt) {
         parsedSystemPrompt = parsedToml.system?.systemPrompt || parsedToml.agent?.systemPrompt;
+      }
+      if (parsedToml.fallback && typeof parsedToml.fallback === 'object') {
+        const fb = parsedToml.fallback;
+        parsedFallback = {
+          ...parsedFallback,
+          ...fb,
+          enabled: fb.enabled !== undefined ? Boolean(fb.enabled) : parsedFallback.enabled,
+          apiKey: fb.apiKey || fb.api_key || parsedFallback.apiKey || '',
+          baseUrl: fb.baseUrl || fb.base_url || parsedFallback.baseUrl || '',
+          provider: fb.provider || fb.fallbackProvider || fb.fallback_provider || parsedFallback.provider,
+          model: fb.model || fb.fallbackModel || fb.fallback_model || parsedFallback.model
+        };
       }
     } else {
       // yaml
@@ -2534,6 +2585,19 @@ function getAgentConfigData(agentId: string, requestedFormatVersion?: string) {
       }
       if (parsedYaml.system_prompt) parsedSystemPrompt = parsedYaml.system_prompt;
       if (parsedYaml.moa?.enabled !== undefined) moaEnabled = Boolean(parsedYaml.moa.enabled);
+
+      if (parsedYaml.fallback && typeof parsedYaml.fallback === 'object') {
+        const fb = parsedYaml.fallback;
+        parsedFallback = {
+          ...parsedFallback,
+          ...fb,
+          enabled: fb.enabled !== undefined ? Boolean(fb.enabled) : parsedFallback.enabled,
+          apiKey: fb.apiKey || fb.api_key || parsedFallback.apiKey || '',
+          baseUrl: fb.baseUrl || fb.base_url || parsedFallback.baseUrl || '',
+          provider: fb.provider || fb.fallbackProvider || fb.fallback_provider || parsedFallback.provider,
+          model: fb.model || fb.fallbackModel || fb.fallback_model || parsedFallback.model
+        };
+      }
     }
 
     // Final safety check for missing model names (don't revert to default if it's literally empty string or "provider:")
@@ -2610,7 +2674,8 @@ function getAgentConfigData(agentId: string, requestedFormatVersion?: string) {
       customEnv: {
         CONTAINER_MOUNT_DIR: `/workspace/${agentId}`,
         LOG_LEVEL: 'info'
-      }
+      },
+      fallback: parsedFallback
     }
   };
 }
@@ -2667,10 +2732,16 @@ function generateHermesYaml(cfg: any): string {
   const sec = cfg?.security || {};
   const sto = cfg?.storage || {};
   const env = cfg?.customEnv || {};
+  const fb = cfg?.fallback || {};
 
   const provider = m?.provider && m.provider.trim() !== '' ? m.provider : 'anthropic';
   const model = m?.model && m.model.trim() !== '' ? m.model : 'claude-3-7-sonnet';
   const apiKey = m?.apiKey || process.env.ANTHROPIC_API_KEY || process.env.GEMINI_API_KEY || '';
+
+  const fbProvider = fb?.provider || fb?.fallbackProvider || 'ollama';
+  const fbModel = fb?.model || fb?.fallbackModel || 'hermes-3-llama-3.1-8b';
+  const fbApiKey = fb?.apiKey || '';
+  const fbBaseUrl = fb?.baseUrl || '';
 
   return `version: "1.0.0"
 agent_id: "${cfg?.agentId || 'hermes-agent'}"
@@ -2688,6 +2759,17 @@ model:
   max_tokens: ${m?.maxTokens ?? 8192}
   context_window: ${m?.contextWindow ?? 131072}
   top_p: ${m?.topP ?? 0.95}
+
+fallback:
+  enabled: ${fb?.enabled ?? true}
+  strategy: "${fb?.strategy || 'on_offline'}"
+  target_agent_id: "${fb?.targetAgentId || 'zeroclaw'}"
+  latency_threshold_ms: ${fb?.latencyThresholdMs ?? 3000}
+  provider: "${fbProvider}"
+  model: "${fbModel}"
+  api_key: "${fbApiKey.replace(/"/g, '\\"')}"
+  base_url: "${fbBaseUrl}"
+  use_proxy: ${fb?.useProxy !== false}
 
 channels:
   telegram:
@@ -2771,14 +2853,23 @@ app.put('/api/agents/:id/config', (req, res) => {
 
     // Also update persistence store
     try {
+      const persist = loadClawdockPersistence();
+      if (!persist.configs) persist.configs = {};
       const parsedConfig = getAgentConfigData(agentId);
-      if (parsedConfig && parsedConfig.configSchema) {
-        const persist = loadClawdockPersistence();
-        if (!persist.configs) persist.configs = {};
-        persist.configs[agentId] = parsedConfig.configSchema;
-        saveClawdockPersistence(persist);
-      }
-    } catch {}
+      const baseSchema: any = parsedConfig && parsedConfig.configSchema ? parsedConfig.configSchema : {};
+      const mergedConfig = config ? {
+        ...baseSchema,
+        ...config,
+        fallback: {
+          ...(baseSchema.fallback || {}),
+          ...(config.fallback || {})
+        }
+      } : baseSchema;
+      persist.configs[agentId] = mergedConfig;
+      saveClawdockPersistence(persist);
+    } catch (e) {
+      console.error('Failed to update persistence store:', e);
+    }
 
     // Extract target model and provider if present
     const targetModel = config?.model?.model || 'claude-3-7-sonnet';

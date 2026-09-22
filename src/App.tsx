@@ -231,7 +231,23 @@ export default function App() {
     // 2. Load all agent configs
     fetchAllAgentConfigs().then(loaded => {
       if (loaded && Object.keys(loaded).length > 0) {
-        setConfigs(prev => ({ ...prev, ...loaded }));
+        setConfigs(prev => {
+          const merged: Record<string, AgentFullConfig> = { ...prev };
+          for (const [key, cfg] of Object.entries(loaded)) {
+            const prevCfg = prev[key];
+            merged[key] = {
+              ...(prevCfg || {}),
+              ...cfg,
+              fallback: {
+                ...(prevCfg?.fallback || {}),
+                ...(cfg.fallback || {}),
+                apiKey: cfg.fallback?.apiKey || prevCfg?.fallback?.apiKey || '',
+                baseUrl: cfg.fallback?.baseUrl || prevCfg?.fallback?.baseUrl || ''
+              }
+            };
+          }
+          return merged;
+        });
       }
     }).catch(err => {
       console.error('[Clawdock Config] fetchAllAgentConfigs failed:', err);
@@ -942,7 +958,11 @@ export default function App() {
       }
 
       const nativeContent = JSON.stringify(currentConfig, null, 2);
-      // Removed redundant saveAgentConfigToBackend(selectedAgentId, currentConfig, nativeContent, restartContainer);
+      
+      // Save locally immediately to guarantee session persistence
+      const updatedConfigs = { ...configs, [selectedAgentId]: currentConfig };
+      saveLocalPersistence('configs', updatedConfigs);
+      setConfigs(updatedConfigs);
 
       const res = await fetch(`/api/agents/${selectedAgentId}/config`, {
         method: 'PUT',
@@ -1721,7 +1741,13 @@ export default function App() {
             <ConfigTab
               agentId={selectedAgentId}
               config={currentConfig}
-              onChangeConfig={(newCfg) => setConfigs(prev => ({ ...prev, [selectedAgentId]: newCfg }))}
+              onChangeConfig={(newCfg) => {
+                setConfigs(prev => {
+                  const next = { ...prev, [selectedAgentId]: newCfg };
+                  saveLocalPersistence('configs', next);
+                  return next;
+                });
+              }}
               onSaveConfig={handleSaveConfig}
               onResetDefaults={handleResetDefaults}
               isSaving={isSavingConfig}
