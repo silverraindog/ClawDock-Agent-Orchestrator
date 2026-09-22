@@ -3592,15 +3592,15 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
                         value={config.fallback?.fallbackProvider || config.fallback?.provider || 'ollama'}
                         onChange={(e) => {
                           const newProvider = e.target.value;
+                          const currentFallbackModel = config.fallback?.fallbackModel || config.fallback?.model || (MODEL_OPTIONS[newProvider] || DEFAULT_PROVIDER_MODELS[newProvider] || [])[0]?.value || 'custom-model';
                           onChangeConfig({
                             ...config,
                             fallback: {
                               ...(config.fallback || { enabled: false, strategy: 'on_offline' }),
                               fallbackProvider: newProvider,
                               provider: newProvider,
-                              // Reset or use corresponding model from standard options as fallback
-                              fallbackModel: (MODEL_OPTIONS[newProvider] || DEFAULT_PROVIDER_MODELS[newProvider] || [])[0]?.value || 'custom-model',
-                              model: (MODEL_OPTIONS[newProvider] || DEFAULT_PROVIDER_MODELS[newProvider] || [])[0]?.value || 'custom-model'
+                              fallbackModel: currentFallbackModel,
+                              model: currentFallbackModel
                             }
                           });
                         }}
