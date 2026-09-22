@@ -697,6 +697,12 @@ vector_db_url = "http://everos:8080"
         const pObj = JSON.parse(fs.readFileSync(pFile, 'utf8'));
         const stored = pObj?.configs?.[agentId];
         if (stored) {
+          if (stored.model) {
+            configSchema.model = {
+              ...(configSchema.model || {}),
+              ...stored.model
+            };
+          }
           if (stored.fallback) {
             configSchema.fallback = {
               ...(configSchema.fallback || {}),
@@ -990,6 +996,57 @@ vector_db_url = "http://everos:8080"
 
       // Dynamic Route Mapping Object mapping regex patterns to supported methods and handlers
       const dynamicRouteMappings = [
+        {
+          pattern: /^\/api\/proxy\/search(\/)?$/i,
+          methods: ['GET', 'POST', 'PUT', 'OPTIONS'],
+          handler: async () => {
+            res.setHeader('Content-Type', 'application/json');
+            res.setHeader('Access-Control-Allow-Origin', '*');
+            if (method === 'OPTIONS') return res.end(JSON.stringify({ success: true }));
+
+            let body: any = {};
+            if (method === 'POST' || method === 'PUT' || method === 'GET') {
+              try { body = (await readRequestBody(req)) || {}; } catch {}
+            }
+
+            const query = (
+              parsedUrl.searchParams.get('modelQuery') ||
+              parsedUrl.searchParams.get('query') ||
+              parsedUrl.searchParams.get('q') ||
+              body.modelQuery ||
+              body.query ||
+              body.q ||
+              ''
+            ).toLowerCase().trim();
+
+            const allProxyModels = [
+              { value: 'gemma4-soul:latest', label: 'gemma4-soul:latest (Local Edge)', tag: 'Active', provider: 'ollama' },
+              { value: 'qwen2.5-coder:7b', label: 'qwen2.5-coder:7b (Edge Coding)', tag: 'Sipeed', provider: 'ollama' },
+              { value: 'deepseek-r1:8b', label: 'deepseek-r1:8b (Local Reasoning)', tag: 'Reasoning', provider: 'ollama' },
+              { value: 'llama3.2:3b', label: 'llama3.2:3b (Ultra-light)', tag: 'Edge', provider: 'ollama' },
+              { value: 'hermes-3-llama-3.1-8b', label: 'Hermes 3 Llama 3.1 8B', tag: 'Agent', provider: 'ollama' },
+              { value: 'anthropic/claude-3-7-sonnet', label: 'Claude 3.7 Sonnet', tag: 'Frontier', provider: 'anthropic' },
+              { value: 'anthropic/claude-3-5-sonnet', label: 'Claude 3.5 Sonnet', tag: 'Flagship', provider: 'anthropic' },
+              { value: 'openai/gpt-4o', label: 'GPT-4o', tag: 'Flagship', provider: 'openai' },
+              { value: 'openai/gpt-4o-mini', label: 'GPT-4o Mini', tag: 'Fast', provider: 'openai' },
+              { value: 'deepseek/deepseek-chat', label: 'DeepSeek Chat', tag: 'Coding', provider: 'deepseek' },
+              { value: 'deepseek/deepseek-reasoner', label: 'DeepSeek R1', tag: 'Reasoning', provider: 'deepseek' },
+              { value: 'mistralai/mistral-large-latest', label: 'Mistral Large', tag: 'Enterprise', provider: 'mistral' }
+            ];
+
+            const filtered = query 
+              ? allProxyModels.filter(m => m.value.toLowerCase().includes(query) || m.label.toLowerCase().includes(query) || m.tag.toLowerCase().includes(query))
+              : allProxyModels;
+
+            return res.end(JSON.stringify({
+              success: true,
+              modelQuery: query,
+              count: filtered.length,
+              models: filtered,
+              timestamp: new Date().toISOString()
+            }));
+          }
+        },
         {
           pattern: /^\/api\/proxy(\/.*)?$/i,
           methods: ['GET', 'POST', 'PUT', 'OPTIONS'],
@@ -1965,6 +2022,57 @@ vector_db_url = "http://everos:8080"
               message: `Network Error: Could not reach the provider endpoint. (${fetchErr.message || 'DNS resolution or route failed'})`
             }));
           }
+        }
+
+        // 8a-2. Proxy Model Search Endpoint accepting modelQuery parameter
+        case '/api/proxy/search':
+        case '/api/proxy/search/': {
+          res.setHeader('Content-Type', 'application/json');
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          if (method === 'OPTIONS') return res.end(JSON.stringify({ success: true }));
+
+          let body: any = {};
+          if (method === 'POST' || method === 'PUT' || method === 'GET') {
+            try { body = (await readRequestBody(req)) || {}; } catch {}
+          }
+
+          const query = (
+            parsedUrl.searchParams.get('modelQuery') ||
+            parsedUrl.searchParams.get('query') ||
+            parsedUrl.searchParams.get('q') ||
+            body.modelQuery ||
+            body.query ||
+            body.q ||
+            ''
+          ).toLowerCase().trim();
+
+          const allProxyModels = [
+            { value: 'gemma4-soul:latest', label: 'gemma4-soul:latest (Local Edge)', tag: 'Active', provider: 'ollama' },
+            { value: 'qwen2.5-coder:7b', label: 'qwen2.5-coder:7b (Edge Coding)', tag: 'Sipeed', provider: 'ollama' },
+            { value: 'deepseek-r1:8b', label: 'deepseek-r1:8b (Local Reasoning)', tag: 'Reasoning', provider: 'ollama' },
+            { value: 'llama3.2:3b', label: 'llama3.2:3b (Ultra-light)', tag: 'Edge', provider: 'ollama' },
+            { value: 'hermes-3-llama-3.1-8b', label: 'Hermes 3 Llama 3.1 8B', tag: 'Agent', provider: 'ollama' },
+            { value: 'anthropic/claude-3-7-sonnet', label: 'Claude 3.7 Sonnet', tag: 'Frontier', provider: 'anthropic' },
+            { value: 'anthropic/claude-3-5-sonnet', label: 'Claude 3.5 Sonnet', tag: 'Flagship', provider: 'anthropic' },
+            { value: 'openai/gpt-4o', label: 'GPT-4o', tag: 'Flagship', provider: 'openai' },
+            { value: 'openai/gpt-4o-mini', label: 'GPT-4o Mini', tag: 'Fast', provider: 'openai' },
+            { value: 'deepseek/deepseek-chat', label: 'DeepSeek Chat', tag: 'Coding', provider: 'deepseek' },
+            { value: 'deepseek/deepseek-reasoner', label: 'DeepSeek R1', tag: 'Reasoning', provider: 'deepseek' },
+            { value: 'mistralai/mistral-large-latest', label: 'Mistral Large', tag: 'Enterprise', provider: 'mistral' }
+          ];
+
+          const filtered = query 
+            ? allProxyModels.filter(m => m.value.toLowerCase().includes(query) || m.label.toLowerCase().includes(query) || m.tag.toLowerCase().includes(query))
+            : allProxyModels;
+
+          console.log(`[Vite API Server Proxy Search] query="${query}" -> matched ${filtered.length} models`);
+          return res.end(JSON.stringify({
+            success: true,
+            modelQuery: query,
+            count: filtered.length,
+            models: filtered,
+            timestamp: new Date().toISOString()
+          }));
         }
 
         // 8a. Backend Proxy Endpoint to fetch model lists from baseUrl (bypassing browser CORS & 403 Forbidden restrictions)

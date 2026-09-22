@@ -959,16 +959,34 @@ export default function App() {
 
       const nativeContent = JSON.stringify(currentConfig, null, 2);
       
+      // Ensure both main model and fallback configurations are saved together
+      const normalizedConfig = {
+        ...currentConfig,
+        model: currentConfig.model || {},
+        fallback: currentConfig.fallback || {}
+      };
+
       // Save locally immediately to guarantee session persistence
-      const updatedConfigs = { ...configs, [selectedAgentId]: currentConfig };
+      const updatedConfigs = { ...configs, [selectedAgentId]: normalizedConfig };
       saveLocalPersistence('configs', updatedConfigs);
       setConfigs(updatedConfigs);
+
+      // Sync explicitly with backend persistence.json
+      try {
+        await fetch('/api/persistence', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ configs: updatedConfigs })
+        });
+      } catch (err) {
+        console.warn('[handleSaveConfig] Persistence sync failed:', err);
+      }
 
       const res = await fetch(`/api/agents/${selectedAgentId}/config`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
-          config: currentConfig,
+          config: normalizedConfig,
           nativeContent, 
           restartContainer 
         })
