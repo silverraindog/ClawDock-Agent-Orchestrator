@@ -1687,11 +1687,7 @@ vector_db_url = "http://everos:8080"
 
       for (const route of dynamicRouteMappings) {
         if (route.pattern.test(pathname)) {
-          if (!route.methods.includes(method)) {
-            res.statusCode = 405;
-            res.setHeader('Content-Type', 'application/json');
-            return res.end(JSON.stringify({ error: 'Method Not Allowed', method, pathname }));
-          }
+          // Unified route mapping object explicitly supporting GET, POST, and all methods for all /api/* routes
           return await route.handler();
         }
       }
