@@ -693,7 +693,7 @@ export const EverOSTab: React.FC<EverOSTabProps> = ({ onOpenAgentConfig }) => {
                       </div>
                       <div>
                         <h4 className="text-sm font-bold text-white flex items-center gap-2">
-                          {bot.name}
+                          {bot?.name || bot?.id}
                           <span className="text-[10px] font-mono font-normal px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700">
                             {bot.id}
                           </span>
@@ -758,7 +758,7 @@ export const EverOSTab: React.FC<EverOSTabProps> = ({ onOpenAgentConfig }) => {
                       onClick={() => onOpenAgentConfig(bot.id)}
                       className="w-full mt-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium flex items-center justify-center gap-1.5 transition-colors"
                     >
-                      Configure {bot.name} Storage Settings
+                      Configure {bot?.name || bot?.id} Storage Settings
                       <ArrowRight className="w-3 h-3" />
                     </button>
                   )}
@@ -1119,7 +1119,7 @@ export const EverOSTab: React.FC<EverOSTabProps> = ({ onOpenAgentConfig }) => {
                       <Sparkles className="w-4 h-4" />
                     </div>
                     <div>
-                      <h4 className="text-sm font-bold text-white">{skill.name}</h4>
+                      <h4 className="text-sm font-bold text-white">{skill?.name || skill?.id}</h4>
                       <span className="text-[11px] font-mono text-slate-400">
                         Synthesized by {skill.sourceBot} &bull; {skill.createdAt}
                       </span>

@@ -60,10 +60,10 @@ export const SkillsTab: React.FC<SkillsTabProps> = ({
   const filteredSkills = skills.filter((skill) => {
     const matchesCategory = selectedCategory === 'all' || skill.category === selectedCategory;
     const matchesSearch = 
-      skill.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      skill.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      skill.author.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      skill.parameters.some(p => p.name.toLowerCase().includes(searchQuery.toLowerCase()));
+      (skill?.name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (skill?.description || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (skill?.author || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (skill?.parameters || []).some(p => (p?.name || '').toLowerCase().includes(searchQuery.toLowerCase()));
     return matchesCategory && matchesSearch;
   });
 

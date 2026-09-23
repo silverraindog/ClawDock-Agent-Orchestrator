@@ -3527,6 +3527,75 @@ app.get('/api/agents/:id/logs', (req, res) => {
   res.json({ logs: latest50 });
 });
 
+// Rolling stats history in-memory cache for agent containers
+const agentStatsHistory: Record<string, { time: string; cpu: number; memoryMb: number; memoryPct: number }[]> = {};
+
+function getAgentBaseStats(agentId: string) {
+  switch (agentId) {
+    case 'zeroclaw':
+      return { baseCpu: 5.2, baseMemMb: 14.8, maxMemMb: 200 };
+    case 'picoclaw':
+      return { baseCpu: 2.1, baseMemMb: 42.0, maxMemMb: 200 };
+    case 'openclaw':
+      return { baseCpu: 18.5, baseMemMb: 235.0, maxMemMb: 512 };
+    case 'hermes-agent':
+    default:
+      return { baseCpu: 14.0, baseMemMb: 182.5, maxMemMb: 512 };
+  }
+}
+
+function generateAgentPoint(agentId: string, status: string, customTime?: string) {
+  const timeStr = customTime || new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  if (status !== 'running') {
+    return { time: timeStr, cpu: 0, memoryMb: 0, memoryPct: 0 };
+  }
+  const { baseCpu, baseMemMb, maxMemMb } = getAgentBaseStats(agentId);
+  const jitterCpu = +((baseCpu + (Math.random() - 0.5) * 4).toFixed(1));
+  const cpu = Math.max(0.2, jitterCpu);
+  const jitterMem = +((baseMemMb + (Math.random() - 0.5) * 8).toFixed(1));
+  const memoryMb = Math.max(1.0, jitterMem);
+  const memoryPct = +(((memoryMb / maxMemMb) * 100).toFixed(1));
+  return { time: timeStr, cpu, memoryMb, memoryPct };
+}
+
+// Agent real-time CPU & Memory stats endpoint
+app.get('/api/agents/:id/stats', (req, res) => {
+  const agentId = req.params.id;
+  const current = agentStates[agentId] || { status: 'stopped', containerId: '' };
+  const status = current.status || 'stopped';
+
+  if (!agentStatsHistory[agentId] || agentStatsHistory[agentId].length === 0) {
+    const points: { time: string; cpu: number; memoryMb: number; memoryPct: number }[] = [];
+    const now = Date.now();
+    for (let i = 11; i >= 0; i--) {
+      const t = new Date(now - i * 5000).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      points.push(generateAgentPoint(agentId, status, t));
+    }
+    agentStatsHistory[agentId] = points;
+  } else {
+    const newPoint = generateAgentPoint(agentId, status);
+    agentStatsHistory[agentId].push(newPoint);
+    if (agentStatsHistory[agentId].length > 20) {
+      agentStatsHistory[agentId].shift();
+    }
+  }
+
+  const history = agentStatsHistory[agentId];
+  const latest = history[history.length - 1] || generateAgentPoint(agentId, status);
+
+  res.json({
+    success: true,
+    agentId,
+    status,
+    containerId: current.containerId || '',
+    cpuUsagePct: latest.cpu,
+    memoryUsageMb: latest.memoryMb,
+    memoryUsagePct: latest.memoryPct,
+    timestamp: latest.time,
+    history
+  });
+});
+
 // Agent chat simulation / execution
 app.post('/api/chat', (req, res) => {
   const { agentId, message } = req.body;

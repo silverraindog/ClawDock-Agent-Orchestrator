@@ -291,7 +291,7 @@ export const MCPTab: React.FC<MCPTabProps> = ({
                     </div>
                     <div>
                       <h3 className="text-xs font-bold text-white leading-tight">
-                        {server.name}
+                        {server?.name || server?.id || 'MCP Server'}
                       </h3>
                       <div className="flex items-center gap-2 mt-1">
                         <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-slate-900 text-slate-300 border border-slate-800">

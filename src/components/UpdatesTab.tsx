@@ -111,11 +111,11 @@ export const UpdatesTab: React.FC<UpdatesTabProps> = ({
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
         return (
-          item.name.toLowerCase().includes(q) ||
-          item.description.toLowerCase().includes(q) ||
-          item.packageOrImage.toLowerCase().includes(q) ||
-          item.currentVersion.toLowerCase().includes(q) ||
-          item.latestVersion.toLowerCase().includes(q)
+          (item?.name || '').toLowerCase().includes(q) ||
+          (item?.description || '').toLowerCase().includes(q) ||
+          (item?.packageOrImage || '').toLowerCase().includes(q) ||
+          (item?.currentVersion || '').toLowerCase().includes(q) ||
+          (item?.latestVersion || '').toLowerCase().includes(q)
         );
       }
       return true;
@@ -575,7 +575,7 @@ export const UpdatesTab: React.FC<UpdatesTabProps> = ({
                     <div className="flex items-center gap-2 flex-wrap">
                       {getCategoryBadge(item.category)}
                       <h3 className="text-sm font-bold text-white tracking-tight">
-                        {item.name}
+                        {item?.name || item?.id}
                       </h3>
                       {item.breakingChanges && (
                         <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-500/10 text-rose-400 border border-rose-500/20 flex items-center gap-1">

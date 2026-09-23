@@ -51,7 +51,13 @@ export const Navbar: React.FC<NavbarProps> = ({
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  const currentAgent = agents.find(a => a.id === selectedAgentId) || agents[0];
+  const currentAgent = agents?.find(a => a.id === selectedAgentId) || agents?.[0] || {
+    id: selectedAgentId || 'zeroclaw',
+    name: selectedAgentId || 'Agent',
+    status: 'stopped',
+    framework: 'Agent Framework',
+    defaultPort: 8080
+  };
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -144,11 +150,11 @@ export const Navbar: React.FC<NavbarProps> = ({
             className="flex items-center gap-2.5 bg-slate-800 hover:bg-slate-750 border border-slate-700 text-sm rounded-lg px-3.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 text-white transition-colors"
           >
             <span className={`w-2 h-2 rounded-full ${
-              currentAgent.status === 'running' ? 'bg-emerald-400 animate-pulse' :
-              currentAgent.status === 'stopped' ? 'bg-amber-400' : 'bg-cyan-400'
+              currentAgent?.status === 'running' ? 'bg-emerald-400 animate-pulse' :
+              currentAgent?.status === 'stopped' ? 'bg-amber-400' : 'bg-cyan-400'
             }`} />
             <span className="font-medium text-xs sm:text-sm">
-              {currentAgent.name}
+              {currentAgent?.name || selectedAgentId || 'Agent'}
             </span>
             <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform ${dropdownOpen ? 'rotate-180' : ''}`} />
           </button>
@@ -252,19 +258,19 @@ export const Navbar: React.FC<NavbarProps> = ({
           <button
             id="navbar-restart-container-btn"
             onClick={onRestartContainer}
-            disabled={currentAgent.status === 'restarting'}
+            disabled={currentAgent?.status === 'restarting'}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-indigo-500/30 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 hover:text-white text-xs font-medium transition-colors disabled:opacity-50"
             title={
-              currentAgent.status === 'running'
-                ? `Restart ${currentAgent.name} Container`
-                : `Start / Restart ${currentAgent.name} Container`
+              currentAgent?.status === 'running'
+                ? `Restart ${currentAgent?.name || 'Agent'} Container`
+                : `Start / Restart ${currentAgent?.name || 'Agent'} Container`
             }
           >
-            <RotateCw className={`w-3.5 h-3.5 text-indigo-400 ${currentAgent.status === 'restarting' ? 'animate-spin' : ''}`} />
+            <RotateCw className={`w-3.5 h-3.5 text-indigo-400 ${currentAgent?.status === 'restarting' ? 'animate-spin' : ''}`} />
             <span className="hidden sm:inline">
-              {currentAgent.status === 'restarting'
+              {currentAgent?.status === 'restarting'
                 ? 'Restarting...'
-                : currentAgent.status === 'running'
+                : currentAgent?.status === 'running'
                   ? 'Restart'
                   : 'Restart'}
             </span>

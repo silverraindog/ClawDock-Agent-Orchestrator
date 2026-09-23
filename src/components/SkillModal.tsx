@@ -29,12 +29,12 @@ export const SkillModal: React.FC<SkillModalProps> = ({
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="text-base font-bold text-white">{skill.name}</h3>
+                <h3 className="text-base font-bold text-white">{skill?.name || 'Skill Details'}</h3>
                 <span className="text-[10px] px-2 py-0.5 rounded-full font-mono bg-slate-800 text-slate-300 border border-slate-700">
-                  {skill.version}
+                  {skill?.version}
                 </span>
               </div>
-              <p className="text-xs text-slate-400">Author: {skill.author}</p>
+              <p className="text-xs text-slate-400">Author: {skill?.author}</p>
             </div>
           </div>
 
@@ -92,14 +92,14 @@ export const SkillModal: React.FC<SkillModalProps> = ({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800 font-mono text-[11px]">
-                    {skill.parameters.map((p) => (
-                      <tr key={p.name} className="hover:bg-slate-800/40">
-                        <td className="py-2 px-3 text-indigo-400 font-bold">{p.name}</td>
-                        <td className="py-2 px-3 text-cyan-300">{p.type}</td>
+                    {(skill?.parameters || []).map((p, idx) => (
+                      <tr key={p?.name || idx} className="hover:bg-slate-800/40">
+                        <td className="py-2 px-3 text-indigo-400 font-bold">{p?.name}</td>
+                        <td className="py-2 px-3 text-cyan-300">{p?.type}</td>
                         <td className="py-2 px-3 text-slate-300">
-                          {p.required ? <span className="text-rose-400 font-bold">Yes</span> : 'No'}
+                          {p?.required ? <span className="text-rose-400 font-bold">Yes</span> : 'No'}
                         </td>
-                        <td className="py-2 px-3 text-slate-400 font-sans">{p.description}</td>
+                        <td className="py-2 px-3 text-slate-400 font-sans">{p?.description}</td>
                       </tr>
                     ))}
                   </tbody>

@@ -674,7 +674,22 @@ export default function App() {
     setToasts(prev => prev.filter(t => t.id !== id));
   };
 
-  const currentAgent = agents.find(a => a.id === selectedAgentId) || agents[0];
+  const currentAgent = agents?.find(a => a.id === selectedAgentId) || agents?.[0] || {
+    id: selectedAgentId || 'zeroclaw',
+    name: selectedAgentId || 'Agent',
+    status: 'stopped',
+    defaultPort: 8080,
+    containerId: undefined,
+    framework: 'Agent Framework',
+    language: 'TypeScript',
+    version: '1.0.0',
+    description: '',
+    dockerImage: '',
+    cpuUsagePct: 0,
+    memoryUsageMb: 0,
+    uptimePct: 100,
+    avgLatencyMs: 0
+  };
   const currentConfig = configs[selectedAgentId] || DEFAULT_CONFIGS[selectedAgentId];
 
   // Refresh agent status via detection
@@ -1707,9 +1722,9 @@ export default function App() {
               </button>
               <span className="text-slate-700 hidden lg:inline">|</span>
               <div className="hidden lg:flex items-center gap-2">
-                <span>Agent: <strong className="text-white">{currentAgent.name}</strong></span>
+                <span>Agent: <strong className="text-white">{currentAgent?.name || 'Agent'}</strong></span>
                 <span className="text-slate-600">•</span>
-                <span>Port: <strong className="text-indigo-400 font-mono">{currentAgent.defaultPort}</strong></span>
+                <span>Port: <strong className="text-indigo-400 font-mono">{currentAgent?.defaultPort || 8080}</strong></span>
               </div>
             </div>
           </div>

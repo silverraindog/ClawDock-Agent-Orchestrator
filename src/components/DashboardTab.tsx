@@ -34,7 +34,9 @@ import {
   ResponsiveContainer, 
   YAxis, 
   Tooltip,
-  XAxis 
+  XAxis,
+  CartesianGrid,
+  Legend
 } from 'recharts';
 import { AgentFullConfig, AgentInfo, DockerSystemInfo, SkillItem, MCPServerConfig } from '../types';
 
@@ -291,6 +293,238 @@ export const ResourceMonitorWidget: React.FC<{ runningAgents: AgentInfo[] }> = (
   );
 };
 
+interface AgentResourceTrendChartProps {
+  agentId: string;
+  agentName: string;
+  status: string;
+}
+
+export const AgentResourceTrendChart: React.FC<AgentResourceTrendChartProps> = ({ agentId, agentName, status }) => {
+  const [statsHistory, setStatsHistory] = React.useState<{ time: string; cpu: number; memoryMb: number; memoryPct: number }[]>([]);
+  const [currentCpu, setCurrentCpu] = React.useState<number>(0);
+  const [currentMemMb, setCurrentMemMb] = React.useState<number>(0);
+  const [currentMemPct, setCurrentMemPct] = React.useState<number>(0);
+  const [loading, setLoading] = React.useState<boolean>(true);
+  const [error, setError] = React.useState<string | null>(null);
+  const [metricMode, setMetricMode] = React.useState<'combined' | 'cpu' | 'memory'>('combined');
+
+  const fetchStats = React.useCallback(async () => {
+    try {
+      const res = await fetch(`/api/agents/${agentId}/stats`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      if (data.history) {
+        setStatsHistory(data.history);
+        setCurrentCpu(data.cpuUsagePct ?? 0);
+        setCurrentMemMb(data.memoryUsageMb ?? 0);
+        setCurrentMemPct(data.memoryUsagePct ?? 0);
+      }
+      setError(null);
+    } catch (err: any) {
+      setError(err.message || 'Failed to fetch agent stats');
+    } finally {
+      setLoading(false);
+    }
+  }, [agentId]);
+
+  React.useEffect(() => {
+    setLoading(true);
+    fetchStats();
+    const timer = setInterval(fetchStats, 3000);
+    return () => clearInterval(timer);
+  }, [agentId, fetchStats]);
+
+  return (
+    <div className="rounded-2xl border border-slate-800 bg-slate-900/90 p-5 sm:p-6 space-y-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
+        <div className="flex items-center gap-3">
+          <div className="p-2.5 rounded-xl bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 flex items-center justify-center">
+            <Activity className="w-5 h-5 animate-pulse" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h3 className="text-sm font-bold text-white">
+                Real-Time Resource Usage Trends ({agentName || agentId})
+              </h3>
+              <span className={`w-2 h-2 rounded-full ${status === 'running' ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
+            </div>
+            <p className="text-xs text-slate-400">
+              Live CPU &amp; Memory telemetry polled real-time from <code className="text-indigo-300 font-mono">/api/agents/{agentId}/stats</code>
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Mode Selector */}
+          <div className="flex rounded-lg bg-slate-950 p-1 border border-slate-800 text-xs">
+            <button
+              onClick={() => setMetricMode('combined')}
+              className={`px-2.5 py-1 rounded-md font-medium transition-colors ${metricMode === 'combined' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}
+            >
+              Combined
+            </button>
+            <button
+              onClick={() => setMetricMode('cpu')}
+              className={`px-2.5 py-1 rounded-md font-medium transition-colors ${metricMode === 'cpu' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}
+            >
+              CPU (%)
+            </button>
+            <button
+              onClick={() => setMetricMode('memory')}
+              className={`px-2.5 py-1 rounded-md font-medium transition-colors ${metricMode === 'memory' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}
+            >
+              Memory (MB)
+            </button>
+          </div>
+
+          <button
+            onClick={() => fetchStats()}
+            className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors"
+            title="Refresh statistics now"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      </div>
+
+      {/* Badges / Stat Summaries */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="p-3 rounded-xl bg-slate-950 border border-slate-800/80 flex items-center justify-between">
+          <div>
+            <div className="text-[11px] uppercase font-semibold text-slate-400 flex items-center gap-1.5">
+              <Cpu className="w-3.5 h-3.5 text-cyan-400" />
+              CPU Usage
+            </div>
+            <div className="text-lg font-bold text-cyan-300 font-mono mt-0.5">
+              {currentCpu.toFixed(1)}%
+            </div>
+          </div>
+          <div className="text-right">
+            <span className="text-[10px] text-slate-500 font-mono">
+              {status === 'running' ? 'Active Container' : 'Idle'}
+            </span>
+          </div>
+        </div>
+
+        <div className="p-3 rounded-xl bg-slate-950 border border-slate-800/80 flex items-center justify-between">
+          <div>
+            <div className="text-[11px] uppercase font-semibold text-slate-400 flex items-center gap-1.5">
+              <HardDrive className="w-3.5 h-3.5 text-emerald-400" />
+              Memory (RAM)
+            </div>
+            <div className="text-lg font-bold text-emerald-300 font-mono mt-0.5">
+              {currentMemMb.toFixed(1)} MB
+            </div>
+          </div>
+          <div className="text-right">
+            <span className="text-[10px] text-slate-500 font-mono">
+              {currentMemPct.toFixed(1)}% limit
+            </span>
+          </div>
+        </div>
+
+        <div className="p-3 rounded-xl bg-slate-950 border border-slate-800/80 flex items-center justify-between">
+          <div>
+            <div className="text-[11px] uppercase font-semibold text-slate-400 flex items-center gap-1.5">
+              <Clock className="w-3.5 h-3.5 text-indigo-400" />
+              Polling Stream
+            </div>
+            <div className="text-xs font-bold text-indigo-300 font-mono mt-1">
+              Every 3.0s
+            </div>
+          </div>
+          <div className="text-right">
+            <span className="inline-flex items-center gap-1 text-[10px] text-emerald-400 font-bold">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              Live
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Chart Visualization */}
+      <div className="h-64 w-full pt-2">
+        {loading && statsHistory.length === 0 ? (
+          <div className="h-full flex items-center justify-center text-slate-500 text-xs gap-2">
+            <RefreshCw className="w-4 h-4 animate-spin text-indigo-400" />
+            Loading agent telemetry trends...
+          </div>
+        ) : error && statsHistory.length === 0 ? (
+          <div className="h-full flex items-center justify-center text-rose-400 text-xs">
+            {error}
+          </div>
+        ) : (
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={statsHistory} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+              <defs>
+                <linearGradient id="cpuGradient" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#06b6d4" stopOpacity={0.4} />
+                  <stop offset="95%" stopColor="#06b6d4" stopOpacity={0.0} />
+                </linearGradient>
+                <linearGradient id="memGradient" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#10b981" stopOpacity={0.4} />
+                  <stop offset="95%" stopColor="#10b981" stopOpacity={0.0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+              <XAxis dataKey="time" stroke="#64748b" fontSize={10} tickLine={false} />
+              
+              {metricMode === 'combined' && (
+                <>
+                  <YAxis yAxisId="cpu" orientation="left" stroke="#06b6d4" fontSize={10} tickLine={false} domain={[0, 'auto']} unit="%" />
+                  <YAxis yAxisId="mem" orientation="right" stroke="#10b981" fontSize={10} tickLine={false} domain={[0, 'auto']} unit="MB" />
+                </>
+              )}
+              {metricMode === 'cpu' && (
+                <YAxis stroke="#06b6d4" fontSize={10} tickLine={false} domain={[0, 'auto']} unit="%" />
+              )}
+              {metricMode === 'memory' && (
+                <YAxis stroke="#10b981" fontSize={10} tickLine={false} domain={[0, 'auto']} unit="MB" />
+              )}
+
+              <Tooltip
+                contentStyle={{ backgroundColor: '#020617', borderColor: '#334155', borderRadius: '0.75rem', fontSize: '11px', color: '#f8fafc' }}
+                formatter={(val: any, name: any) => {
+                  if (name === 'CPU (%)' || name === 'cpu') return [`${Number(val).toFixed(1)}%`, 'CPU Usage'];
+                  if (name === 'Memory (MB)' || name === 'memoryMb') return [`${Number(val).toFixed(1)} MB`, 'Memory Usage'];
+                  return [val, name];
+                }}
+              />
+              <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
+
+              {(metricMode === 'combined' || metricMode === 'cpu') && (
+                <Area
+                  type="monotone"
+                  dataKey="cpu"
+                  name="CPU (%)"
+                  yAxisId={metricMode === 'combined' ? 'cpu' : undefined}
+                  stroke="#06b6d4"
+                  strokeWidth={2}
+                  fillOpacity={1}
+                  fill="url(#cpuGradient)"
+                />
+              )}
+
+              {(metricMode === 'combined' || metricMode === 'memory') && (
+                <Area
+                  type="monotone"
+                  dataKey="memoryMb"
+                  name="Memory (MB)"
+                  yAxisId={metricMode === 'combined' ? 'mem' : undefined}
+                  stroke="#10b981"
+                  strokeWidth={2}
+                  fillOpacity={1}
+                  fill="url(#memGradient)"
+                />
+              )}
+            </AreaChart>
+          </ResponsiveContainer>
+        )}
+      </div>
+    </div>
+  );
+};
+
 export const DashboardTab: React.FC<DashboardTabProps> = ({
   agent,
   config,
@@ -539,6 +773,13 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
           </p>
         </div>
       </div>
+
+      {/* Real-time CPU & Memory Telemetry Visualization */}
+      <AgentResourceTrendChart 
+        agentId={agent?.id} 
+        agentName={agent?.name || agent?.id} 
+        status={agent?.status} 
+      />
 
       {/* Failback & Edge Redundancy Status Banner */}
       <div 

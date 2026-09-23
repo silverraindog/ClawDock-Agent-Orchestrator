@@ -163,7 +163,7 @@ export const EverOSAnalytics: React.FC = () => {
               <div key={idx} className="flex items-center justify-between p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-xs">
                 <div className="flex items-center gap-2">
                   <div className="w-3 h-3 rounded-full" style={{ backgroundColor: item.color }} />
-                  <span className="text-slate-200 font-medium">{item.name}</span>
+                  <span className="text-slate-200 font-medium">{item?.name || 'Item'}</span>
                 </div>
                 <span className="font-mono text-slate-400 font-bold">{item.value} files</span>
               </div>

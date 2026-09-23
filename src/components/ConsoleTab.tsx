@@ -115,10 +115,10 @@ export const ConsoleTab: React.FC<ConsoleTabProps> = ({
           <div>
             <div className="flex items-center gap-2">
               <h2 className="text-sm font-bold text-white">
-                Interactive Agent Sandbox ({agent.name})
+                Interactive Agent Sandbox ({agent?.name || 'Agent'})
               </h2>
               <span className={`w-2 h-2 rounded-full ${
-                agent.status === 'running' ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'
+                agent?.status === 'running' ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'
               }`} />
             </div>
             <p className="text-xs text-slate-400">
@@ -198,7 +198,7 @@ export const ConsoleTab: React.FC<ConsoleTabProps> = ({
                       Agent Ready for Execution
                     </h3>
                     <p className="text-xs text-slate-400">
-                      Send a prompt or shell task to {agent.name}. The agent will invoke installed SKILL.md specs and MCP servers.
+                      Send a prompt or shell task to {agent?.name || 'Agent'}. The agent will invoke installed SKILL.md specs and MCP servers.
                     </p>
                   </div>
 
@@ -247,7 +247,7 @@ export const ConsoleTab: React.FC<ConsoleTabProps> = ({
                       </button>
                       <div className="flex items-center justify-between gap-4 text-[11px] text-slate-400 border-b border-slate-800/50 pb-1 mb-2">
                         <span className="font-semibold text-white">
-                          {msg.sender === 'user' ? 'You' : agent.name}
+                          {msg.sender === 'user' ? 'You' : (agent?.name || 'Agent')}
                         </span>
                         <span>{msg.timestamp}</span>
                       </div>
@@ -281,7 +281,7 @@ export const ConsoleTab: React.FC<ConsoleTabProps> = ({
                   </div>
                   <div className="p-3.5 rounded-2xl rounded-tl-sm bg-slate-900 border border-slate-800 text-slate-400 text-xs flex items-center gap-2">
                     <RefreshCw className="w-3.5 h-3.5 animate-spin text-indigo-400" />
-                    <span>{agent.name} is reasoning and inspecting tools in Docker...</span>
+                    <span>{agent?.name || 'Agent'} is reasoning and inspecting tools in Docker...</span>
                   </div>
                 </div>
               )}
@@ -313,7 +313,7 @@ export const ConsoleTab: React.FC<ConsoleTabProps> = ({
           <input
             id="console-input"
             type="text"
-            placeholder={`Message ${agent.name} (e.g. "Scan docker containers" or "Install SQLite skill")...`}
+            placeholder={`Message ${agent?.name || 'Agent'} (e.g. "Scan docker containers" or "Install SQLite skill")...`}
             value={inputText}
             onChange={(e) => setInputText(e.target.value)}
             disabled={isThinking}

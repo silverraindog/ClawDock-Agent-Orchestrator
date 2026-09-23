@@ -151,7 +151,12 @@ export const DockerTab: React.FC<DockerTabProps> = ({
   const [isCheckingHealth, setIsCheckingHealth] = useState(false);
   const [isDoctorFixing, setIsDoctorFixing] = useState<string | null>(null);
 
-  const currentAgent = agents.find(a => a.id === selectedAgentId) || agents[0];
+  const currentAgent = agents?.find(a => a.id === selectedAgentId) || agents?.[0] || {
+    id: selectedAgentId || 'zeroclaw',
+    name: selectedAgentId || 'Agent',
+    status: 'stopped',
+    containerId: undefined
+  };
 
   const handleHealthCheck = async () => {
     setIsCheckingHealth(true);
@@ -420,7 +425,7 @@ networks:
                   <div className="flex items-start justify-between gap-2">
                     <div>
                       <div className="flex items-center gap-2">
-                        <h4 className="text-sm font-bold text-white">{agent.name}</h4>
+                        <h4 className="text-sm font-bold text-white">{agent?.name || agent?.id || 'Agent'}</h4>
                         <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-300">
                           {agent.language}
                         </span>
@@ -512,7 +517,7 @@ networks:
                       onClick={() => onRestartAgent(agent.id)}
                       disabled={agent.status === 'restarting'}
                       className="flex items-center gap-1 px-3 py-1 rounded-lg text-xs font-medium text-indigo-300 hover:text-white hover:bg-indigo-500/20 border border-indigo-500/30 transition-colors disabled:opacity-50"
-                      title={agent.status === 'running' ? `Restart ${agent.name} Container` : `Start / Restart ${agent.name} Container`}
+                      title={agent?.status === 'running' ? `Restart ${agent?.name || 'Agent'} Container` : `Start / Restart ${agent?.name || 'Agent'} Container`}
                     >
                       <RotateCw className={`w-3 h-3 ${agent.status === 'restarting' ? 'animate-spin text-indigo-400' : ''}`} />
                       <span>{agent.status === 'restarting' ? 'Restarting...' : 'Restart'}</span>
@@ -550,9 +555,9 @@ networks:
       {/* Live Container Logs Inspector with Real-Time Polling & Troubleshooting */}
       <DockerLogsInspector
         agentId={selectedAgentId}
-        agentName={currentAgent.name}
-        containerId={currentAgent.containerId}
-        isContainerRunning={currentAgent.status === 'running'}
+        agentName={currentAgent?.name || selectedAgentId || 'Agent'}
+        containerId={currentAgent?.containerId}
+        isContainerRunning={currentAgent?.status === 'running'}
         onRestartContainer={() => onRestartAgent(selectedAgentId)}
         onAddToast={onAddToast}
       />
