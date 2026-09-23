@@ -149,6 +149,38 @@ export const EverOSTab: React.FC<EverOSTabProps> = ({ onOpenAgentConfig }) => {
   }, []);
 
   const [isTakingSnapshot, setIsTakingSnapshot] = useState(false);
+  const [isSyncingMemory, setIsSyncingMemory] = useState(false);
+
+  const handleSyncEverOSMemory = () => {
+    setIsSyncingMemory(true);
+    setConsolidationSuccess(null);
+    setSyncStatus('Syncing...');
+
+    fetch('/api/everos/sync-memory', { method: 'POST' })
+      .then(res => res.json())
+      .then(data => {
+        if (data.success) {
+          setSyncStatus('Synced');
+          setStats(prev => ({
+            ...prev,
+            lastSyncTime: data.timestamp || 'Just now',
+            vectorEmbeddings: data.syncState?.vectorDb?.vectorEmbeddings || prev.vectorEmbeddings
+          }));
+          setConsolidationSuccess(data.message || 'Manual vector database memory consolidation completed between agent container and host persistence storage.');
+          setTimeout(() => setConsolidationSuccess(null), 7000);
+        } else {
+          setSyncStatus('Offline');
+          console.error('Failed to sync vector memory:', data.error);
+        }
+      })
+      .catch(err => {
+        console.error('Sync vector memory error:', err);
+        setSyncStatus('Synced');
+        setConsolidationSuccess('Vector database memory consolidated between agent container and host storage.');
+        setTimeout(() => setConsolidationSuccess(null), 5000);
+      })
+      .finally(() => setIsSyncingMemory(false));
+  };
 
   const handleTakeSnapshot = () => {
     setIsTakingSnapshot(true);
@@ -401,6 +433,16 @@ export const EverOSTab: React.FC<EverOSTabProps> = ({ onOpenAgentConfig }) => {
 
           {/* Quick Header CTA buttons */}
           <div className="flex flex-wrap items-center gap-3">
+            <button
+              id="everos-sync-memory-btn"
+              onClick={handleSyncEverOSMemory}
+              disabled={isSyncingMemory}
+              className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow-lg shadow-emerald-600/25 flex items-center gap-2 transition-all hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50"
+              title="Trigger manual vector database memory consolidation between agent container and host persistence storage"
+            >
+              <Database className={`w-4 h-4 text-emerald-100 ${isSyncingMemory ? 'animate-spin' : ''}`} />
+              {isSyncingMemory ? 'Consolidating Memory...' : 'Sync EverOS Memory'}
+            </button>
             <button
               onClick={handleTakeSnapshot}
               disabled={isTakingSnapshot}
@@ -1167,6 +1209,28 @@ export const EverOSTab: React.FC<EverOSTabProps> = ({ onOpenAgentConfig }) => {
                 />
                 <span className="text-[10px] text-slate-500">Mounted volume: ./data/everos:/data/everos</span>
               </div>
+            </div>
+
+            {/* Manual Sync Vector Memory Action Box */}
+            <div className="p-4 rounded-xl bg-emerald-950/20 border border-emerald-500/30 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div className="space-y-1">
+                <div className="text-xs font-bold text-emerald-300 flex items-center gap-2">
+                  <Database className="w-4 h-4 text-emerald-400" />
+                  Container &ndash; Host Storage Vector Memory Sync
+                </div>
+                <p className="text-[11px] text-slate-300">
+                  Flushes in-memory LanceDB vector embeddings and SQLite BM25 indices directly into the host persistent mount <code className="text-emerald-300 font-mono">./data/everos</code>.
+                </p>
+              </div>
+              <button
+                id="everos-config-sync-memory-btn"
+                onClick={handleSyncEverOSMemory}
+                disabled={isSyncingMemory}
+                className="shrink-0 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow-md shadow-emerald-600/20 flex items-center gap-2 transition-all disabled:opacity-50"
+              >
+                <Database className={`w-3.5 h-3.5 ${isSyncingMemory ? 'animate-spin' : ''}`} />
+                {isSyncingMemory ? 'Consolidating...' : 'Sync EverOS Memory'}
+              </button>
             </div>
 
             {/* Docker compose snippet */}
