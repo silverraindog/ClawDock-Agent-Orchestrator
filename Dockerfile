@@ -32,7 +32,7 @@ FROM python:3.11-slim AS runtime
 
 LABEL maintainer="ClawDock Maintainers <support@clawdock.io>"
 LABEL description="Python Web Orchestrator for Hermes-Agent, ZeroClaw, OpenClaw & PicoClaw in Docker"
-LABEL version="0.0.1"
+LABEL version="0.0.5"
 
 WORKDIR /app
 
