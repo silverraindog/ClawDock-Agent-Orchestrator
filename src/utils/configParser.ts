@@ -138,6 +138,7 @@ export function parseNativeConfigToSchema(
   let parsedAggregatorModel: string | undefined;
   let parsedProposerModels: string[] | undefined;
   let parsedMoaEnabled: boolean | undefined;
+  let parsedProviderMapping: Record<string, string> | undefined = undefined;
   let parsedChannels: Partial<ChannelConfig> | undefined;
   let parsedFallback: Partial<FallbackConfig> | undefined;
 
@@ -273,7 +274,13 @@ export function parseNativeConfigToSchema(
           if (json.moa.proposer_models || json.moa.proposerModels) {
             parsedProposerModels = json.moa.proposer_models || json.moa.proposerModels;
           }
+          if (json.moa.provider_mapping || json.moa.providerMapping) {
+            parsedProviderMapping = json.moa.provider_mapping || json.moa.providerMapping;
+          }
           if (typeof json.moa.enabled === 'boolean') parsedMoaEnabled = json.moa.enabled;
+        }
+        if (json.provider_mapping || json.providerMapping) {
+          parsedProviderMapping = json.provider_mapping || json.providerMapping;
         }
 
         if (json.channels || json.channel || json.communication || json.discord || json.telegram) {
@@ -621,6 +628,11 @@ export function parseNativeConfigToSchema(
     moaObj.proposerModels = [primaryModel, 'qwen2.5-coder:7b', 'deepseek-r1:8b'];
   }
 
+  if (parsedProviderMapping) {
+    moaObj.providerMapping = parsedProviderMapping;
+    result.providerMapping = parsedProviderMapping;
+  }
+
   if (Object.keys(moaObj).length > 0) {
     result.moa = moaObj as MoAConfig;
   }
@@ -696,6 +708,11 @@ export function enhanceConfigWithNative(
       baseMerged.moa.proposerModels = nativeParsed.moa.proposerModels;
     } else if (isLocal) {
       baseMerged.moa.proposerModels = [baseMerged.model.model, 'qwen2.5-coder:7b', 'deepseek-r1:8b'];
+    }
+
+    if (nativeParsed.moa.providerMapping) {
+      baseMerged.moa.providerMapping = nativeParsed.moa.providerMapping;
+      baseMerged.providerMapping = nativeParsed.moa.providerMapping;
     }
 
     if (typeof nativeParsed.moa.enabled === 'boolean') {

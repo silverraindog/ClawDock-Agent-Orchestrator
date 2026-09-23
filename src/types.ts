@@ -132,6 +132,8 @@ export interface MoAConfig {
   rounds: number;
   temperatureSpread: number;
   consensusThreshold: number;
+  providerMapping?: Record<string, string>; // Maps model identifier to provider alias (e.g., 'local-ollama', 'remote-openrouter', 'remote-openai', 'remote-anthropic')
+  providerEndpoints?: Record<string, string>; // Custom endpoint overrides per alias
 }
 
 export interface FallbackConfig {
@@ -146,6 +148,7 @@ export interface FallbackConfig {
   apiKey?: string;
   baseUrl?: string;
   useProxy?: boolean;
+  providerMapping?: Record<string, string>;
 }
 
 export interface AgentFullConfig {
@@ -161,7 +164,10 @@ export interface AgentFullConfig {
   moa: MoAConfig;
   fallback: FallbackConfig;
   customEnv: Record<string, string>;
+  providerMapping?: Record<string, string>;
 }
+
+export type ConfigFullConfig = AgentFullConfig;
 
 export interface SkillItem {
   id: string;

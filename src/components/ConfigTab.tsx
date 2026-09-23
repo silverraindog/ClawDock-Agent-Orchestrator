@@ -55,6 +55,8 @@ import {
   AgentInfo
 } from '../types';
 import { MODEL_OPTIONS, DEFAULT_CONFIGS, DEFAULT_NATIVE_FILES, INITIAL_AGENTS } from '../data/defaults';
+import { AgentFallbackSettings } from './AgentFallbackSettings';
+export { AgentFallbackSettings } from './AgentFallbackSettings';
 import { 
   fetchAgentLiveConfig, 
   saveAgentConfigToBackend, 
@@ -285,10 +287,9 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
   const currentAgent = allAgents?.find(a => a.id === agentId);
 
   // Dedicated check for whether the agent is running on its fallback configuration
+  // Fallback is only actively running when fallback is enabled AND the primary provider is unreachable/degraded
   const isRunningOnFallback = Boolean(
-    (config.fallback?.enabled && modelConnectivityStatus === 'unreachable') || 
-    (currentAgent?.failbackStatus === 'active' && modelConnectivityStatus !== 'available') ||
-    (config.fallback?.enabled && (currentAgent?.failbackStatus === 'active' || currentAgent?.failbackStatus === 'configured'))
+    config.fallback?.enabled && modelConnectivityStatus === 'unreachable'
   );
 
   const handleRevalidatePrimaryProvider = async () => {
@@ -1984,6 +1985,30 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
                   </div>
                 </div>
 
+                {primaryRevalidationMessage && (
+                  <div className={`p-2.5 rounded-xl text-xs flex items-center justify-between gap-2 border ${
+                    primaryRevalidationMessage.type === 'success'
+                      ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
+                      : 'bg-rose-500/10 text-rose-300 border-rose-500/30'
+                  }`}>
+                    <div className="flex items-center gap-2">
+                      {primaryRevalidationMessage.type === 'success' ? (
+                        <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                      ) : (
+                        <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                      )}
+                      <span>{primaryRevalidationMessage.text}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setPrimaryRevalidationMessage(null)}
+                      className="text-slate-400 hover:text-slate-200 text-xs px-1.5 py-0.5 rounded hover:bg-slate-800 cursor-pointer"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                )}
+
                 {/* Main Searchable Dropdown */}
                 <div className="relative">
                   <div
@@ -3466,6 +3491,13 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
                     </div>
                   </div>
                 </div>
+
+                {/* Per-Model Provider Alias & Endpoint Mapping Matrix */}
+                <AgentFallbackSettings 
+                  config={config} 
+                  onChangeConfig={onChangeConfig} 
+                  agentId={agentId} 
+                />
               </div>
             </div>
           );
@@ -4729,6 +4761,13 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
                 </div>
               );
             })()}
+
+            {/* MOA Model Provider Mapping & Fallback Matrix */}
+            <AgentFallbackSettings 
+              config={config} 
+              onChangeConfig={onChangeConfig} 
+              agentId={agentId} 
+            />
 
             {/* Redundancy Visualizer Mock */}
             <div className="p-5 rounded-2xl border border-slate-800 bg-slate-950/50 space-y-4">

@@ -2472,6 +2472,12 @@ function getAgentConfigData(agentId: string, requestedFormatVersion?: string) {
   let parsedAgentName = agentId;
   let parsedSystemPrompt = `You are ${agentId}, an autonomous AI assistant.`;
   let moaEnabled = agentId === 'hermes-agent';
+  let parsedMoaProposers: string[] = ['claude-3-7-sonnet', 'deepseek-r1', 'gpt-4o'];
+  let parsedMoaAggregator = '';
+  let parsedMoaMapping: Record<string, string> = {};
+  let parsedMoaRounds = 2;
+  let parsedMoaTempSpread = 0.3;
+  let parsedMoaConsensus = 0.85;
   let detectedOpenClawVersion: 'v1' | 'v2' = 'v2';
 
   let parsedFallback: any = {
@@ -2598,7 +2604,21 @@ function getAgentConfigData(agentId: string, requestedFormatVersion?: string) {
         parsedMemoryBackend = parsedYaml.storage.memory_backend || parsedYaml.storage.memoryBackend;
       }
       if (parsedYaml.system_prompt) parsedSystemPrompt = parsedYaml.system_prompt;
-      if (parsedYaml.moa?.enabled !== undefined) moaEnabled = Boolean(parsedYaml.moa.enabled);
+      if (parsedYaml.moa && typeof parsedYaml.moa === 'object') {
+        if (parsedYaml.moa.enabled !== undefined) moaEnabled = Boolean(parsedYaml.moa.enabled);
+        if (parsedYaml.moa.proposer_models || parsedYaml.moa.proposerModels) {
+          parsedMoaProposers = parsedYaml.moa.proposer_models || parsedYaml.moa.proposerModels;
+        }
+        if (parsedYaml.moa.aggregator_model || parsedYaml.moa.aggregatorModel) {
+          parsedMoaAggregator = parsedYaml.moa.aggregator_model || parsedYaml.moa.aggregatorModel;
+        }
+        if (parsedYaml.moa.provider_mapping || parsedYaml.moa.providerMapping) {
+          parsedMoaMapping = parsedYaml.moa.provider_mapping || parsedYaml.moa.providerMapping;
+        }
+      }
+      if (parsedYaml.provider_mapping || parsedYaml.providerMapping) {
+        parsedMoaMapping = { ...parsedMoaMapping, ...(parsedYaml.provider_mapping || parsedYaml.providerMapping) };
+      }
 
       if (parsedYaml.fallback && typeof parsedYaml.fallback === 'object') {
         const fb = parsedYaml.fallback;
@@ -2609,7 +2629,8 @@ function getAgentConfigData(agentId: string, requestedFormatVersion?: string) {
           apiKey: fb.apiKey || fb.api_key || parsedFallback.apiKey || '',
           baseUrl: fb.baseUrl || fb.base_url || parsedFallback.baseUrl || '',
           provider: fb.provider || fb.fallbackProvider || fb.fallback_provider || parsedFallback.provider,
-          model: fb.model || fb.fallbackModel || fb.fallback_model || parsedFallback.model
+          model: fb.model || fb.fallbackModel || fb.fallback_model || parsedFallback.model,
+          providerMapping: fb.providerMapping || fb.provider_mapping || parsedMoaMapping
         };
       }
     }
@@ -2620,6 +2641,10 @@ function getAgentConfigData(agentId: string, requestedFormatVersion?: string) {
     }
   } catch (e) {
     console.error('Error parsing config details from file:', e);
+  }
+
+  if (!parsedMoaAggregator) {
+    parsedMoaAggregator = parsedModelName;
   }
 
   return {
@@ -2679,12 +2704,14 @@ function getAgentConfigData(agentId: string, requestedFormatVersion?: string) {
       },
       moa: {
         enabled: moaEnabled,
-        proposerModels: ['claude-3-7-sonnet', 'deepseek-r1', 'gpt-4o'],
-        aggregatorModel: parsedModelName,
-        rounds: 2,
-        temperatureSpread: 0.3,
-        consensusThreshold: 0.85
+        proposerModels: parsedMoaProposers,
+        aggregatorModel: parsedMoaAggregator,
+        rounds: parsedMoaRounds,
+        temperatureSpread: parsedMoaTempSpread,
+        consensusThreshold: parsedMoaConsensus,
+        providerMapping: parsedMoaMapping
       },
+      providerMapping: parsedMoaMapping,
       customEnv: {
         CONTAINER_MOUNT_DIR: `/workspace/${agentId}`,
         LOG_LEVEL: 'info'
@@ -3185,11 +3212,54 @@ storage:
 moa:
   enabled: ${moa?.enabled ?? true}
   proposer_models:
-${(moa?.proposerModels || ['claude-3-7-sonnet', 'deepseek-r1']).map((p: string) => `    - "${p}"`).join('\n')}
-  aggregator_model: "${moa?.aggregatorModel || 'claude-3-7-sonnet'}"
+${(() => {
+  const providerMapping: Record<string, string> = moa?.providerMapping || cfg?.providerMapping || {};
+  const resolveModelWithProvider = (rawModelName: string): string => {
+    if (!rawModelName) return rawModelName;
+    if (rawModelName.includes(':') && (rawModelName.startsWith('ollama:') || rawModelName.startsWith('openrouter:') || rawModelName.startsWith('openai:') || rawModelName.startsWith('anthropic:') || rawModelName.startsWith('custom:'))) {
+      return rawModelName;
+    }
+    const alias = providerMapping[rawModelName];
+    if (alias) {
+      if (alias === 'local-ollama' || alias === 'ollama') return `ollama:${rawModelName}`;
+      if (alias === 'remote-openrouter' || alias === 'openrouter') return `openrouter:${rawModelName}`;
+      if (alias === 'remote-openai' || alias === 'openai') return `openai:${rawModelName}`;
+      if (alias === 'remote-anthropic' || alias === 'anthropic') return `anthropic:${rawModelName}`;
+      if (alias === 'local-vllm' || alias === 'vllm' || alias === 'custom') return `custom:${rawModelName}`;
+      return `${alias}:${rawModelName}`;
+    }
+    return rawModelName;
+  };
+  const proposers = (moa?.proposerModels || ['claude-3-7-sonnet', 'deepseek-r1']).map((p: string) => `    - "${resolveModelWithProvider(p)}"`);
+  return proposers.join('\n');
+})()}
+  aggregator_model: "${(() => {
+    const rawAgg = moa?.aggregatorModel || 'claude-3-7-sonnet';
+    const providerMapping: Record<string, string> = moa?.providerMapping || cfg?.providerMapping || {};
+    if (rawAgg.includes(':') && (rawAgg.startsWith('ollama:') || rawAgg.startsWith('openrouter:') || rawAgg.startsWith('openai:') || rawAgg.startsWith('anthropic:') || rawAgg.startsWith('custom:'))) {
+      return rawAgg;
+    }
+    const alias = providerMapping[rawAgg];
+    if (alias) {
+      if (alias === 'local-ollama' || alias === 'ollama') return `ollama:${rawAgg}`;
+      if (alias === 'remote-openrouter' || alias === 'openrouter') return `openrouter:${rawAgg}`;
+      if (alias === 'remote-openai' || alias === 'openai') return `openai:${rawAgg}`;
+      if (alias === 'remote-anthropic' || alias === 'anthropic') return `anthropic:${rawAgg}`;
+      if (alias === 'local-vllm' || alias === 'vllm' || alias === 'custom') return `custom:${rawAgg}`;
+      return `${alias}:${rawAgg}`;
+    }
+    return rawAgg;
+  })()}"
   rounds: ${moa?.rounds ?? 2}
   temperature_spread: ${moa?.temperatureSpread ?? 0.3}
   consensus_threshold: ${moa?.consensusThreshold ?? 0.85}
+${(() => {
+  const providerMapping: Record<string, string> = moa?.providerMapping || cfg?.providerMapping || {};
+  if (Object.keys(providerMapping).length > 0) {
+    return `  provider_mapping:\n${Object.entries(providerMapping).map(([m, p]) => `    "${m}": "${p}"`).join('\n')}`;
+  }
+  return '';
+})()}
 
 env:
 ${Object.entries(env).map(([k, v]) => `  ${k}: "${v}"`).join('\n')}
