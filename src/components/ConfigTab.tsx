@@ -264,6 +264,26 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
   const [nativeConfigInfo, setNativeConfigInfo] = useState<{ fileName: string; format: string; content: string }>(() => {
     return DEFAULT_NATIVE_FILES[agentId] || DEFAULT_NATIVE_FILES['hermes-agent'];
   });
+
+  const [persistenceRawData, setPersistenceRawData] = useState<string>('');
+  const [isPersistenceLoading, setIsPersistenceLoading] = useState(false);
+
+  const fetchPersistenceDiagnostic = async () => {
+    setIsPersistenceLoading(true);
+    try {
+      const res = await fetch('/api/persistence');
+      if (res.ok) {
+        const data = await res.json();
+        setPersistenceRawData(JSON.stringify(data, null, 2));
+      } else {
+        setPersistenceRawData(`Error: HTTP ${res.status} ${res.statusText}`);
+      }
+    } catch (err: any) {
+      setPersistenceRawData(`Error fetching persistence.json: ${err.message || err}`);
+    } finally {
+      setIsPersistenceLoading(false);
+    }
+  };
   
   const [restartContainer, setRestartContainer] = useState(true);
   const [isRestartModalOpen, setIsRestartModalOpen] = useState(false);
@@ -4216,6 +4236,36 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
           </div>
         </div>
       )}
+
+      {/* Persistence Diagnostic Inspector (persistence.json) */}
+      <div className="mt-8 p-5 rounded-2xl border border-slate-800 bg-slate-900/80 shadow-xl space-y-4">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-bold text-white flex items-center gap-2">
+              <Database className="w-4 h-4 text-indigo-400" />
+              Persistence Diagnostic Inspector (`persistence.json`)
+            </h3>
+            <p className="text-xs text-slate-400">
+              Inspect raw persisted configuration state and verify that custom model selections (e.g. gemma4-soul) are successfully recorded.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={fetchPersistenceDiagnostic}
+            disabled={isPersistenceLoading}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold text-indigo-300 bg-indigo-950/60 hover:bg-indigo-900/60 border border-indigo-500/30 transition-colors disabled:opacity-50"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isPersistenceLoading ? 'animate-spin' : ''}`} />
+            {isPersistenceLoading ? 'Loading Persistence...' : 'Inspect persistence.json'}
+          </button>
+        </div>
+
+        <div className="rounded-xl bg-slate-950 p-4 border border-slate-800/80 overflow-x-auto max-h-64">
+          <pre className="text-[11px] font-mono text-emerald-400 leading-relaxed">
+            {persistenceRawData || 'Click "Inspect persistence.json" above to load raw storage state.'}
+          </pre>
+        </div>
+      </div>
     </div>
   );
 };

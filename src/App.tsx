@@ -898,6 +898,17 @@ export default function App() {
   const handleSaveConfig = async (restartContainer: boolean = true) => {
     setIsSavingConfig(true);
     try {
+      // Client-side validation: Ensure model is selected and exists in catalog or is valid custom model string
+      if (!currentConfig.model || !currentConfig.model.model || currentConfig.model.model.trim() === '') {
+        addToast(
+          'error',
+          'Invalid Model Configuration',
+          'Model identifier cannot be empty. Please select or enter a valid model name (e.g. gemma4-soul:latest).'
+        );
+        setIsSavingConfig(false);
+        return;
+      }
+
       // Pre-save check when saving directly to agent: verify container is running
       if (restartContainer) {
         let isRunning = false;
