@@ -14,7 +14,7 @@ WORKDIR /app
 COPY package.json package-lock.json* ./
 
 # Install frontend dependencies
-RUN if [ -f package-lock.json ]; then npm ci; else npm install --legacy-peer-deps; fi
+RUN npm install --legacy-peer-deps
 
 # Copy source code and build Vite bundle
 COPY tsconfig.json vite.config.ts index.html server.ts ./
