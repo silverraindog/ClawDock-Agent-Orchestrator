@@ -849,12 +849,91 @@ export async function checkBackendAvailability(): Promise<boolean> {
   return health.status === 'healthy';
 }
 
+export interface PersistenceValidationResult {
+  isValid: boolean;
+  errors: string[];
+  mismatches: Array<{ agentId: string; field: string; expected: any; found: any; message: string }>;
+  validatedConfigs: Record<string, any>;
+}
+
+export function validatePersistenceSchema(rawPersistence: any): PersistenceValidationResult {
+  const errors: string[] = [];
+  const mismatches: Array<{ agentId: string; field: string; expected: any; found: any; message: string }> = [];
+  const validatedConfigs: Record<string, any> = {};
+
+  if (!rawPersistence || typeof rawPersistence !== 'object') {
+    errors.push('Persistence data root is not a valid object.');
+    return { isValid: false, errors, mismatches, validatedConfigs };
+  }
+
+  const configs = rawPersistence.configs || {};
+  for (const [agentId, cfg] of Object.entries(configs)) {
+    if (!cfg || typeof cfg !== 'object') {
+      errors.push(`Config for agent "${agentId}" is not a valid object.`);
+      continue;
+    }
+
+    const typedCfg = cfg as any;
+    const validatedCfg = { ...typedCfg };
+
+    if (!typedCfg.model || typeof typedCfg.model !== 'object') {
+      mismatches.push({
+        agentId,
+        field: 'model',
+        expected: 'object with provider and model',
+        found: typedCfg.model,
+        message: `Agent "${agentId}" missing model object structure.`
+      });
+      validatedCfg.model = { provider: 'ollama', model: 'gemma4-soul:latest' };
+    } else {
+      if (!typedCfg.model.model || typeof typedCfg.model.model !== 'string' || typedCfg.model.model.trim() === '') {
+        mismatches.push({
+          agentId,
+          field: 'model.model',
+          expected: 'non-empty string model name',
+          found: typedCfg.model.model,
+          message: `Agent "${agentId}" has empty or invalid model identifier.`
+        });
+        validatedCfg.model.model = 'gemma4-soul:latest';
+      }
+      if (!typedCfg.model.provider || typeof typedCfg.model.provider !== 'string') {
+        mismatches.push({
+          agentId,
+          field: 'model.provider',
+          expected: 'string provider name',
+          found: typedCfg.model.provider,
+          message: `Agent "${agentId}" missing model provider; defaulting to ollama.`
+        });
+        validatedCfg.model.provider = 'ollama';
+      }
+    }
+
+    validatedConfigs[agentId] = validatedCfg;
+  }
+
+  return {
+    isValid: errors.length === 0 && mismatches.length === 0,
+    errors,
+    mismatches,
+    validatedConfigs: {
+      ...rawPersistence,
+      configs: validatedConfigs
+    }
+  };
+}
+
 export function getLocalPersistence(): Record<string, any> {
   try {
     const saved = localStorage.getItem(LOCAL_PERSISTENCE_KEY);
     if (saved) {
       const parsed = JSON.parse(saved);
-      if (parsed && typeof parsed === 'object') return parsed;
+      if (parsed && typeof parsed === 'object') {
+        const validation = validatePersistenceSchema(parsed);
+        if (validation.mismatches.length > 0) {
+          console.warn('[Persistence Schema Validation] Mismatches detected in localStorage persistence:', validation.mismatches);
+        }
+        return validation.validatedConfigs;
+      }
     }
   } catch {}
   return { configs: DEFAULT_CONFIGS };
@@ -951,19 +1030,7 @@ export async function fetchAllAgentConfigs(): Promise<Record<AgentId, AgentFullC
     'picoclaw': mergeWithDefaultConfig('picoclaw'),
   };
 
-  // 2. Overlay with local persistence if present
-  try {
-    const local = getLocalPersistence();
-    if (local && local.configs) {
-      for (const [id, cfg] of Object.entries(local.configs as Record<string, any>)) {
-        if (cfg && typeof cfg === 'object') {
-          merged[id as AgentId] = mergeWithDefaultConfig(id as AgentId, cfg);
-        }
-      }
-    }
-  } catch {}
-
-  // 3. Fetch each agent's config individually in parallel using valid agent IDs
+  // 2. Fetch each agent's config individually in parallel using valid agent IDs
   // (Prevents passing 'all' to FastAPI's /api/agents/{agent_id}/config which expects a Literal['hermes-agent', 'zeroclaw', 'openclaw', 'picoclaw'])
   const AGENT_IDS: AgentId[] = ['hermes-agent', 'zeroclaw', 'openclaw', 'picoclaw'];
   
@@ -977,19 +1044,6 @@ export async function fetchAllAgentConfigs(): Promise<Record<AgentId, AgentFullC
           const schema = data?.configSchema || data?.config || (data?.model ? data : null);
           if (schema) {
             const remoteMerged = mergeWithDefaultConfig(id, schema);
-            // Retain locally persisted fallback apiKey and baseUrl if remote schema returns empty strings
-            const localFallback = merged[id]?.fallback;
-            if (localFallback) {
-              if (!remoteMerged.fallback.apiKey && localFallback.apiKey) {
-                remoteMerged.fallback.apiKey = localFallback.apiKey;
-              }
-              if (!remoteMerged.fallback.baseUrl && localFallback.baseUrl) {
-                remoteMerged.fallback.baseUrl = localFallback.baseUrl;
-              }
-              if (remoteMerged.fallback.enabled === undefined && localFallback.enabled !== undefined) {
-                remoteMerged.fallback.enabled = localFallback.enabled;
-              }
-            }
             merged[id] = remoteMerged;
           }
         } else {
@@ -1015,6 +1069,30 @@ export async function fetchAllAgentConfigs(): Promise<Record<AgentId, AgentFullC
       }
     })
   );
+
+  // 3. Overlay with local persistence LAST so user-saved customizations (like custom models) take precedence over container defaults
+  try {
+    const local = getLocalPersistence();
+    if (local && local.configs) {
+      for (const [id, cfg] of Object.entries(local.configs as Record<string, any>)) {
+        if (cfg && typeof cfg === 'object') {
+          const baseExisting = merged[id as AgentId] || mergeWithDefaultConfig(id as AgentId);
+          merged[id as AgentId] = mergeWithDefaultConfig(id as AgentId, {
+            ...baseExisting,
+            ...cfg,
+            model: {
+              ...(baseExisting.model || {}),
+              ...(cfg.model || {})
+            },
+            fallback: {
+              ...(baseExisting.fallback || {}),
+              ...(cfg.fallback || {})
+            }
+          });
+        }
+      }
+    }
+  } catch {}
 
   return merged;
 }

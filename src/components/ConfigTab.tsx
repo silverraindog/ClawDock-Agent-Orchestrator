@@ -50,9 +50,10 @@ import {
   LLMProvider, 
   ReasoningEffort, 
   SandboxMode, 
-  MemoryBackend 
+  MemoryBackend,
+  AgentInfo
 } from '../types';
-import { MODEL_OPTIONS, DEFAULT_CONFIGS, DEFAULT_NATIVE_FILES } from '../data/defaults';
+import { MODEL_OPTIONS, DEFAULT_CONFIGS, DEFAULT_NATIVE_FILES, INITIAL_AGENTS } from '../data/defaults';
 import { 
   fetchAgentLiveConfig, 
   saveAgentConfigToBackend, 
@@ -164,6 +165,9 @@ interface ConfigTabProps {
   injectionStatus?: InjectionStatusInfo | null;
   onDismissInjectionStatus?: () => void;
   externalVerboseLog?: VerboseLogData | null;
+  allConfigs?: Record<string, AgentFullConfig>;
+  allAgents?: AgentInfo[];
+  onUpdateAgentConfig?: (id: AgentId, newCfg: AgentFullConfig) => void;
 }
 
 type ConfigSection = 'model' | 'moa' | 'channels' | 'system' | 'security' | 'storage' | 'fallback' | 'raw';
@@ -248,7 +252,10 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
   onInjectConfig,
   injectionStatus,
   onDismissInjectionStatus,
-  externalVerboseLog
+  externalVerboseLog,
+  allConfigs,
+  allAgents,
+  onUpdateAgentConfig
 }) => {
   const [activeSection, setActiveSection] = useState<ConfigSection>('model');
   const [copiedRaw, setCopiedRaw] = useState(false);
@@ -259,6 +266,14 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
   const [activeLogInspection, setActiveLogInspection] = useState<VerboseLogData | null>(null);
   const [isInspectorOpen, setIsInspectorOpen] = useState(false);
   const [showFallbackApiKey, setShowFallbackApiKey] = useState(false);
+
+  // Split-screen multi-agent comparison & edit state
+  const [isSplitScreenCompareOpen, setIsSplitScreenCompareOpen] = useState(false);
+  const initialSecId = agentId === 'zeroclaw' ? 'hermes-agent' : 'zeroclaw';
+  const [secondaryAgentId, setSecondaryAgentId] = useState<AgentId>(initialSecId);
+  const [secondaryConfig, setSecondaryConfig] = useState<AgentFullConfig>(() => {
+    return (allConfigs && allConfigs[initialSecId]) || DEFAULT_CONFIGS[initialSecId] || DEFAULT_CONFIGS['hermes-agent'];
+  });
   
   // Default native config info initialized from DEFAULT_NATIVE_FILES
   const [nativeConfigInfo, setNativeConfigInfo] = useState<{ fileName: string; format: string; content: string }>(() => {
@@ -936,6 +951,19 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
             {isFetchingLive ? 'Fetching...' : 'Fetch Live Container Config'}
           </button>
 
+          <button
+            type="button"
+            onClick={() => setIsSplitScreenCompareOpen(prev => !prev)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${
+              isSplitScreenCompareOpen
+                ? 'bg-indigo-600 text-white border-indigo-500 shadow-md shadow-indigo-950/50'
+                : 'text-indigo-300 hover:text-white bg-indigo-950/60 hover:bg-indigo-900/60 border border-indigo-500/30'
+            }`}
+          >
+            <Columns className="w-3.5 h-3.5 text-indigo-400" />
+            {isSplitScreenCompareOpen ? 'Close Split-Screen Compare' : 'Split-Screen Compare'}
+          </button>
+
           {activeLogInspection && (
             <button
               id="toggle-verbose-inspector-btn"
@@ -1016,6 +1044,228 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Split-Screen Multi-Agent Compare & Edit View */}
+      {isSplitScreenCompareOpen && (
+        <div className="space-y-6 p-6 rounded-2xl border border-indigo-500/40 bg-slate-900/95 shadow-2xl animate-in fade-in duration-300">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pb-4 border-b border-slate-800">
+            <div>
+              <h3 className="text-base font-bold text-white flex items-center gap-2">
+                <Columns className="w-5 h-5 text-indigo-400" />
+                Split-Screen Multi-Agent Compare &amp; Edit
+              </h3>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Side-by-side configuration specification editor for comparing and editing two agents simultaneously.
+              </p>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-slate-400 font-medium">Compare with:</span>
+              <select
+                value={secondaryAgentId}
+                onChange={(e) => {
+                  const newSecId = e.target.value as AgentId;
+                  setSecondaryAgentId(newSecId);
+                  if (allConfigs && allConfigs[newSecId]) {
+                    setSecondaryConfig(allConfigs[newSecId]);
+                  } else {
+                    setSecondaryConfig(DEFAULT_CONFIGS[newSecId] || DEFAULT_CONFIGS['hermes-agent']);
+                  }
+                }}
+                className="bg-slate-950 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white font-medium focus:outline-none focus:border-indigo-500"
+              >
+                {(allAgents || INITIAL_AGENTS).map(a => (
+                  <option key={a.id} value={a.id} disabled={a.id === agentId}>
+                    {a.name} ({a.id})
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={() => setIsSplitScreenCompareOpen(false)}
+                className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium transition-colors"
+              >
+                Close Split-Screen
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Column 1: Primary Agent */}
+            <div className="space-y-4 p-5 rounded-xl border border-slate-800 bg-slate-950/80 shadow-lg">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                <div className="flex items-center gap-2">
+                  <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
+                  <span className="text-sm font-bold text-white capitalize">{agentId} (Primary)</span>
+                </div>
+                <span className="text-[11px] font-mono text-indigo-300 bg-indigo-950/60 px-2.5 py-0.5 rounded-full border border-indigo-500/30">
+                  Model: {config.model?.model || 'default'}
+                </span>
+              </div>
+
+              <div className="space-y-4 text-xs">
+                <div>
+                  <label className="block text-slate-400 font-medium mb-1">Provider</label>
+                  <select
+                    value={config.model?.provider || 'ollama'}
+                    onChange={(e) => {
+                      onChangeConfig({
+                        ...config,
+                        model: { ...config.model, provider: e.target.value as any }
+                      });
+                    }}
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white font-medium"
+                  >
+                    <option value="ollama">Ollama (Local Edge)</option>
+                    <option value="anthropic">Anthropic Claude</option>
+                    <option value="openai">OpenAI GPT</option>
+                    <option value="custom">Custom Endpoint</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-slate-400 font-medium mb-1">Model Identifier</label>
+                  <input
+                    type="text"
+                    value={config.model?.model || ''}
+                    onChange={(e) => {
+                      onChangeConfig({
+                        ...config,
+                        model: { ...config.model, model: e.target.value }
+                      });
+                    }}
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white font-mono"
+                    placeholder="e.g. gemma4-soul:latest"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-slate-400 font-medium mb-1">Temperature ({config.model?.temperature ?? 0.3})</label>
+                  <input
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.05"
+                    value={config.model?.temperature ?? 0.3}
+                    onChange={(e) => {
+                      onChangeConfig({
+                        ...config,
+                        model: { ...config.model, temperature: parseFloat(e.target.value) }
+                      });
+                    }}
+                    className="w-full accent-indigo-500 cursor-pointer"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-slate-400 font-medium mb-1">System Prompt Preset</label>
+                  <textarea
+                    rows={3}
+                    value={config.system?.systemPrompt || ''}
+                    onChange={(e) => {
+                      onChangeConfig({
+                        ...config,
+                        system: { ...config.system, systemPrompt: e.target.value }
+                      });
+                    }}
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-slate-200 font-mono text-[11px]"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Column 2: Secondary Agent */}
+            <div className="space-y-4 p-5 rounded-xl border border-indigo-500/30 bg-slate-950/80 shadow-lg">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                <div className="flex items-center gap-2">
+                  <div className="w-2.5 h-2.5 rounded-full bg-indigo-400 animate-pulse" />
+                  <span className="text-sm font-bold text-white capitalize">{secondaryAgentId} (Comparison)</span>
+                </div>
+                <span className="text-[11px] font-mono text-indigo-300 bg-indigo-950/60 px-2.5 py-0.5 rounded-full border border-indigo-500/30">
+                  Model: {secondaryConfig.model?.model || 'default'}
+                </span>
+              </div>
+
+              <div className="space-y-4 text-xs">
+                <div>
+                  <label className="block text-slate-400 font-medium mb-1">Provider</label>
+                  <select
+                    value={secondaryConfig.model?.provider || 'ollama'}
+                    onChange={(e) => {
+                      const updated = {
+                        ...secondaryConfig,
+                        model: { ...secondaryConfig.model, provider: e.target.value as any }
+                      };
+                      setSecondaryConfig(updated);
+                      if (onUpdateAgentConfig) onUpdateAgentConfig(secondaryAgentId, updated);
+                    }}
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white font-medium"
+                  >
+                    <option value="ollama">Ollama (Local Edge)</option>
+                    <option value="anthropic">Anthropic Claude</option>
+                    <option value="openai">OpenAI GPT</option>
+                    <option value="custom">Custom Endpoint</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-slate-400 font-medium mb-1">Model Identifier</label>
+                  <input
+                    type="text"
+                    value={secondaryConfig.model?.model || ''}
+                    onChange={(e) => {
+                      const updated = {
+                        ...secondaryConfig,
+                        model: { ...secondaryConfig.model, model: e.target.value }
+                      };
+                      setSecondaryConfig(updated);
+                      if (onUpdateAgentConfig) onUpdateAgentConfig(secondaryAgentId, updated);
+                    }}
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white font-mono"
+                    placeholder="e.g. gemma4-soul:latest"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-slate-400 font-medium mb-1">Temperature ({secondaryConfig.model?.temperature ?? 0.3})</label>
+                  <input
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.05"
+                    value={secondaryConfig.model?.temperature ?? 0.3}
+                    onChange={(e) => {
+                      const updated = {
+                        ...secondaryConfig,
+                        model: { ...secondaryConfig.model, temperature: parseFloat(e.target.value) }
+                      };
+                      setSecondaryConfig(updated);
+                      if (onUpdateAgentConfig) onUpdateAgentConfig(secondaryAgentId, updated);
+                    }}
+                    className="w-full accent-indigo-500 cursor-pointer"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-slate-400 font-medium mb-1">System Prompt Preset</label>
+                  <textarea
+                    rows={3}
+                    value={secondaryConfig.system?.systemPrompt || ''}
+                    onChange={(e) => {
+                      const updated = {
+                        ...secondaryConfig,
+                        system: { ...secondaryConfig.system, systemPrompt: e.target.value }
+                      };
+                      setSecondaryConfig(updated);
+                      if (onUpdateAgentConfig) onUpdateAgentConfig(secondaryAgentId, updated);
+                    }}
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-slate-200 font-mono text-[11px]"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showSaveValidationWarning && (
         <div className="p-4 rounded-xl border border-rose-500/30 bg-rose-500/10 text-rose-200 text-xs flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-md shadow-rose-950/20">

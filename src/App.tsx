@@ -52,6 +52,7 @@ import {
   fetchDockerSystemStatus,
   executeAgentCommand
 } from './utils/apiBridge';
+import { validateModelAgainstCatalog } from './utils/modelValidation';
 
 import { Navbar } from './components/Navbar';
 import { DashboardTab } from './components/DashboardTab';
@@ -907,6 +908,26 @@ export default function App() {
         );
         setIsSavingConfig(false);
         return;
+      }
+
+      // Client-side catalog validation against /api/proxy/models
+      try {
+        const modelValidation = await validateModelAgainstCatalog(
+          currentConfig.model.model,
+          currentConfig.model.baseUrl,
+          currentConfig.model.provider
+        );
+        if (!modelValidation.isValid) {
+          addToast(
+            'error',
+            'Model Catalog Mismatch',
+            modelValidation.message || 'Selected model not found in catalog.'
+          );
+          setIsSavingConfig(false);
+          return;
+        }
+      } catch (valErr) {
+        console.warn('[handleSaveConfig] Model catalog validation warning:', valErr);
       }
 
       // Pre-save check when saving directly to agent: verify container is running
@@ -1785,6 +1806,15 @@ export default function App() {
               onDismissInjectionStatus={() => setInjectionAlert(selectedAgentId, null)}
               externalVerboseLog={injectionVerboseLogsMap[selectedAgentId] || null}
               onExecuteCommand={handleExecuteAgentCommand}
+              allConfigs={configs}
+              allAgents={agents}
+              onUpdateAgentConfig={(id, newCfg) => {
+                setConfigs(prev => {
+                  const next = { ...prev, [id]: newCfg };
+                  saveLocalPersistence('configs', next);
+                  return next;
+                });
+              }}
             />
           )}
 

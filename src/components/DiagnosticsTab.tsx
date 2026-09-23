@@ -19,10 +19,12 @@ import {
   Cpu,
   Radio,
   Layers,
-  ChevronDown
+  ChevronDown,
+  Database
 } from 'lucide-react';
 import { RequestLogsTable } from './RequestLogsTable';
 import { AgentFullConfig, AgentInfo } from '../types';
+import { validatePersistenceSchema } from '../utils/apiBridge';
 
 interface ProblematicRouteTest {
   id: string;
@@ -230,6 +232,34 @@ export const DiagnosticsTab: React.FC<DiagnosticsTabProps> = ({
     sizeBytes: number;
     timestamp: string;
   } | null>(null);
+
+  // Persistence Inspector state
+  const [backendPersistenceData, setBackendPersistenceData] = useState<string>('Click "Refresh persistence.json" to load raw server storage state.');
+  const [isFetchingPersistence, setIsFetchingPersistence] = useState<boolean>(false);
+  const [persistenceValidation, setPersistenceValidation] = useState<any>(null);
+
+  const fetchBackendPersistence = async () => {
+    setIsFetchingPersistence(true);
+    try {
+      const res = await fetch('/api/persistence');
+      if (res.ok) {
+        const json = await res.json();
+        setBackendPersistenceData(JSON.stringify(json, null, 2));
+        const validation = validatePersistenceSchema(json);
+        setPersistenceValidation(validation);
+      } else {
+        setBackendPersistenceData(`Error fetching /api/persistence: HTTP ${res.status} ${res.statusText}`);
+      }
+    } catch (err: any) {
+      setBackendPersistenceData(`Error fetching /api/persistence: ${err.message || err}`);
+    } finally {
+      setIsFetchingPersistence(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchBackendPersistence();
+  }, []);
 
   const currentTarget = INSPECTOR_TARGETS.find((t) => t.id === selectedTargetId) || INSPECTOR_TARGETS[0];
 
@@ -1066,6 +1096,75 @@ export const DiagnosticsTab: React.FC<DiagnosticsTabProps> = ({
           </div>
         </div>
       )}
+
+      {/* Read-only Persistence Inspector for /data/clawdock/persistence.json */}
+      <div className="p-6 rounded-2xl border border-slate-800 bg-slate-900/80 shadow-xl space-y-5">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div>
+            <h3 className="text-base font-bold text-white flex items-center gap-2">
+              <Database className="w-5 h-5 text-indigo-400" />
+              Persistence Inspector (/data/clawdock/persistence.json)
+            </h3>
+            <p className="text-xs text-slate-400 mt-1">
+              Read-only server storage inspection verifying whether agent model settings and configurations are correctly persisted after saves.
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
+            {persistenceValidation && (
+              <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border ${
+                persistenceValidation.isValid 
+                  ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30' 
+                  : 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+              }`}>
+                {persistenceValidation.isValid ? <ShieldCheck className="w-3.5 h-3.5" /> : <AlertTriangle className="w-3.5 h-3.5" />}
+                {persistenceValidation.isValid ? 'Schema Valid' : `${persistenceValidation.mismatches.length} Mismatches Found`}
+              </span>
+            )}
+            <button
+              onClick={fetchBackendPersistence}
+              disabled={isFetchingPersistence}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-semibold text-indigo-300 bg-indigo-950/60 hover:bg-indigo-900/60 border border-indigo-500/30 transition-colors disabled:opacity-50"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isFetchingPersistence ? 'animate-spin' : ''}`} />
+              {isFetchingPersistence ? 'Fetching Server Persistence...' : 'Refresh persistence.json'}
+            </button>
+          </div>
+        </div>
+
+        {persistenceValidation && persistenceValidation.mismatches.length > 0 && (
+          <div className="p-3.5 rounded-xl bg-amber-950/30 border border-amber-500/30 space-y-2">
+            <h4 className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
+              <AlertTriangle className="w-4 h-4 text-amber-400" />
+              Schema Integrity Mismatches Highlighted:
+            </h4>
+            <ul className="list-disc list-inside space-y-1 text-[11px] text-amber-200/90 font-mono">
+              {persistenceValidation.mismatches.map((m: any, idx: number) => (
+                <li key={idx}>
+                  <strong className="text-white">{m.agentId}</strong> ({m.field}): {m.message}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        <div className="relative rounded-xl bg-slate-950 p-4 border border-slate-800/80 overflow-x-auto max-h-96">
+          <div className="absolute top-3 right-3">
+            <button
+              onClick={() => {
+                navigator.clipboard.writeText(backendPersistenceData);
+                alert('Persistence JSON copied to clipboard!');
+              }}
+              className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] text-slate-300 bg-slate-800 hover:bg-slate-700 border border-slate-700 transition-colors"
+            >
+              <Copy className="w-3.5 h-3.5" />
+              <span>Copy Raw JSON</span>
+            </button>
+          </div>
+          <pre className="text-xs font-mono text-emerald-400/90 leading-relaxed pr-24">
+            {backendPersistenceData}
+          </pre>
+        </div>
+      </div>
 
       {/* NEW SUB-COMPONENT: Live Server Request Logs Table (/api/diagnostics/request-logs) */}
       <RequestLogsTable />
