@@ -389,7 +389,8 @@ export async function fetchProxyModels(
       provider: provider || 'ollama',
       t: String(Date.now())
     });
-    const res = await fetch(`/api/proxy/models?${params.toString()}`);
+    const prefix = typeof window !== 'undefined' ? '' : 'http://localhost:3000';
+    const res = await fetch(`${prefix}/api/proxy/models?${params.toString()}`);
     if (res.ok) {
       const data = await res.json();
       return {
