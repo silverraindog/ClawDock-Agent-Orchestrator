@@ -322,6 +322,19 @@ vector_db_url = "http://everos:8080"
     }
   };
 
+  function ensureDataDir() {
+    try {
+      if (!fs.existsSync(dataDir)) {
+        fs.mkdirSync(dataDir, { recursive: true });
+      }
+    } catch {}
+    try {
+      if (!fs.existsSync('/data/clawdock')) {
+        fs.mkdirSync('/data/clawdock', { recursive: true });
+      }
+    } catch {}
+  }
+
   function convertConfigToNativeContent(agentId: string, cfg: any, format: string): string {
     const modelProv = cfg?.model?.provider || 'anthropic';
     const modelName = cfg?.model?.model || cfg?.model?.default || 'claude-3-7-sonnet';
@@ -744,6 +757,7 @@ fallback:
   }
 
   function getAgentConfig(agentId: string) {
+    ensureDataDir();
     const fallback = defaultNativeFiles[agentId] || defaultNativeFiles['hermes-agent'];
     const filePath = path.join(dataDir, fallback.fileName);
     const absPath = `/data/clawdock/${fallback.fileName}`;
@@ -1880,6 +1894,7 @@ fallback:
           }
 
           if (method === 'POST' || method === 'PUT') {
+            ensureDataDir();
             const body = await readRequestBody(req);
             console.log(`[Vite API Server] [${timestamp}] 200 OK: ${method} /api/persistence - Processing persistence write`);
             let existing: any = {};
@@ -2612,7 +2627,7 @@ fallback:
           // Dynamic router fallback: Match agentConfigMatch and agentActionMatch with exact pathname logging
 
           // Individual Agent Config: /api/agents/:id/config
-          const agentConfigMatch = pathname.match(/^\/api\/agents\/([^/]+)\/config$/);
+          const agentConfigMatch = pathname.match(/^\/api\/agents\/([^/]+)\/config(\/)?$/i);
           if (agentConfigMatch) {
             const agentId = agentConfigMatch[1];
             console.log(`[Vite API Server] [${timestamp}] Regex matched agentConfigMatch on exact pathname: "${pathname}" -> agentId="${agentId}"`);
@@ -2635,6 +2650,7 @@ fallback:
             }
 
             if (method === 'PUT' || method === 'POST') {
+              ensureDataDir();
               const body = await readRequestBody(req);
               console.log(`[Vite API Server] [${timestamp}] 200 OK: ${method} /api/agents/${agentId}/config - Writing config`);
               const restart = body.restart !== false && body.restartContainer !== false;
