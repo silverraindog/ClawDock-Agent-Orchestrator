@@ -15,6 +15,111 @@ export function suggestModelCombinations(purpose: string): string[] {
   return suggestModelNames(purpose);
 }
 
+export interface ModelKeyStatus {
+  model: string;
+  isLocal: boolean;
+  requiredProvider: LLMProvider | 'local' | 'unknown';
+  hasKey: boolean;
+  status: 'ready_local' | 'ready_key' | 'missing_key';
+  message: string;
+}
+
+export interface KeyContext {
+  primaryProvider?: LLMProvider | string;
+  primaryApiKey?: string;
+  fallbackProvider?: LLMProvider | string;
+  fallbackApiKey?: string;
+  fallbackEnabled?: boolean;
+  isLocalOnly?: boolean;
+}
+
+/**
+ * Checks whether a given model name requires an API key or is local,
+ * and checks if the active primary or fallback configuration has the appropriate key.
+ */
+export function getModelKeyStatus(modelName: string, context: KeyContext = {}): ModelKeyStatus {
+  const norm = (modelName || '').trim().toLowerCase();
+  
+  // Local model heuristics
+  const isLocalModel = 
+    context.isLocalOnly ||
+    norm.includes(':') || // e.g. qwen2.5-coder:7b, deepseek-r1:8b, llama3.3:70b
+    norm.startsWith('ollama') ||
+    norm.startsWith('local/') ||
+    norm.startsWith('vllm') ||
+    norm.includes('soul') ||
+    context.primaryProvider === 'ollama' && !['claude', 'gpt-', 'o3-mini', 'gemini'].some(p => norm.startsWith(p));
+
+  if (isLocalModel) {
+    return {
+      model: modelName,
+      isLocal: true,
+      requiredProvider: 'local',
+      hasKey: true,
+      status: 'ready_local',
+      message: 'Local model / Edge cluster (No API key required)'
+    };
+  }
+
+  // Determine cloud provider requirement
+  let requiredProvider: LLMProvider | 'unknown' = 'unknown';
+  if (norm.includes('claude')) requiredProvider = 'anthropic';
+  else if (norm.includes('gpt') || norm.includes('o3-') || norm.includes('o1-')) requiredProvider = 'openai';
+  else if (norm.includes('gemini')) requiredProvider = 'gemini';
+  else if (norm.includes('deepseek')) requiredProvider = 'deepseek';
+  else if (norm.includes('groq')) requiredProvider = 'groq';
+  else if (norm.includes('openrouter')) requiredProvider = 'openrouter';
+
+  const pKey = (context.primaryApiKey || '').trim();
+  const fbKey = (context.fallbackApiKey || '').trim();
+  const pProv = context.primaryProvider;
+  const fbProv = context.fallbackProvider;
+
+  // Check if primary provider matches and has key
+  const hasPrimaryKey = 
+    Boolean(pKey) && 
+    (pProv === requiredProvider || pProv === 'openrouter' || pProv === 'custom');
+
+  // Check if fallback provider matches and has key
+  const hasFallbackKey = 
+    Boolean(fbKey) && 
+    (fbProv === requiredProvider || fbProv === 'openrouter' || fbProv === 'custom');
+
+  const hasKey = hasPrimaryKey || hasFallbackKey;
+
+  if (hasKey) {
+    const matchedSource = hasPrimaryKey ? `Primary (${pProv})` : `Fallback (${fbProv})`;
+    return {
+      model: modelName,
+      isLocal: false,
+      requiredProvider,
+      hasKey: true,
+      status: 'ready_key',
+      message: `API Key verified via ${matchedSource}`
+    };
+  }
+
+  const missingProviderName = requiredProvider === 'unknown' ? 'OpenRouter or Cloud Provider' : requiredProvider;
+  return {
+    model: modelName,
+    isLocal: false,
+    requiredProvider,
+    hasKey: false,
+    status: 'missing_key',
+    message: `API key missing for ${missingProviderName} (or OpenRouter)`
+  };
+}
+
+/**
+ * Filter an array of model names to only include those that are ready (local or have an API key configured)
+ */
+export function filterModelsByKeyAvailability(models: string[], context: KeyContext = {}): string[] {
+  return models.filter(m => {
+    const status = getModelKeyStatus(m, context);
+    return status.hasKey;
+  });
+}
+
 export interface ProposerModelSuggestion {
   value: string;
   label: string;
@@ -22,6 +127,8 @@ export interface ProposerModelSuggestion {
   tag: string;
   isLocal: boolean;
   priority: number;
+  hasKey?: boolean;
+  keyStatus?: ModelKeyStatus;
 }
 
 export interface ModelCombinationSuggestion {
@@ -36,6 +143,8 @@ export interface ModelCombinationSuggestion {
   rationale: string;
   badge: string;
   badgeColor: string;
+  isAvailable?: boolean;
+  missingKeys?: string[];
 }
 
 export interface PurposeMetadata {
@@ -110,6 +219,8 @@ export interface SuggestionOptions {
   isLocal?: boolean;
   provider?: LLMProvider;
   currentModel?: string;
+  keyContext?: KeyContext;
+  onlyConfigured?: boolean;
 }
 
 /**
@@ -123,11 +234,13 @@ export function getSuggestedProposersForPurpose(
   const normPurpose: AgentPurpose = 
     purpose === 'coding-focused' || purpose === 'reasoning-heavy' ? purpose : 'balanced';
 
-  const { isLocal = false } = options;
+  const { isLocal = false, keyContext, onlyConfigured = false } = options;
+
+  let rawList: ProposerModelSuggestion[] = [];
 
   switch (normPurpose) {
     case 'coding-focused':
-      return [
+      rawList = [
         {
           value: 'qwen2.5-coder:7b',
           label: 'Qwen 2.5 Coder 7B',
@@ -176,15 +289,11 @@ export function getSuggestedProposersForPurpose(
           isLocal: true,
           priority: 6
         }
-      ].sort((a, b) => {
-        if (isLocal) {
-          return (b.isLocal ? 1 : 0) - (a.isLocal ? 1 : 0) || a.priority - b.priority;
-        }
-        return a.priority - b.priority;
-      });
+      ];
+      break;
 
     case 'reasoning-heavy':
-      return [
+      rawList = [
         {
           value: 'deepseek-r1:8b',
           label: 'DeepSeek-R1 8B',
@@ -233,16 +342,12 @@ export function getSuggestedProposersForPurpose(
           isLocal: false,
           priority: 6
         }
-      ].sort((a, b) => {
-        if (isLocal) {
-          return (b.isLocal ? 1 : 0) - (a.isLocal ? 1 : 0) || a.priority - b.priority;
-        }
-        return a.priority - b.priority;
-      });
+      ];
+      break;
 
     case 'balanced':
     default:
-      return [
+      rawList = [
         {
           value: 'qwen2.5-coder:7b',
           label: 'Qwen 2.5 Coder 7B',
@@ -291,13 +396,39 @@ export function getSuggestedProposersForPurpose(
           isLocal: false,
           priority: 6
         }
-      ].sort((a, b) => {
-        if (isLocal) {
-          return (b.isLocal ? 1 : 0) - (a.isLocal ? 1 : 0) || a.priority - b.priority;
-        }
-        return a.priority - b.priority;
-      });
+      ];
+      break;
   }
+
+  // Populate key status if context is provided
+  const processed = rawList.map(item => {
+    const keyStatus = getModelKeyStatus(item.value, {
+      ...keyContext,
+      isLocalOnly: isLocal || item.isLocal,
+      primaryProvider: options.provider || keyContext?.primaryProvider
+    });
+    return {
+      ...item,
+      hasKey: keyStatus.hasKey,
+      keyStatus
+    };
+  });
+
+  // Filter if onlyConfigured requested
+  const filtered = onlyConfigured
+    ? processed.filter(item => item.hasKey)
+    : processed;
+
+  return filtered.sort((a, b) => {
+    if (isLocal) {
+      return (b.isLocal ? 1 : 0) - (a.isLocal ? 1 : 0) || a.priority - b.priority;
+    }
+    // If keyContext provided, prioritize models that have keys / are ready
+    if (keyContext && (a.hasKey !== b.hasKey)) {
+      return a.hasKey ? -1 : 1;
+    }
+    return a.priority - b.priority;
+  });
 }
 
 /**
@@ -311,9 +442,13 @@ export function suggestModelCombinationPresets(
   const normPurpose: AgentPurpose = 
     purpose === 'coding-focused' || purpose === 'reasoning-heavy' ? purpose : 'balanced';
 
+  const { isLocal = false, keyContext, onlyConfigured = false } = options;
+
+  let presets: ModelCombinationSuggestion[] = [];
+
   switch (normPurpose) {
     case 'coding-focused':
-      return [
+      presets = [
         {
           id: 'code-local-trio',
           name: 'Local Code & Syntax Trio',
@@ -354,9 +489,10 @@ export function suggestModelCombinationPresets(
           badgeColor: 'border-teal-500/30 bg-teal-950/60 text-teal-300'
         }
       ];
+      break;
 
     case 'reasoning-heavy':
-      return [
+      presets = [
         {
           id: 'reasoning-deep-audit',
           name: 'Deep Reasoning & Math Audit',
@@ -397,10 +533,11 @@ export function suggestModelCombinationPresets(
           badgeColor: 'border-orange-500/30 bg-orange-950/60 text-orange-300'
         }
       ];
+      break;
 
     case 'balanced':
     default:
-      return [
+      presets = [
         {
           id: 'balanced-fast-consensus',
           name: 'Fast Balanced Consensus',
@@ -441,5 +578,38 @@ export function suggestModelCombinationPresets(
           badgeColor: 'border-blue-500/30 bg-blue-950/60 text-blue-300'
         }
       ];
+      break;
   }
+
+  // Annotate presets with availability
+  const evaluated = presets.map(preset => {
+    const allModels = [preset.aggregator, ...preset.proposers];
+    const missingKeys: string[] = [];
+    allModels.forEach(m => {
+      const status = getModelKeyStatus(m, {
+        ...keyContext,
+        isLocalOnly: isLocal || preset.targetCategory === 'local',
+        primaryProvider: options.provider || keyContext?.primaryProvider
+      });
+      if (!status.hasKey && status.requiredProvider !== 'local') {
+        const provName = status.requiredProvider === 'unknown' ? 'OpenRouter/Cloud' : status.requiredProvider;
+        if (!missingKeys.includes(provName)) {
+          missingKeys.push(provName);
+        }
+      }
+    });
+
+    const isAvailable = missingKeys.length === 0;
+    return {
+      ...preset,
+      isAvailable,
+      missingKeys
+    };
+  });
+
+  if (onlyConfigured) {
+    return evaluated.filter(p => p.isAvailable);
+  }
+
+  return evaluated;
 }

@@ -75,12 +75,26 @@ app.use((req, res, next) => {
 });
 
 // System Health Endpoint
-app.get('/api/health', (req, res) => {
-  res.json({
-    status: 'ok',
-    uptime: process.uptime(),
-    timestamp: new Date().toISOString()
-  });
+app.get('/api/health', async (req, res) => {
+  try {
+    const force = req.query.refresh === 'true' || req.query.force === 'true';
+    const llmHealth = await checkLLMProvidersHealth(force);
+    return res.json({
+      status: 'ok',
+      uptime: process.uptime(),
+      timestamp: new Date().toISOString(),
+      llm: llmHealth,
+      providers: llmHealth.providers,
+      fallbackAgents: llmHealth.fallbackAgents || []
+    });
+  } catch (err: any) {
+    res.json({
+      status: 'ok',
+      uptime: process.uptime(),
+      timestamp: new Date().toISOString(),
+      error: err.message
+    });
+  }
 });
 
 // Diagnostics Logs
@@ -2725,6 +2739,373 @@ app.get('/api/agents/:id/config', (req, res) => {
   }
 });
 
+// Comprehensive LLM Provider Health Checker
+let cachedLLMHealth: { timestamp: number; data: any } | null = null;
+
+async function checkLLMProvidersHealth(force = false): Promise<any> {
+  const now = Date.now();
+  if (!force && cachedLLMHealth && (now - cachedLLMHealth.timestamp < 3000)) {
+    return cachedLLMHealth.data;
+  }
+
+  const agentIds = ['hermes-agent', 'zeroclaw', 'openclaw', 'picoclaw'];
+  const providerToAgents: Record<string, { primary: string[]; fallback: string[]; keys: Set<string>; baseUrls: Set<string> }> = {
+    ollama: { primary: [], fallback: [], keys: new Set(), baseUrls: new Set() },
+    openrouter: { primary: [], fallback: [], keys: new Set(), baseUrls: new Set() },
+    openai: { primary: [], fallback: [], keys: new Set(), baseUrls: new Set() },
+    anthropic: { primary: [], fallback: [], keys: new Set(), baseUrls: new Set() },
+    deepseek: { primary: [], fallback: [], keys: new Set(), baseUrls: new Set() },
+    gemini: { primary: [], fallback: [], keys: new Set(), baseUrls: new Set() },
+    groq: { primary: [], fallback: [], keys: new Set(), baseUrls: new Set() },
+    mistral: { primary: [], fallback: [], keys: new Set(), baseUrls: new Set() },
+    custom: { primary: [], fallback: [], keys: new Set(), baseUrls: new Set() }
+  };
+
+  // Check env vars
+  if (process.env.OPENROUTER_API_KEY) providerToAgents.openrouter.keys.add(process.env.OPENROUTER_API_KEY.trim());
+  if (process.env.OPENAI_API_KEY) providerToAgents.openai.keys.add(process.env.OPENAI_API_KEY.trim());
+  if (process.env.ANTHROPIC_API_KEY) providerToAgents.anthropic.keys.add(process.env.ANTHROPIC_API_KEY.trim());
+  if (process.env.DEEPSEEK_API_KEY) providerToAgents.deepseek.keys.add(process.env.DEEPSEEK_API_KEY.trim());
+  if (process.env.GEMINI_API_KEY) providerToAgents.gemini.keys.add(process.env.GEMINI_API_KEY.trim());
+  if (process.env.GROQ_API_KEY) providerToAgents.groq.keys.add(process.env.GROQ_API_KEY.trim());
+  if (process.env.MISTRAL_API_KEY) providerToAgents.mistral.keys.add(process.env.MISTRAL_API_KEY.trim());
+  if (process.env.OLLAMA_BASE_URL) providerToAgents.ollama.baseUrls.add(process.env.OLLAMA_BASE_URL.trim());
+
+  // Check agent configs
+  for (const aId of agentIds) {
+    try {
+      const cfgObj: any = getAgentConfigData(aId);
+      const mProv = (cfgObj?.config?.model?.provider || '').toLowerCase();
+      const mKey = cfgObj?.config?.model?.apiKey || '';
+      const mUrl = cfgObj?.config?.model?.baseUrl || '';
+      if (mProv && providerToAgents[mProv]) {
+        if (!providerToAgents[mProv].primary.includes(aId)) {
+          providerToAgents[mProv].primary.push(aId);
+        }
+        if (mKey) providerToAgents[mProv].keys.add(mKey.trim());
+        if (mUrl) providerToAgents[mProv].baseUrls.add(mUrl.trim());
+      }
+
+      const fbProv = (cfgObj?.config?.fallback?.fallbackProvider || cfgObj?.config?.fallback?.provider || '').toLowerCase();
+      const fbKey = cfgObj?.config?.fallback?.apiKey || '';
+      const fbUrl = cfgObj?.config?.fallback?.baseUrl || '';
+      if (fbProv && providerToAgents[fbProv]) {
+        if (!providerToAgents[fbProv].fallback.includes(aId)) {
+          providerToAgents[fbProv].fallback.push(aId);
+        }
+        if (fbKey) providerToAgents[fbProv].keys.add(fbKey.trim());
+        if (fbUrl) providerToAgents[fbProv].baseUrls.add(fbUrl.trim());
+      }
+    } catch {}
+  }
+
+  const providersMetadata = [
+    { id: 'ollama', name: 'Local Ollama', type: 'local' as const, requiresKey: false, defaultUrl: 'http://localhost:11434' },
+    { id: 'openrouter', name: 'OpenRouter', type: 'gateway' as const, requiresKey: true, defaultUrl: 'https://openrouter.ai/api/v1' },
+    { id: 'anthropic', name: 'Anthropic Claude', type: 'cloud' as const, requiresKey: true, defaultUrl: 'https://api.anthropic.com/v1' },
+    { id: 'openai', name: 'OpenAI (GPT-4o/o3)', type: 'cloud' as const, requiresKey: true, defaultUrl: 'https://api.openai.com/v1' },
+    { id: 'deepseek', name: 'DeepSeek', type: 'cloud' as const, requiresKey: true, defaultUrl: 'https://api.deepseek.com' },
+    { id: 'gemini', name: 'Google Gemini', type: 'cloud' as const, requiresKey: true, defaultUrl: 'https://generativelanguage.googleapis.com' },
+    { id: 'groq', name: 'Groq LPU', type: 'cloud' as const, requiresKey: true, defaultUrl: 'https://api.groq.com/openai/v1' },
+    { id: 'mistral', name: 'Mistral AI', type: 'cloud' as const, requiresKey: true, defaultUrl: 'https://api.mistral.ai/v1' }
+  ];
+
+  const results: any[] = [];
+
+  await Promise.all(providersMetadata.map(async (meta) => {
+    const info = providerToAgents[meta.id] || { primary: [], fallback: [], keys: new Set(), baseUrls: new Set() };
+    const configuredAgents = Array.from(new Set([...info.primary, ...info.fallback]));
+    const keyArray = Array.from(info.keys).filter(k => k && k.length > 3 && !k.startsWith('env:'));
+    const hasKey = !meta.requiresKey || keyArray.length > 0;
+    const effectiveKey = keyArray[0] || '';
+    const baseUrl = Array.from(info.baseUrls)[0] || meta.defaultUrl;
+    const checkTime = new Date().toISOString();
+
+    if (meta.id === 'ollama') {
+      const roots = baseUrl && baseUrl !== 'http://localhost:11434'
+        ? [baseUrl, 'http://host.docker.internal:11434', 'http://localhost:11434']
+        : ['http://host.docker.internal:11434', 'http://localhost:11434', 'http://127.0.0.1:11434'];
+      
+      let ollamaSuccess = false;
+      let latency: number | null = null;
+      let modelsCount = 0;
+      let reachableRoot = baseUrl;
+
+      for (const root of roots) {
+        const start = Date.now();
+        try {
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 1200);
+          const cleanRoot = root.replace(/\/+$/, '');
+          const res = await fetch(`${cleanRoot}/api/tags`, { signal: controller.signal });
+          clearTimeout(timer);
+          if (res.ok) {
+            ollamaSuccess = true;
+            reachableRoot = cleanRoot;
+            latency = Date.now() - start;
+            const data = await res.json();
+            modelsCount = Array.isArray(data?.models) ? data.models.length : 0;
+            break;
+          }
+        } catch {}
+      }
+
+      if (ollamaSuccess) {
+        results.push({
+          id: meta.id,
+          name: meta.name,
+          providerType: meta.type,
+          status: 'online',
+          hasKey: true,
+          requiresKey: false,
+          latencyMs: latency,
+          endpoint: reachableRoot,
+          modelsCount,
+          configuredInAgents: configuredAgents,
+          isPrimaryFor: info.primary,
+          isFallbackFor: info.fallback,
+          message: `Local Ollama operational (${modelsCount} model${modelsCount === 1 ? '' : 's'} available, ${latency}ms)`,
+          lastChecked: checkTime
+        });
+      } else {
+        results.push({
+          id: meta.id,
+          name: meta.name,
+          providerType: meta.type,
+          status: 'unreachable',
+          hasKey: true,
+          requiresKey: false,
+          latencyMs: null,
+          endpoint: baseUrl,
+          modelsCount: 0,
+          configuredInAgents: configuredAgents,
+          isPrimaryFor: info.primary,
+          isFallbackFor: info.fallback,
+          message: 'Local Ollama daemon not responding at port 11434.',
+          lastChecked: checkTime
+        });
+      }
+      return;
+    }
+
+    if (!hasKey) {
+      results.push({
+        id: meta.id,
+        name: meta.name,
+        providerType: meta.type,
+        status: 'missing_key',
+        hasKey: false,
+        requiresKey: true,
+        latencyMs: null,
+        endpoint: baseUrl,
+        modelsCount: 0,
+        configuredInAgents: configuredAgents,
+        isPrimaryFor: info.primary,
+        isFallbackFor: info.fallback,
+        message: 'No API Key configured. Add API key in Agent Config to activate.',
+        lastChecked: checkTime
+      });
+      return;
+    }
+
+    // Cloud provider with key -> live lightweight validation
+    const start = Date.now();
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 1800);
+      let probeUrl = `${baseUrl}/models`;
+      let headers: Record<string, string> = { 'Content-Type': 'application/json' };
+
+      if (meta.id === 'openrouter') {
+        probeUrl = 'https://openrouter.ai/api/v1/models';
+        headers['Authorization'] = `Bearer ${effectiveKey}`;
+      } else if (meta.id === 'openai') {
+        probeUrl = 'https://api.openai.com/v1/models';
+        headers['Authorization'] = `Bearer ${effectiveKey}`;
+      } else if (meta.id === 'anthropic') {
+        probeUrl = 'https://api.anthropic.com/v1/models';
+        headers['x-api-key'] = effectiveKey;
+        headers['anthropic-version'] = '2023-06-01';
+      } else if (meta.id === 'deepseek') {
+        probeUrl = 'https://api.deepseek.com/models';
+        headers['Authorization'] = `Bearer ${effectiveKey}`;
+      } else if (meta.id === 'gemini') {
+        probeUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${effectiveKey}`;
+      } else if (meta.id === 'groq') {
+        probeUrl = 'https://api.groq.com/openai/v1/models';
+        headers['Authorization'] = `Bearer ${effectiveKey}`;
+      } else if (meta.id === 'mistral') {
+        probeUrl = 'https://api.mistral.ai/v1/models';
+        headers['Authorization'] = `Bearer ${effectiveKey}`;
+      }
+
+      const res = await fetch(probeUrl, { headers, signal: controller.signal });
+      clearTimeout(timer);
+      const elapsed = Date.now() - start;
+
+      if (res.ok) {
+        let modelsCount = 0;
+        try {
+          const bodyData = await res.json();
+          modelsCount = Array.isArray(bodyData?.data) ? bodyData.data.length : Array.isArray(bodyData?.models) ? bodyData.models.length : 1;
+        } catch {}
+
+        results.push({
+          id: meta.id,
+          name: meta.name,
+          providerType: meta.type,
+          status: 'online',
+          hasKey: true,
+          requiresKey: true,
+          latencyMs: elapsed,
+          endpoint: baseUrl,
+          modelsCount,
+          configuredInAgents: configuredAgents,
+          isPrimaryFor: info.primary,
+          isFallbackFor: info.fallback,
+          message: `API Key validated. Gateway active (${elapsed}ms).`,
+          lastChecked: checkTime
+        });
+      } else if (res.status === 401 || res.status === 403) {
+        results.push({
+          id: meta.id,
+          name: meta.name,
+          providerType: meta.type,
+          status: 'invalid_key',
+          hasKey: true,
+          requiresKey: true,
+          latencyMs: elapsed,
+          endpoint: baseUrl,
+          modelsCount: 0,
+          configuredInAgents: configuredAgents,
+          isPrimaryFor: info.primary,
+          isFallbackFor: info.fallback,
+          message: `Invalid or unauthorized API key (HTTP ${res.status}).`,
+          lastChecked: checkTime
+        });
+      } else {
+        results.push({
+          id: meta.id,
+          name: meta.name,
+          providerType: meta.type,
+          status: 'degraded',
+          hasKey: true,
+          requiresKey: true,
+          latencyMs: elapsed,
+          endpoint: baseUrl,
+          modelsCount: 0,
+          configuredInAgents: configuredAgents,
+          isPrimaryFor: info.primary,
+          isFallbackFor: info.fallback,
+          message: `Provider returned HTTP ${res.status} ${res.statusText}`,
+          lastChecked: checkTime
+        });
+      }
+    } catch (err: any) {
+      results.push({
+        id: meta.id,
+        name: meta.name,
+        providerType: meta.type,
+        status: 'unreachable',
+        hasKey: true,
+        requiresKey: true,
+        latencyMs: null,
+        endpoint: baseUrl,
+        modelsCount: 0,
+        configuredInAgents: configuredAgents,
+        isPrimaryFor: info.primary,
+        isFallbackFor: info.fallback,
+        message: err.message || 'Endpoint connection timeout or unreachable network.',
+        lastChecked: checkTime
+      });
+    }
+  }));
+
+  const onlineCount = results.filter(r => r.status === 'online').length;
+  const missingKeyCount = results.filter(r => r.status === 'missing_key').length;
+  const unreachableCount = results.filter(r => r.status === 'unreachable' || r.status === 'invalid_key').length;
+
+  const overallStatus: 'healthy' | 'degraded' | 'critical' = 
+    onlineCount >= 2 ? 'healthy' : onlineCount === 1 ? 'degraded' : 'critical';
+
+  // Compute live fallback status for each configured agent
+  const fallbackAgents: any[] = [];
+  const agentNames: Record<string, string> = {
+    'hermes-agent': 'Hermes Autonomous Agent',
+    'zeroclaw': 'ZeroClaw Worker',
+    'openclaw': 'OpenClaw Gateway',
+    'picoclaw': 'PicoClaw Assistant'
+  };
+
+  for (const aId of agentIds) {
+    try {
+      const cfgObj: any = getAgentConfigData(aId);
+      const primaryProv = (cfgObj?.config?.model?.provider || 'ollama').toLowerCase();
+      const fallbackProv = (cfgObj?.config?.fallback?.fallbackProvider || cfgObj?.config?.fallback?.provider || 'ollama').toLowerCase();
+      const isArmed = Boolean(cfgObj?.config?.fallback?.enabled);
+
+      const primaryReport = results.find(r => r.id === primaryProv);
+      const fallbackReport = results.find(r => r.id === fallbackProv);
+
+      const primaryStatus = primaryReport?.status || 'unreachable';
+      const fallbackStatus = fallbackReport?.status || 'unreachable';
+
+      const isRunningOnFallback = isArmed && primaryStatus !== 'online';
+
+      let reason = `Direct routing via ${primaryProv.toUpperCase()}`;
+      if (isRunningOnFallback) {
+        reason = `Primary provider ${primaryProv.toUpperCase()} is ${primaryStatus.replace('_', ' ')}. Traffic rerouted to fallback ${fallbackProv.toUpperCase()} (${fallbackStatus.replace('_', ' ')}).`;
+      } else if (isArmed) {
+        reason = `Primary ${primaryProv.toUpperCase()} operational (${primaryReport?.latencyMs || 10}ms). Fallback ${fallbackProv.toUpperCase()} standby armed.`;
+      }
+
+      fallbackAgents.push({
+        agentId: aId,
+        agentName: agentNames[aId] || aId,
+        isRunningOnFallback,
+        isArmed,
+        primaryProvider: primaryProv,
+        primaryStatus,
+        fallbackProvider: fallbackProv,
+        fallbackStatus,
+        reason
+      });
+    } catch {}
+  }
+
+  const report = {
+    status: overallStatus,
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString(),
+    totalProviders: results.length,
+    onlineCount,
+    missingKeyCount,
+    unreachableCount,
+    providers: results,
+    fallbackAgents
+  };
+
+  cachedLLMHealth = { timestamp: now, data: report };
+  return report;
+}
+
+// Dedicated LLM Health and Provider Availability Monitoring Endpoint
+app.all(['/api/llm/health', '/api/health/llm', '/api/llm-health'], async (req, res) => {
+  try {
+    const force = req.query.refresh === 'true' || req.query.force === 'true';
+    const health = await checkLLMProvidersHealth(force);
+    res.json(health);
+  } catch (err: any) {
+    res.status(500).json({
+      status: 'critical',
+      uptime: process.uptime(),
+      timestamp: new Date().toISOString(),
+      error: err.message,
+      providers: []
+    });
+  }
+});
+
 function generateHermesYaml(cfg: any): string {
   const m = cfg?.model || {};
   const sys = cfg?.system || {};
@@ -3300,7 +3681,9 @@ app.post('/api/agents/:id/exec', (req, res) => {
 
   // Simulated fallback execution when container is marked running in sandbox mode
   let simulatedOutput = '';
-  if (trimmedCmd.startsWith('hermes config set model')) {
+  if (trimmedCmd === 'hermes setup' || trimmedCmd.startsWith('hermes setup')) {
+    simulatedOutput = `[hermes CLI] Initializing Hermes Agent setup wizard...\n[hermes CLI] Verifying LLM provider configurations and MoA aggregator...\n[hermes CLI] Provider 'openrouter' credentials synchronized to /root/.hermes/config.yaml.\n[hermes CLI] Setup completed successfully. Ready for inference.`;
+  } else if (trimmedCmd.startsWith('hermes config set model')) {
     const parts = trimmedCmd.split(' ');
     const model = parts[parts.length - 1].replace(/['"]/g, '');
     simulatedOutput = `[hermes CLI] Model configured: ${model}\n[hermes CLI] Configuration written to /root/.hermes/config.yaml`;

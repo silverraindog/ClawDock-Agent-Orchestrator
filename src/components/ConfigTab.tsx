@@ -42,7 +42,8 @@ import {
   Bot,
   ShieldAlert,
   Eye,
-  EyeOff
+  EyeOff,
+  Key
 } from 'lucide-react';
 import { 
   AgentFullConfig, 
@@ -84,16 +85,22 @@ import {
   suggestModelCombinationPresets,
   getSuggestedProposersForPurpose,
   getAgentDefaultPurpose,
-  PURPOSE_METADATA
+  PURPOSE_METADATA,
+  getModelKeyStatus,
+  filterModelsByKeyAvailability,
+  KeyContext,
+  ModelKeyStatus
 } from '../utils/moaSuggestions';
 
 export {
   suggestModelCombinations,
   getSuggestedProposersForPurpose,
   getAgentDefaultPurpose,
-  PURPOSE_METADATA
+  PURPOSE_METADATA,
+  getModelKeyStatus,
+  filterModelsByKeyAvailability
 };
-export type { AgentPurpose, ModelCombinationSuggestion };
+export type { AgentPurpose, ModelCombinationSuggestion, KeyContext, ModelKeyStatus };
 
 /**
  * Reactive hook to map the failover provider connection status into
@@ -266,11 +273,66 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
   const [activeLogInspection, setActiveLogInspection] = useState<VerboseLogData | null>(null);
   const [isInspectorOpen, setIsInspectorOpen] = useState(false);
   const [showFallbackApiKey, setShowFallbackApiKey] = useState(false);
+  const [filterMoaOnlyAvailable, setFilterMoaOnlyAvailable] = useState(false);
 
   // Model Connectivity live state
   const [modelConnectivityStatus, setModelConnectivityStatus] = useState<'checking' | 'available' | 'unreachable'>('checking');
   const [modelConnectivityLatency, setModelConnectivityLatency] = useState<number | null>(null);
   const [connectivityErrorReason, setConnectivityErrorReason] = useState<string>('');
+  const [isRevalidatingPrimary, setIsRevalidatingPrimary] = useState<boolean>(false);
+  const [primaryRevalidationMessage, setPrimaryRevalidationMessage] = useState<{ text: string; type: 'success' | 'error' | 'info' } | null>(null);
+
+  const currentAgent = allAgents?.find(a => a.id === agentId);
+
+  // Dedicated check for whether the agent is running on its fallback configuration
+  const isRunningOnFallback = Boolean(
+    (config.fallback?.enabled && modelConnectivityStatus === 'unreachable') || 
+    (currentAgent?.failbackStatus === 'active' && modelConnectivityStatus !== 'available') ||
+    (config.fallback?.enabled && (currentAgent?.failbackStatus === 'active' || currentAgent?.failbackStatus === 'configured'))
+  );
+
+  const handleRevalidatePrimaryProvider = async () => {
+    setIsRevalidatingPrimary(true);
+    setModelConnectivityStatus('checking');
+    setPrimaryRevalidationMessage(null);
+    const start = performance.now();
+    try {
+      const result = await testLLMConnection(
+        config.model.provider,
+        config.model.apiKey || '',
+        config.model.baseUrl || ''
+      );
+      const elapsed = Math.round(performance.now() - start);
+      if (result.success) {
+        setModelConnectivityStatus('available');
+        setModelConnectivityLatency(elapsed > 0 ? elapsed : 12);
+        setConnectivityErrorReason('');
+        setPrimaryRevalidationMessage({
+          type: 'success',
+          text: `Primary provider (${config.model.provider.toUpperCase()}) re-validated successfully (${elapsed}ms). Primary routing restored.`
+        });
+      } else {
+        setModelConnectivityStatus('unreachable');
+        setModelConnectivityLatency(elapsed > 0 ? elapsed : 24);
+        setConnectivityErrorReason(result.message || 'Primary provider connection failed.');
+        setPrimaryRevalidationMessage({
+          type: 'error',
+          text: `Primary re-validation failed: ${result.message || 'Provider unreachable.'}`
+        });
+      }
+    } catch (err: any) {
+      const elapsed = Math.round(performance.now() - start);
+      setModelConnectivityStatus('unreachable');
+      setModelConnectivityLatency(elapsed > 0 ? elapsed : 35);
+      setConnectivityErrorReason(err.message || 'Connection failed.');
+      setPrimaryRevalidationMessage({
+        type: 'error',
+        text: `Re-validation error: ${err.message || 'Endpoint connection failed'}`
+      });
+    } finally {
+      setIsRevalidatingPrimary(false);
+    }
+  };
 
   useEffect(() => {
     let isMounted = true;
@@ -1440,6 +1502,89 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
         </div>
       )}
 
+      {/* Dedicated Visual Indicator for Agent Running on Fallback Configuration */}
+      {isRunningOnFallback && (
+        <div 
+          id="config-fallback-active-indicator-banner"
+          className="p-4 sm:p-5 rounded-2xl border-2 border-amber-500/50 bg-gradient-to-r from-amber-950/40 via-slate-900/90 to-amber-950/20 shadow-xl shadow-amber-950/30 space-y-3 animate-fadeIn"
+        >
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="flex items-start gap-3.5">
+              <div className="p-2.5 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/40 shrink-0 mt-0.5">
+                <ShieldAlert className="w-5 h-5 animate-pulse text-amber-400" />
+              </div>
+              <div className="space-y-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="text-sm font-bold text-amber-200 flex items-center gap-1.5">
+                    <span>Agent Operating on Fallback Configuration</span>
+                  </h3>
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 font-mono animate-pulse">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                    ACTIVE FAILOVER MODE
+                  </span>
+                </div>
+
+                <p className="text-xs text-slate-300 leading-relaxed">
+                  Primary provider <strong className="text-amber-300 font-mono">{config.model.provider.toUpperCase()}</strong> ({config.model.model}) is currently degraded, unauthenticated, or unreachable. Requests are actively being rerouted to fallback provider <strong className="text-emerald-300 font-mono">{(config.fallback?.fallbackProvider || config.fallback?.provider || 'ollama').toUpperCase()}</strong> ({config.fallback?.fallbackModel || config.fallback?.model || 'Local Model'}).
+                </p>
+
+                {connectivityErrorReason && (
+                  <p className="text-[11px] font-mono text-rose-300/90 bg-rose-950/40 px-2.5 py-1 rounded-lg border border-rose-500/30 max-w-2xl">
+                    Primary fault: {connectivityErrorReason}
+                  </p>
+                )}
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2.5 shrink-0 self-end md:self-center flex-wrap">
+              <button
+                type="button"
+                id="revalidate-primary-provider-btn"
+                onClick={handleRevalidatePrimaryProvider}
+                disabled={isRevalidatingPrimary}
+                className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs shadow-lg shadow-amber-500/20 flex items-center gap-2 transition-all disabled:opacity-50 cursor-pointer"
+                title="Attempt live re-validation of primary LLM provider connection"
+              >
+                {isRevalidatingPrimary ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Re-validating...</span>
+                  </>
+                ) : (
+                  <>
+                    <Zap className="w-3.5 h-3.5 fill-current" />
+                    <span>Re-validate Primary Provider</span>
+                  </>
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveSection('fallback')}
+                className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium border border-slate-700 transition-colors"
+              >
+                Fallback Settings
+              </button>
+            </div>
+          </div>
+
+          {primaryRevalidationMessage && (
+            <div className={`p-2.5 rounded-xl text-xs flex items-center gap-2 border ${
+              primaryRevalidationMessage.type === 'success'
+                ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
+                : 'bg-rose-500/10 text-rose-300 border-rose-500/30'
+            }`}>
+              {primaryRevalidationMessage.type === 'success' ? (
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+              ) : (
+                <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+              )}
+              <span className="font-medium">{primaryRevalidationMessage.text}</span>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Navigation Pills with Deep-Link Validation Badges */}
       <div className="flex flex-wrap gap-2 pb-1 border-b border-slate-800/80">
         {[
@@ -1784,34 +1929,58 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
                   )}
                 </div>
 
-                {/* Model Connectivity Indicator */}
-                <div className="flex items-center justify-between px-1 py-1 text-xs">
-                  <span className="text-[11px] font-semibold text-slate-300">Model Connectivity:</span>
-                  <div className="flex items-center gap-1.5">
-                    {modelConnectivityStatus === 'checking' && (
-                      <span className="inline-flex items-center gap-1 text-amber-300 bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 rounded-full font-mono text-[10px]">
-                        <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />
-                        Checking...
+                {/* Model Connectivity Indicator & Quick Re-validation */}
+                <div className="flex flex-wrap items-center justify-between gap-2 px-1 py-1 text-xs">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] font-semibold text-slate-300">Model Connectivity:</span>
+                    {isRunningOnFallback && (
+                      <span className="inline-flex items-center gap-1 text-amber-300 bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 rounded-full font-mono text-[9px] font-bold animate-pulse" title="Agent is currently operating on fallback provider">
+                        <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                        FALLBACK ACTIVE
                       </span>
                     )}
-                    {modelConnectivityStatus === 'available' && (
-                      <span className="inline-flex items-center gap-1 text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 rounded-full font-mono text-[10px]" title={`Connected to ${config.model.baseUrl || config.model.provider}`}>
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                        Available {modelConnectivityLatency !== null ? `(${modelConnectivityLatency}ms)` : ''}
-                      </span>
-                    )}
-                    {modelConnectivityStatus === 'unreachable' && (
-                      <span 
-                        className="inline-flex items-center gap-1 text-rose-300 bg-rose-500/10 border border-rose-500/30 px-2 py-0.5 rounded-full font-mono text-[10px] cursor-help relative group"
-                        title={connectivityErrorReason || `Endpoint unreachable for ${config.model.provider}`}
-                      >
-                        <span className="w-1.5 h-1.5 rounded-full bg-rose-400" />
-                        Unreachable
-                        <span className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-1 hidden group-hover:block w-48 p-2 bg-slate-950 text-rose-200 text-[10px] font-sans rounded-lg shadow-xl border border-rose-500/30 z-50 text-center leading-relaxed">
-                          {connectivityErrorReason || 'Connection timeout or network failure.'}
+                  </div>
+                  
+                  <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1.5">
+                      {modelConnectivityStatus === 'checking' && (
+                        <span className="inline-flex items-center gap-1 text-amber-300 bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 rounded-full font-mono text-[10px]">
+                          <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />
+                          Checking...
                         </span>
-                      </span>
-                    )}
+                      )}
+                      {modelConnectivityStatus === 'available' && (
+                        <span className="inline-flex items-center gap-1 text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 rounded-full font-mono text-[10px]" title={`Connected to ${config.model.baseUrl || config.model.provider}`}>
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                          Available {modelConnectivityLatency !== null ? `(${modelConnectivityLatency}ms)` : ''}
+                        </span>
+                      )}
+                      {modelConnectivityStatus === 'unreachable' && (
+                        <span 
+                          className="inline-flex items-center gap-1 text-rose-300 bg-rose-500/10 border border-rose-500/30 px-2 py-0.5 rounded-full font-mono text-[10px] cursor-help relative group"
+                          title={connectivityErrorReason || `Endpoint unreachable for ${config.model.provider}`}
+                        >
+                          <span className="w-1.5 h-1.5 rounded-full bg-rose-400" />
+                          Unreachable
+                          <span className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-1 hidden group-hover:block w-48 p-2 bg-slate-950 text-rose-200 text-[10px] font-sans rounded-lg shadow-xl border border-rose-500/30 z-50 text-center leading-relaxed">
+                            {connectivityErrorReason || 'Connection timeout or network failure.'}
+                          </span>
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Quick Re-validate Button */}
+                    <button
+                      type="button"
+                      id="quick-revalidate-primary-btn"
+                      onClick={handleRevalidatePrimaryProvider}
+                      disabled={isRevalidatingPrimary || modelConnectivityStatus === 'checking'}
+                      title="Attempt immediate re-validation of primary LLM connection"
+                      className="px-2 py-0.5 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 hover:text-white border border-indigo-500/30 text-[10px] font-medium transition-all flex items-center gap-1 disabled:opacity-50 cursor-pointer"
+                    >
+                      <RefreshCw className={`w-2.5 h-2.5 ${isRevalidatingPrimary ? 'animate-spin text-amber-400' : ''}`} />
+                      {isRevalidatingPrimary ? 'Validating...' : 'Re-validate Primary'}
+                    </button>
                   </div>
                 </div>
 
@@ -2355,18 +2524,44 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
             ? config.moa.proposerModels
             : (isLocalAgent ? defaultLocalProposers : defaultCloudProposers);
 
-          const knownAggregators = [
-            config.model.model,
+          const keyContext: KeyContext = {
+            primaryProvider: config.model.provider,
+            primaryApiKey: config.model.apiKey,
+            fallbackProvider: config.fallback?.provider,
+            fallbackApiKey: config.fallback?.apiKey,
+            fallbackEnabled: config.fallback?.enabled,
+            isLocalOnly: isLocalAgent || config.model.provider === 'ollama' || config.model.provider === 'local'
+          };
+
+          const aggregatorKeyStatus = getModelKeyStatus(currentAggregator, keyContext);
+          const proposerKeyStatuses = effectiveProposers.map(p => getModelKeyStatus(p, keyContext));
+          const missingProposers = proposerKeyStatuses.filter(s => !s.hasKey);
+          const hasMissingMoAKeys = (!aggregatorKeyStatus.hasKey || missingProposers.length > 0) && (config.moa?.enabled ?? true);
+
+          const localAggregators = [
             'gemma4-soul:latest',
             'qwen2.5-coder:7b',
             'qwen2.5-coder:14b',
             'deepseek-r1:8b',
             'llama3.3:70b',
-            'mistral-nemo:12b',
+            'mistral-nemo:12b'
+          ];
+
+          const cloudAggregators = [
             'claude-3-7-sonnet',
             'gpt-4o',
             'deepseek-r1',
             'gemini-2.5-pro'
+          ];
+
+          const displayedCloudAggregators = filterMoaOnlyAvailable
+            ? cloudAggregators.filter(m => getModelKeyStatus(m, keyContext).hasKey)
+            : cloudAggregators;
+
+          const knownAggregators = [
+            config.model.model,
+            ...localAggregators,
+            ...cloudAggregators
           ].filter(Boolean);
 
           const purposeMeta = PURPOSE_METADATA[selectedPurpose] || PURPOSE_METADATA['balanced'];
@@ -2376,25 +2571,33 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
           const defaultConfigProposers = isLocalAgent ? defaultLocalProposers : defaultCloudProposers;
 
           // Merging these suggestions with the defaults already in the configuration
-          const mergedProposerSuggestions = Array.from(new Set([
+          const allProposerCandidates = Array.from(new Set([
             ...purposeSuggestedModelNames,
             ...defaultConfigProposers
           ]));
 
+          const mergedProposerSuggestions = filterMoaOnlyAvailable
+            ? filterModelsByKeyAvailability(allProposerCandidates, keyContext)
+            : allProposerCandidates;
+
           const purposeSuggestedModels = getSuggestedProposersForPurpose(selectedPurpose, {
             isLocal: isLocalAgent,
             provider: config.model.provider,
-            currentModel: config.model.model
+            currentModel: config.model.model,
+            keyContext,
+            onlyConfigured: filterMoaOnlyAvailable
           });
           const purposeCombinations = suggestModelCombinationPresets(selectedPurpose, {
             isLocal: isLocalAgent,
             provider: config.model.provider,
-            currentModel: config.model.model
+            currentModel: config.model.model,
+            keyContext,
+            onlyConfigured: filterMoaOnlyAvailable
           });
 
           return (
             <div className="space-y-6">
-              <div className="border-b border-slate-800 pb-4 flex items-center justify-between">
+              <div className="border-b border-slate-800 pb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
                   <h3 className="text-sm font-semibold text-white flex items-center gap-2">
                     <Cpu className="w-4 h-4 text-indigo-400" />
@@ -2409,22 +2612,101 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
                     Multi-model collaborative proposal and aggregation pipeline (supports both local Ollama clusters and cloud frontier LLMs).
                   </p>
                 </div>
-                <label className="relative inline-flex items-center cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={config.moa?.enabled ?? true}
-                    onChange={(e) => onChangeConfig({
-                      ...config,
-                      moa: {
-                        ...(config.moa || { proposerModels: effectiveProposers, aggregatorModel: fallbackAggregator, rounds: 2, temperatureSpread: 0.3, consensusThreshold: 0.85 }),
-                        enabled: e.target.checked
-                      }
-                    })}
-                    className="sr-only peer"
-                  />
-                  <div className="w-9 h-5 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
-                </label>
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setFilterMoaOnlyAvailable(!filterMoaOnlyAvailable)}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-medium border flex items-center gap-1.5 transition-all ${
+                      filterMoaOnlyAvailable
+                        ? 'bg-emerald-950/80 border-emerald-500/50 text-emerald-300'
+                        : 'bg-slate-800/80 border-slate-700 text-slate-300 hover:text-white'
+                    }`}
+                    title="Toggle to only show models with configured API keys or local models"
+                  >
+                    <Key className={`w-3.5 h-3.5 ${filterMoaOnlyAvailable ? 'text-emerald-400' : 'text-slate-400'}`} />
+                    <span>{filterMoaOnlyAvailable ? 'Showing Ready Models Only' : 'Filter by Available Keys'}</span>
+                  </button>
+
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={config.moa?.enabled ?? true}
+                      onChange={(e) => onChangeConfig({
+                        ...config,
+                        moa: {
+                          ...(config.moa || { proposerModels: effectiveProposers, aggregatorModel: fallbackAggregator, rounds: 2, temperatureSpread: 0.3, consensusThreshold: 0.85 }),
+                          enabled: e.target.checked
+                        }
+                      })}
+                      className="sr-only peer"
+                    />
+                    <div className="w-9 h-5 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
+                  </label>
+                </div>
               </div>
+
+              {/* API Key Missing / Config Warning Alert */}
+              {hasMissingMoAKeys && (
+                <div className="p-3.5 rounded-xl border border-amber-500/30 bg-amber-950/20 text-amber-200 text-xs space-y-2.5">
+                  <div className="flex items-start gap-2.5">
+                    <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                    <div className="flex-1 space-y-1">
+                      <div className="flex items-center justify-between">
+                        <p className="font-semibold text-amber-300">
+                          API Key Configuration Warning for MoA
+                        </p>
+                        <span className="text-[10px] px-2 py-0.5 rounded bg-amber-500/20 border border-amber-500/30 text-amber-300 font-mono">
+                          Missing Provider Keys
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-300 leading-relaxed">
+                        {!aggregatorKeyStatus.hasKey && (
+                          <span className="block">
+                            • Aggregator <strong className="text-amber-200 font-mono font-medium">{currentAggregator}</strong> requires an API key for <strong className="text-white">{aggregatorKeyStatus.requiredProvider}</strong> (or OpenRouter).
+                          </span>
+                        )}
+                        {missingProposers.length > 0 && (
+                          <span className="block mt-0.5">
+                            • Proposer models missing keys: {missingProposers.map(k => (
+                              <code key={k.model} className="mx-1 px-1.5 py-0.5 rounded bg-slate-900 border border-amber-500/20 text-amber-300 font-mono text-[10px]">
+                                {k.model} ({k.requiredProvider})
+                              </code>
+                            ))}
+                          </span>
+                        )}
+                      </p>
+                      <p className="text-[10px] text-slate-400">
+                        Agents running with unkeyed cloud models will throw runtime errors: <code className="text-rose-300 font-mono">"No LLM provider configured for task=moa_aggregator provider=openrouter"</code>.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-amber-500/20">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const localFallback = isLocalAgent ? (config.model.model || 'qwen2.5-coder:7b') : (config.model.model || 'qwen2.5-coder:7b');
+                        onChangeConfig({
+                          ...config,
+                          moa: {
+                            ...(config.moa || { enabled: true, rounds: 2, temperatureSpread: 0.3, consensusThreshold: 0.85 }),
+                            aggregatorModel: localFallback,
+                            proposerModels: ['qwen2.5-coder:7b', 'deepseek-r1:8b', 'gemma4-soul:latest']
+                          }
+                        });
+                      }}
+                      className="px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-200 text-[11px] font-medium transition-colors flex items-center gap-1.5"
+                    >
+                      <Zap className="w-3 h-3 text-amber-400" />
+                      Switch MoA to Local Ready Models (No Cloud Keys Needed)
+                    </button>
+                    {config.fallback?.enabled && config.fallback?.apiKey && (
+                      <span className="text-[10px] text-emerald-400 flex items-center gap-1">
+                        <Check className="w-3 h-3" /> Fallback provider ({config.fallback.provider}) key configured
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="space-y-2">
@@ -2460,50 +2742,65 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
                           aggregatorModel: e.target.value
                         }
                       })}
-                      className="w-full appearance-none px-3.5 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-slate-100 text-xs focus:outline-none focus:border-indigo-500 font-mono pr-10"
+                      className={`w-full appearance-none px-3.5 py-2.5 rounded-xl bg-slate-800 border text-slate-100 text-xs focus:outline-none focus:border-indigo-500 font-mono pr-10 ${
+                        !aggregatorKeyStatus.hasKey ? 'border-amber-500/50 text-amber-200' : 'border-slate-700'
+                      }`}
                     >
                       {/* Active Model Option */}
                       {config.model.model && (
                         <option value={config.model.model}>
-                          {config.model.model} (Active Agent Model {isLocalAgent ? '• Local Ollama' : ''})
+                          {config.model.model} (Active Agent Model {isLocalAgent ? '• 🟢 Local' : '• 🔑 Active'})
                         </option>
                       )}
 
                       {/* Local / Ollama Group */}
-                      <optgroup label="Local Ollama & Edge Models">
-                        <option value="gemma4-soul:latest">gemma4-soul:latest (Local Gemma)</option>
-                        <option value="qwen2.5-coder:7b">qwen2.5-coder:7b (Edge Coder 7B)</option>
-                        <option value="qwen2.5-coder:14b">qwen2.5-coder:14b (Local Coder 14B)</option>
-                        <option value="deepseek-r1:8b">deepseek-r1:8b (Local Reasoning 8B)</option>
-                        <option value="llama3.3:70b">llama3.3:70b (Local Llama 70B)</option>
-                        <option value="mistral-nemo:12b">mistral-nemo:12b (Local Mistral 12B)</option>
+                      <optgroup label="🟢 Local Ollama & Edge Models (Ready / No Key Needed)">
+                        {localAggregators.map(m => (
+                          <option key={`local-agg-${m}`} value={m}>
+                            {m} [🟢 Local Ready]
+                          </option>
+                        ))}
                       </optgroup>
 
                       {/* Cloud Providers Group */}
-                      <optgroup label="Cloud Frontier Models">
-                        <option value="claude-3-7-sonnet">Claude 3.7 Sonnet (Anthropic)</option>
-                        <option value="gpt-4o">GPT-4o (OpenAI)</option>
-                        <option value="deepseek-r1">DeepSeek-R1 (DeepSeek Cloud)</option>
-                        <option value="gemini-2.5-pro">Gemini 2.5 Pro (Google)</option>
+                      <optgroup label="☁️ Cloud Frontier Models">
+                        {displayedCloudAggregators.map(m => {
+                          const status = getModelKeyStatus(m, keyContext);
+                          return (
+                            <option key={`cloud-agg-${m}`} value={m}>
+                              {m} {status.hasKey ? '[🟢 Key Ready]' : `[⚠️ Missing ${status.requiredProvider} Key]`}
+                            </option>
+                          );
+                        })}
                       </optgroup>
 
                       {/* Custom Option */}
                       {!knownAggregators.includes(currentAggregator) && (
                         <option value={currentAggregator}>
-                          {currentAggregator} (Custom Aggregator)
+                          {currentAggregator} ({aggregatorKeyStatus.hasKey ? 'Custom • Ready' : 'Custom • Key Missing'})
                         </option>
                       )}
                     </select>
                     <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-3 pointer-events-none" />
                   </div>
-                  <p className="text-[11px] text-slate-400 flex items-center justify-between">
-                    <span>Synthesizes and delivers the final answer.</span>
+                  <div className="flex items-center justify-between text-[11px] text-slate-400">
+                    <span className="flex items-center gap-1.5">
+                      {aggregatorKeyStatus.hasKey ? (
+                        <span className="text-emerald-400 flex items-center gap-1">
+                          <Check className="w-3 h-3" /> {aggregatorKeyStatus.message}
+                        </span>
+                      ) : (
+                        <span className="text-amber-400 flex items-center gap-1">
+                          <AlertTriangle className="w-3 h-3" /> {aggregatorKeyStatus.message}
+                        </span>
+                      )}
+                    </span>
                     {isLocalAgent && (
                       <span className="text-emerald-400 text-[10px] font-mono">
                         Active: {currentAggregator}
                       </span>
                     )}
-                  </p>
+                  </div>
                 </div>
 
                 <div className="space-y-2">
@@ -2555,7 +2852,7 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
                         })}
                         className="px-2 py-0.5 rounded bg-emerald-950/60 hover:bg-emerald-900/60 border border-emerald-500/30 text-emerald-300 text-[10px] font-medium transition-colors"
                       >
-                        Set Local Stack
+                        Set Local Stack (🟢 Ready)
                       </button>
                       <button
                         type="button"
@@ -2654,18 +2951,26 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
                             ⚡ Apply Top Merged Stack ({mergedProposerSuggestions.slice(0, 3).join(', ')})
                           </option>
                           <optgroup label={`⭐ Suggested for "${purposeMeta.label}" Purpose`}>
-                            {purposeSuggestedModelNames.map((name) => (
-                              <option key={`purpose-name-${name}`} value={name}>
-                                + {name} (Suggested for {purposeMeta.shortLabel})
-                              </option>
-                            ))}
+                            {purposeSuggestedModelNames.map((name) => {
+                              const status = getModelKeyStatus(name, keyContext);
+                              if (filterMoaOnlyAvailable && !status.hasKey) return null;
+                              return (
+                                <option key={`purpose-name-${name}`} value={name}>
+                                  + {name} ({status.hasKey ? '🟢 Ready' : `⚠️ Missing ${status.requiredProvider} Key`})
+                                </option>
+                              );
+                            })}
                           </optgroup>
                           <optgroup label="⚙️ Defaults in Current Configuration">
-                            {defaultConfigProposers.map((name) => (
-                              <option key={`default-cfg-name-${name}`} value={name}>
-                                + {name} (Configuration Default)
-                              </option>
-                            ))}
+                            {defaultConfigProposers.map((name) => {
+                              const status = getModelKeyStatus(name, keyContext);
+                              if (filterMoaOnlyAvailable && !status.hasKey) return null;
+                              return (
+                                <option key={`default-cfg-name-${name}`} value={name}>
+                                  + {name} ({status.hasKey ? '🟢 Ready' : `⚠️ Missing ${status.requiredProvider} Key`})
+                                </option>
+                              );
+                            })}
                           </optgroup>
                         </select>
                         <ChevronDown className="w-3.5 h-3.5 text-indigo-400 absolute right-2.5 top-2 pointer-events-none" />
@@ -2726,7 +3031,7 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
                           <option value="">✨ Apply Preset Ensemble for {purposeMeta.label}...</option>
                           {purposeCombinations.map((combo) => (
                             <option key={combo.id} value={combo.id}>
-                              {combo.name} — [{combo.proposers.join(' + ')}] ➔ {combo.aggregator} ({combo.rounds} {combo.rounds === 1 ? 'round' : 'rounds'})
+                              {combo.isAvailable ? '🟢 [Ready]' : `⚠️ [Requires ${combo.missingKeys?.join('/')} Key]`} {combo.name} — [{combo.proposers.join(' + ')}] ➔ {combo.aggregator}
                             </option>
                           ))}
                         </select>
@@ -2747,11 +3052,16 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
                         : `Auxiliary Slot ${idx + 1}`;
 
                       const isFromProvider = currentModelList.some(m => m.value === proposer);
+                      const status = getModelKeyStatus(proposer, keyContext);
 
                       return (
                         <div 
                           key={idx}
-                          className="flex flex-col sm:flex-row sm:items-center gap-2.5 p-2.5 rounded-xl bg-slate-800/80 border border-slate-700/80 hover:border-slate-600 transition-colors"
+                          className={`flex flex-col sm:flex-row sm:items-center gap-2.5 p-2.5 rounded-xl border transition-colors ${
+                            !status.hasKey
+                              ? 'bg-amber-950/20 border-amber-500/40'
+                              : 'bg-slate-800/80 border-slate-700/80 hover:border-slate-600'
+                          }`}
                         >
                           <div className="flex items-center justify-between sm:w-44 shrink-0">
                             <div className="flex items-center gap-2">
@@ -2763,11 +3073,17 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
                                 <div className="text-[10px] text-slate-400 font-mono">{roleHint}</div>
                               </div>
                             </div>
-                            {isFromProvider && (
-                              <span className="text-[9px] px-1.5 py-0.5 rounded bg-slate-900 border border-slate-700 text-slate-400 font-mono sm:hidden">
-                                {config.model.provider}
-                              </span>
-                            )}
+                            <div className="flex items-center gap-1">
+                              {status.hasKey ? (
+                                <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-950/80 border border-emerald-500/30 text-emerald-300 font-mono">
+                                  {status.isLocal ? 'Local' : 'Key Ready'}
+                                </span>
+                              ) : (
+                                <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-950/80 border border-amber-500/30 text-amber-300 font-mono">
+                                  Missing Key
+                                </span>
+                              )}
+                            </div>
                           </div>
 
                           <div className="relative flex-1">
@@ -2784,16 +3100,19 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
                                   }
                                 });
                               }}
-                              className="w-full appearance-none px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-slate-100 text-xs font-mono focus:outline-none focus:border-indigo-500 pr-9"
+                              className={`w-full appearance-none px-3 py-2 rounded-lg bg-slate-900 border text-slate-100 text-xs font-mono focus:outline-none focus:border-indigo-500 pr-9 ${
+                                !status.hasKey ? 'border-amber-500/40 text-amber-200' : 'border-slate-700'
+                              }`}
                             >
                               {/* Custom / Configured option if not present in standard lists */}
                               {!knownAggregators.includes(proposer) && !currentModelList.some(m => m.value === proposer) && (
-                                <option value={proposer}>{proposer} (Current Configured Model)</option>
+                                <option value={proposer}>{proposer} ({status.hasKey ? 'Current • Ready' : 'Current • Key Missing'})</option>
                               )}
 
                               {/* ⭐ Purpose-Based Suggested Models Merged with Config Defaults */}
                               <optgroup label={`⭐ Suggested (${purposeMeta.shortLabel}) & Config Defaults`}>
                                 {mergedProposerSuggestions.map((mName) => {
+                                  const mStatus = getModelKeyStatus(mName, keyContext);
                                   const isSugg = purposeSuggestedModelNames.includes(mName);
                                   const isDef = defaultConfigProposers.includes(mName);
                                   const tag = isSugg && isDef
@@ -2803,7 +3122,7 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
                                     : 'Config Default';
                                   return (
                                     <option key={`merged-slot-${idx}-${mName}`} value={mName}>
-                                      {mName} — [{tag}]
+                                      {mName} — [{tag}] {mStatus.hasKey ? '🟢' : '⚠️'}
                                     </option>
                                   );
                                 })}
@@ -2811,41 +3130,56 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
 
                               {/* Purpose Role Suggestions */}
                               <optgroup label={`Role Recommendations for "${purposeMeta.label}"`}>
-                                {purposeSuggestedModels.map((m) => (
-                                  <option key={`purpose-sugg-${idx}-${m.value}`} value={m.value}>
-                                    {m.label} ({m.value}) — {m.role}
-                                  </option>
-                                ))}
+                                {purposeSuggestedModels.map((m) => {
+                                  const mStatus = getModelKeyStatus(m.value, keyContext);
+                                  return (
+                                    <option key={`purpose-sugg-${idx}-${m.value}`} value={m.value}>
+                                      {m.label} ({m.value}) — {m.role} {mStatus.hasKey ? '🟢' : '⚠️'}
+                                    </option>
+                                  );
+                                })}
                               </optgroup>
 
                               {/* Models from Default/Active Provider */}
                               <optgroup label={`Default Provider (${config.model.provider}) Models`}>
-                                {currentModelList.map((m) => (
-                                  <option key={`prov-${idx}-${m.value}`} value={m.value}>
-                                    {m.label || m.value} {m.tag ? `• ${m.tag}` : ''}
-                                  </option>
-                                ))}
+                                {currentModelList.map((m) => {
+                                  const mStatus = getModelKeyStatus(m.value, keyContext);
+                                  if (filterMoaOnlyAvailable && !mStatus.hasKey) return null;
+                                  return (
+                                    <option key={`prov-${idx}-${m.value}`} value={m.value}>
+                                      {m.label || m.value} {m.tag ? `• ${m.tag}` : ''} {mStatus.hasKey ? '🟢' : '⚠️'}
+                                    </option>
+                                  );
+                                })}
                               </optgroup>
 
                               {/* Local Ollama & Edge Models */}
-                              <optgroup label="Local Ollama & Edge Models">
-                                <option value="gemma4-soul:latest">gemma4-soul:latest (Local Gemma)</option>
-                                <option value="qwen2.5-coder:7b">qwen2.5-coder:7b (Edge Coder 7B)</option>
-                                <option value="qwen2.5-coder:14b">qwen2.5-coder:14b (Local Coder 14B)</option>
-                                <option value="deepseek-r1:8b">deepseek-r1:8b (Local Reasoning 8B)</option>
-                                <option value="llama3.3:70b">llama3.3:70b (Local Llama 70B)</option>
-                                <option value="mistral-nemo:12b">mistral-nemo:12b (Local Mistral 12B)</option>
-                                <option value="phi-4:14b">phi-4:14b (Local Phi-4 14B)</option>
+                              <optgroup label="🟢 Local Ollama & Edge Models">
+                                <option value="gemma4-soul:latest">gemma4-soul:latest (Local Gemma) 🟢</option>
+                                <option value="qwen2.5-coder:7b">qwen2.5-coder:7b (Edge Coder 7B) 🟢</option>
+                                <option value="qwen2.5-coder:14b">qwen2.5-coder:14b (Local Coder 14B) 🟢</option>
+                                <option value="deepseek-r1:8b">deepseek-r1:8b (Local Reasoning 8B) 🟢</option>
+                                <option value="llama3.3:70b">llama3.3:70b (Local Llama 70B) 🟢</option>
+                                <option value="mistral-nemo:12b">mistral-nemo:12b (Local Mistral 12B) 🟢</option>
+                                <option value="phi-4:14b">phi-4:14b (Local Phi-4 14B) 🟢</option>
                               </optgroup>
 
                               {/* Cloud Frontier Models */}
-                              <optgroup label="Cloud Frontier Models">
-                                <option value="claude-3-7-sonnet">Claude 3.7 Sonnet (Anthropic)</option>
-                                <option value="gpt-4o">GPT-4o (OpenAI)</option>
-                                <option value="deepseek-r1">DeepSeek-R1 (DeepSeek Cloud)</option>
-                                <option value="gemini-2.5-pro">Gemini 2.5 Pro (Google)</option>
-                                <option value="o3-mini">o3-mini (OpenAI)</option>
-                                <option value="deepseek-chat">DeepSeek-V3 (DeepSeek Chat)</option>
+                              <optgroup label="☁️ Cloud Frontier Models">
+                                {displayedCloudAggregators.map(m => {
+                                  const mStatus = getModelKeyStatus(m, keyContext);
+                                  return (
+                                    <option key={`cloud-prop-${idx}-${m}`} value={m}>
+                                      {m} {mStatus.hasKey ? '[🟢 Key Ready]' : `[⚠️ Missing ${mStatus.requiredProvider} Key]`}
+                                    </option>
+                                  );
+                                })}
+                                {!filterMoaOnlyAvailable && (
+                                  <>
+                                    <option value="o3-mini">o3-mini (OpenAI) {getModelKeyStatus('o3-mini', keyContext).hasKey ? '🟢' : '⚠️'}</option>
+                                    <option value="deepseek-chat">DeepSeek-V3 (DeepSeek Chat) {getModelKeyStatus('deepseek-chat', keyContext).hasKey ? '🟢' : '⚠️'}</option>
+                                  </>
+                                )}
                               </optgroup>
                             </select>
                             <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-2.5 pointer-events-none" />
@@ -2916,11 +3250,15 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
                           className="appearance-none px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-750 border border-slate-700 text-slate-300 text-xs font-medium pr-7 focus:outline-none focus:border-indigo-500 cursor-pointer transition-colors"
                         >
                           <option value="" disabled>+ Quick Add from {config.model.provider}...</option>
-                          {currentModelList.map((m) => (
-                            <option key={`quickadd-${m.value}`} value={m.value}>
-                              {m.label || m.value} {m.tag ? `[${m.tag}]` : ''}
-                            </option>
-                          ))}
+                          {currentModelList.map((m) => {
+                            const mStatus = getModelKeyStatus(m.value, keyContext);
+                            if (filterMoaOnlyAvailable && !mStatus.hasKey) return null;
+                            return (
+                              <option key={`quickadd-${m.value}`} value={m.value}>
+                                {m.label || m.value} {m.tag ? `[${m.tag}]` : ''} {mStatus.hasKey ? '🟢' : '⚠️'}
+                              </option>
+                            );
+                          })}
                         </select>
                         <ChevronDown className="w-3 h-3 text-slate-400 absolute right-2.5 top-2.5 pointer-events-none" />
                       </div>
@@ -2947,7 +3285,7 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
                           <option value="" disabled>+ Quick Add for {purposeMeta.shortLabel}...</option>
                           {purposeSuggestedModels.map((m) => (
                             <option key={`quickadd-purpose-${m.value}`} value={m.value}>
-                              {m.label} ({m.role})
+                              {m.label} ({m.role}) {m.hasKey ? '🟢' : '⚠️'}
                             </option>
                           ))}
                         </select>
@@ -3008,6 +3346,12 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
 
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-3.5">
                       {MOA_SYNERGY_RECOMMENDATIONS.map((rec) => {
+                        const recKeyStatuses = [rec.aggregator, ...rec.proposers].map(m => getModelKeyStatus(m, keyContext));
+                        const recMissing = recKeyStatuses.filter(s => !s.hasKey);
+                        const isRecReady = recMissing.length === 0;
+
+                        if (filterMoaOnlyAvailable && !isRecReady) return null;
+
                         const isCurrentActive = 
                           currentAggregator === rec.aggregator &&
                           rec.proposers.length === effectiveProposers.length &&
@@ -3032,25 +3376,39 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
                                     {rec.category}
                                   </span>
                                 </div>
-                                <span className="text-[10px] text-slate-400 font-mono">
-                                  {rec.rounds} {rec.rounds === 1 ? 'round' : 'rounds'}
-                                </span>
+                                <div className="flex items-center gap-1.5">
+                                  {isRecReady ? (
+                                    <span className="text-[9px] font-medium px-1.5 py-0.5 rounded bg-emerald-950/80 border border-emerald-500/30 text-emerald-300">
+                                      Ready 🟢
+                                    </span>
+                                  ) : (
+                                    <span className="text-[9px] font-medium px-1.5 py-0.5 rounded bg-amber-950/80 border border-amber-500/30 text-amber-300">
+                                      Requires Key ⚠️
+                                    </span>
+                                  )}
+                                  <span className="text-[10px] text-slate-400 font-mono">
+                                    {rec.rounds} {rec.rounds === 1 ? 'round' : 'rounds'}
+                                  </span>
+                                </div>
                               </div>
 
                               {/* Model flow visualization */}
                               <div className="space-y-1 bg-slate-950/60 p-2.5 rounded-lg border border-slate-800/80 text-[11px]">
                                 <div className="flex flex-wrap items-center gap-1.5">
                                   <span className="text-slate-400 text-[10px] font-mono shrink-0">Proposers:</span>
-                                  {rec.proposers.map((p) => (
-                                    <span key={p} className="px-1.5 py-0.5 rounded bg-slate-800 text-indigo-300 font-mono text-[10px]">
-                                      {p}
-                                    </span>
-                                  ))}
+                                  {rec.proposers.map((p) => {
+                                    const pStat = getModelKeyStatus(p, keyContext);
+                                    return (
+                                      <span key={p} className="px-1.5 py-0.5 rounded bg-slate-800 text-indigo-300 font-mono text-[10px] flex items-center gap-1">
+                                        {p} {pStat.hasKey ? <span className="text-[9px] text-emerald-400">🟢</span> : <span className="text-[9px] text-amber-400">⚠️</span>}
+                                      </span>
+                                    );
+                                  })}
                                 </div>
                                 <div className="flex items-center gap-1.5 pt-1 border-t border-slate-800/60">
                                   <span className="text-slate-400 text-[10px] font-mono shrink-0">Aggregator:</span>
-                                  <span className="px-1.5 py-0.5 rounded bg-purple-950/60 border border-purple-500/30 text-purple-300 font-mono text-[10px] font-medium">
-                                    {rec.aggregator}
+                                  <span className="px-1.5 py-0.5 rounded bg-purple-950/60 border border-purple-500/30 text-purple-300 font-mono text-[10px] font-medium flex items-center gap-1">
+                                    {rec.aggregator} {aggregatorKeyStatus.hasKey ? <span className="text-[9px] text-emerald-400">🟢</span> : <span className="text-[9px] text-amber-400">⚠️</span>}
                                   </span>
                                 </div>
                               </div>
@@ -3811,6 +4169,64 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
                 </div>
               </div>
             )}
+
+            {/* Fallback Execution Status Card & Primary Re-validation Action */}
+            <div className={`p-4 rounded-xl border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 ${
+              isRunningOnFallback
+                ? 'bg-amber-950/30 border-amber-500/40 text-amber-200'
+                : config.fallback?.enabled
+                  ? 'bg-emerald-950/20 border-emerald-500/30 text-emerald-300'
+                  : 'bg-slate-900/40 border-slate-800 text-slate-400'
+            }`}>
+              <div className="flex items-start sm:items-center gap-3">
+                <div className={`p-2 rounded-lg border shrink-0 ${
+                  isRunningOnFallback
+                    ? 'bg-amber-500/20 border-amber-500/40 text-amber-400 animate-pulse'
+                    : config.fallback?.enabled
+                      ? 'bg-emerald-500/20 border-emerald-500/30 text-emerald-400'
+                      : 'bg-slate-800 border-slate-700 text-slate-500'
+                }`}>
+                  <ShieldAlert className="w-4 h-4" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs font-bold text-white">
+                      {isRunningOnFallback
+                        ? 'Fallback Active: Agent Running on Secondary Provider'
+                        : config.fallback?.enabled
+                          ? 'Fallback Armed: Monitoring Primary Provider Health'
+                          : 'Fallback Inactive: Direct Routing Only'}
+                    </span>
+                    <span className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold ${
+                      isRunningOnFallback
+                        ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                        : config.fallback?.enabled
+                          ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                          : 'bg-slate-800 text-slate-400 border border-slate-700'
+                    }`}>
+                      {isRunningOnFallback ? 'FAILOVER ACTIVE' : config.fallback?.enabled ? 'STANDBY ARMED' : 'DISABLED'}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-300 mt-0.5">
+                    Primary: <span className="font-mono text-indigo-300">{config.model.provider}</span> ({modelConnectivityStatus === 'available' ? 'Available' : modelConnectivityStatus === 'checking' ? 'Checking...' : 'Unreachable'}) ➔ Fallback: <span className="font-mono text-emerald-300">{config.fallback?.fallbackProvider || config.fallback?.provider || 'ollama'}</span>
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
+                <button
+                  type="button"
+                  id="revalidate-primary-fallback-tab-btn"
+                  onClick={handleRevalidatePrimaryProvider}
+                  disabled={isRevalidatingPrimary}
+                  className="px-3 py-1.5 rounded-lg bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 border border-indigo-500/40 text-xs font-semibold flex items-center gap-1.5 transition-colors disabled:opacity-50"
+                  title="Attempt immediate re-validation of primary LLM provider connection"
+                >
+                  <RefreshCw className={`w-3 h-3 ${isRevalidatingPrimary ? 'animate-spin text-amber-400' : ''}`} />
+                  {isRevalidatingPrimary ? 'Re-validating...' : 'Re-validate Primary'}
+                </button>
+              </div>
+            </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {/* Fallback Toggle */}

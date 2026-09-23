@@ -1,4 +1,4 @@
-import { AgentFullConfig, AgentId, AgentInfo, DockerSystemInfo, SystemUpdateItem } from '../types';
+import { AgentFullConfig, AgentId, AgentInfo, DockerSystemInfo, SystemUpdateItem, LLMHealthReport } from '../types';
 import { DEFAULT_CONFIGS, DEFAULT_NATIVE_FILES, INITIAL_AGENTS } from '../data/defaults';
 import { enhanceConfigWithNative } from './configParser';
 
@@ -449,6 +449,31 @@ export async function testLLMConnection(
       message: `Failed to invoke backend connection tester: ${err.message || 'Unknown network error'}`
     };
   }
+}
+
+/**
+ * Fetch LLM Health report across all configured and supported providers.
+ * Polling /api/health endpoint with live API key validation and fallback monitoring.
+ */
+export async function fetchLLMHealth(forceRefresh = false): Promise<LLMHealthReport | null> {
+  try {
+    const url = `/api/health?llm=true${forceRefresh ? '&refresh=true' : ''}`;
+    const res = await fetch(url, {
+      method: 'GET',
+      headers: { 'Accept': 'application/json' },
+      cache: forceRefresh ? 'no-store' : 'default'
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data?.llm) {
+        return data.llm;
+      }
+      return data;
+    }
+  } catch (err) {
+    console.warn('[API Bridge] Failed to fetch /api/health LLM report:', err);
+  }
+  return null;
 }
 
 /**

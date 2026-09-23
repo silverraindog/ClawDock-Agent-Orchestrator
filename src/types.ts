@@ -381,4 +381,48 @@ export interface MemoryTaskRelationship {
   lastReinforced: string;
 }
 
+export type LLMHealthStatus = 'online' | 'missing_key' | 'invalid_key' | 'unreachable' | 'degraded' | 'checking';
+
+export interface ProviderHealthReport {
+  id: string;
+  name: string;
+  providerType: 'local' | 'cloud' | 'gateway';
+  status: LLMHealthStatus;
+  hasKey: boolean;
+  requiresKey: boolean;
+  latencyMs: number | null;
+  endpoint: string;
+  modelsCount: number;
+  configuredInAgents: string[];
+  isPrimaryFor?: string[];
+  isFallbackFor?: string[];
+  message: string;
+  lastChecked: string;
+}
+
+export interface AgentFallbackHealth {
+  agentId: string;
+  agentName: string;
+  isRunningOnFallback: boolean;
+  isArmed: boolean;
+  primaryProvider: string;
+  primaryStatus: LLMHealthStatus;
+  fallbackProvider: string;
+  fallbackStatus: LLMHealthStatus;
+  reason: string;
+}
+
+export interface LLMHealthReport {
+  status: 'healthy' | 'degraded' | 'critical';
+  uptime: number;
+  timestamp: string;
+  totalProviders: number;
+  onlineCount: number;
+  missingKeyCount: number;
+  unreachableCount: number;
+  providers: ProviderHealthReport[];
+  fallbackAgents?: AgentFallbackHealth[];
+}
+
+
 
