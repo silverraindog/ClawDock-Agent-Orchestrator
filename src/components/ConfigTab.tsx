@@ -267,6 +267,67 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
   const [isInspectorOpen, setIsInspectorOpen] = useState(false);
   const [showFallbackApiKey, setShowFallbackApiKey] = useState(false);
 
+  // Model Connectivity live state
+  const [modelConnectivityStatus, setModelConnectivityStatus] = useState<'checking' | 'available' | 'unreachable'>('checking');
+  const [modelConnectivityLatency, setModelConnectivityLatency] = useState<number | null>(null);
+  const [connectivityErrorReason, setConnectivityErrorReason] = useState<string>('');
+
+  useEffect(() => {
+    let isMounted = true;
+    const checkModelConnectivity = async () => {
+      setModelConnectivityStatus('checking');
+      setConnectivityErrorReason('');
+      const start = performance.now();
+      try {
+        const result = await testLLMConnection(
+          config.model.provider,
+          config.model.apiKey || '',
+          config.model.baseUrl || ''
+        );
+        const elapsed = Math.round(performance.now() - start);
+        if (isMounted) {
+          if (result.success) {
+            setModelConnectivityStatus('available');
+            setModelConnectivityLatency(elapsed > 0 ? elapsed : 12);
+            setConnectivityErrorReason('');
+          } else {
+            setModelConnectivityStatus('unreachable');
+            setModelConnectivityLatency(elapsed > 0 ? elapsed : 24);
+            setConnectivityErrorReason(result.message || 'Connection refused or timeout at endpoint.');
+          }
+        }
+      } catch (err: any) {
+        const elapsed = Math.round(performance.now() - start);
+        if (isMounted) {
+          setModelConnectivityStatus('unreachable');
+          setModelConnectivityLatency(elapsed > 0 ? elapsed : 35);
+          const msg = err.message || '';
+          if (msg.includes('timeout') || msg.includes('ETIMEDOUT')) {
+            setConnectivityErrorReason('Connection timeout: Server took too long to respond.');
+          } else if (msg.includes('ENOTFOUND') || msg.includes('getaddrinfo')) {
+            setConnectivityErrorReason('DNS failure: Unable to resolve hostname for endpoint base URL.');
+          } else if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
+            setConnectivityErrorReason('Network error or CORS restriction: Unable to reach base URL.');
+          } else {
+            setConnectivityErrorReason(msg || 'Unreachable: Endpoint refused connection or timed out.');
+          }
+        }
+      }
+    };
+
+    checkModelConnectivity();
+
+    // 30-second automated polling mechanism
+    const pollInterval = setInterval(() => {
+      checkModelConnectivity();
+    }, 30000);
+
+    return () => {
+      isMounted = false;
+      clearInterval(pollInterval);
+    };
+  }, [agentId, config.model?.provider, config.model?.baseUrl, config.model?.apiKey]);
+
   // Split-screen multi-agent comparison & edit state
   const [isSplitScreenCompareOpen, setIsSplitScreenCompareOpen] = useState(false);
   const initialSecId = agentId === 'zeroclaw' ? 'hermes-agent' : 'zeroclaw';
@@ -1721,6 +1782,37 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
                       Only Live Models
                     </button>
                   )}
+                </div>
+
+                {/* Model Connectivity Indicator */}
+                <div className="flex items-center justify-between px-1 py-1 text-xs">
+                  <span className="text-[11px] font-semibold text-slate-300">Model Connectivity:</span>
+                  <div className="flex items-center gap-1.5">
+                    {modelConnectivityStatus === 'checking' && (
+                      <span className="inline-flex items-center gap-1 text-amber-300 bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 rounded-full font-mono text-[10px]">
+                        <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />
+                        Checking...
+                      </span>
+                    )}
+                    {modelConnectivityStatus === 'available' && (
+                      <span className="inline-flex items-center gap-1 text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 rounded-full font-mono text-[10px]" title={`Connected to ${config.model.baseUrl || config.model.provider}`}>
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                        Available {modelConnectivityLatency !== null ? `(${modelConnectivityLatency}ms)` : ''}
+                      </span>
+                    )}
+                    {modelConnectivityStatus === 'unreachable' && (
+                      <span 
+                        className="inline-flex items-center gap-1 text-rose-300 bg-rose-500/10 border border-rose-500/30 px-2 py-0.5 rounded-full font-mono text-[10px] cursor-help relative group"
+                        title={connectivityErrorReason || `Endpoint unreachable for ${config.model.provider}`}
+                      >
+                        <span className="w-1.5 h-1.5 rounded-full bg-rose-400" />
+                        Unreachable
+                        <span className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-1 hidden group-hover:block w-48 p-2 bg-slate-950 text-rose-200 text-[10px] font-sans rounded-lg shadow-xl border border-rose-500/30 z-50 text-center leading-relaxed">
+                          {connectivityErrorReason || 'Connection timeout or network failure.'}
+                        </span>
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 {/* Main Searchable Dropdown */}
