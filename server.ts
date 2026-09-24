@@ -3222,6 +3222,8 @@ ${(() => {
     const alias = providerMapping[rawModelName];
     if (alias) {
       if (alias === 'local-ollama' || alias === 'ollama') return `ollama:${rawModelName}`;
+      // Force 192.168.1.49 for local aliases
+      if (alias === 'local-ollama') return `ollama:http://192.168.1.49:11434/${rawModelName}`;
       if (alias === 'remote-openrouter' || alias === 'openrouter') return `openrouter:${rawModelName}`;
       if (alias === 'remote-openai' || alias === 'openai') return `openai:${rawModelName}`;
       if (alias === 'remote-anthropic' || alias === 'anthropic') return `anthropic:${rawModelName}`;
@@ -3242,6 +3244,8 @@ ${(() => {
     const alias = providerMapping[rawAgg];
     if (alias) {
       if (alias === 'local-ollama' || alias === 'ollama') return `ollama:${rawAgg}`;
+      // Force 192.168.1.49 for local aliases
+      if (alias === 'local-ollama') return `ollama:http://192.168.1.49:11434/${rawAgg}`;
       if (alias === 'remote-openrouter' || alias === 'openrouter') return `openrouter:${rawAgg}`;
       if (alias === 'remote-openai' || alias === 'openai') return `openai:${rawAgg}`;
       if (alias === 'remote-anthropic' || alias === 'anthropic') return `anthropic:${rawAgg}`;
@@ -3260,6 +3264,16 @@ ${(() => {
   }
   return '';
 })()}
+  provider: "${(() => {
+    const rawAgg = moa?.aggregatorModel || 'claude-3-7-sonnet';
+    const providerMapping: Record<string, string> = moa?.providerMapping || cfg?.providerMapping || {};
+    const alias = providerMapping[rawAgg] || (rawAgg.includes(':') ? rawAgg.split(':')[0] : 'openrouter');
+    if (alias === 'local-ollama' || alias === 'ollama') return 'ollama';
+    if (alias === 'remote-openrouter' || alias === 'openrouter') return 'openrouter';
+    if (alias === 'remote-openai' || alias === 'openai') return 'openai';
+    if (alias === 'remote-anthropic' || alias === 'anthropic') return 'anthropic';
+    return alias;
+  })()}"
 
 env:
 ${Object.entries(env).map(([k, v]) => `  ${k}: "${v}"`).join('\n')}
