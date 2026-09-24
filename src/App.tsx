@@ -13,6 +13,7 @@ import {
   Layers,
   ArrowUpCircle,
   Brain,
+  BookmarkCheck,
   PanelBottom,
   PanelTop
 } from 'lucide-react';
@@ -25,7 +26,8 @@ import {
   DockerSystemInfo, 
   ChatMessage, 
   DiscoveredContainer,
-  SystemUpdateItem
+  SystemUpdateItem,
+  ModelPresetSnapshot
 } from './types';
 import { 
   INITIAL_AGENTS, 
@@ -50,13 +52,18 @@ import {
   saveLocalUpdates,
   fetchSystemUpdates,
   fetchDockerSystemStatus,
-  executeAgentCommand
+  executeAgentCommand,
+  getLocalPresets,
+  saveLocalPresets,
+  fetchPresets,
+  persistPresetsToBackend
 } from './utils/apiBridge';
 import { validateModelAgainstCatalog } from './utils/modelValidation';
 
 import { Navbar } from './components/Navbar';
 import { DashboardTab } from './components/DashboardTab';
 import { ConfigTab } from './components/ConfigTab';
+import { PresetsTab } from './components/PresetsTab';
 import { SkillsTab } from './components/SkillsTab';
 import { MCPTab } from './components/MCPTab';
 import { DockerTab } from './components/DockerTab';
@@ -76,7 +83,7 @@ import {
 } from './utils/configValidator';
 import { enhanceConfigWithNative, detectOpenClawConfigFormat } from './utils/configParser';
 
-type MainTab = 'dashboard' | 'config' | 'everos' | 'skills' | 'mcp' | 'docker' | 'console' | 'export' | 'updates' | 'diagnostics';
+type MainTab = 'dashboard' | 'config' | 'presets' | 'everos' | 'skills' | 'mcp' | 'docker' | 'console' | 'export' | 'updates' | 'diagnostics';
 
 export default function App() {
   const [agents, setAgents] = useState<AgentInfo[]>(() => {
@@ -108,6 +115,9 @@ export default function App() {
   const [configs, setConfigs] = useState<Record<AgentId, AgentFullConfig>>(DEFAULT_CONFIGS);
   const [skills, setSkills] = useState<SkillItem[]>(INITIAL_SKILLS);
   const [mcpServers, setMcpServers] = useState<MCPServerConfig[]>(INITIAL_MCP_SERVERS);
+  const [presets, setPresets] = useState<ModelPresetSnapshot[]>(() => {
+    return getLocalPresets();
+  });
   const [updates, setUpdates] = useState<SystemUpdateItem[]>(() => {
     try {
       const local = getLocalUpdates();
@@ -532,6 +542,46 @@ export default function App() {
           agentId === 'openclaw' ? detectedOpenClawVer : undefined
         );
         verboseLogs.push(`[${new Date().toLocaleTimeString()}] [NATIVE_SYNC] Synced native configuration file (${data.nativeFormat || 'yaml'}): Model=${candidateConfig.model.model} (${candidateConfig.model.provider}), BaseURL=${candidateConfig.model.baseUrl || 'none'}, Context=${candidateConfig.model.contextWindow}, MoA Aggregator=${candidateConfig.moa.aggregatorModel}`);
+      }
+
+      // Enforce MOA aggregator and proposer model URLs/endpoints are correctly resolved to local 192.168.1.49 server instead of moa://local or openrouter
+      if (agentId === 'hermes-agent' || candidateConfig.moa?.enabled || candidateConfig.model?.baseUrl?.includes('192.168.1.49')) {
+        if (!candidateConfig.model.baseUrl || candidateConfig.model.baseUrl === 'moa://local') {
+          candidateConfig.model.baseUrl = 'http://192.168.1.49:11434';
+        }
+        if (!candidateConfig.moa.providerEndpoints) {
+          candidateConfig.moa.providerEndpoints = {};
+        }
+        candidateConfig.moa.providerEndpoints['local-ollama'] = 'http://192.168.1.49:11434';
+        candidateConfig.moa.providerEndpoints['ollama'] = 'http://192.168.1.49:11434';
+        candidateConfig.moa.providerEndpoints['custom'] = 'http://192.168.1.49:11434';
+        candidateConfig.moa.providerEndpoints['custom:ollama'] = 'http://192.168.1.49:11434';
+
+        if (!candidateConfig.moa.providerMapping) {
+          candidateConfig.moa.providerMapping = {};
+        }
+
+        const currentAgg = candidateConfig.moa.aggregatorModel || candidateConfig.model.model || 'gemma4-soul:latest';
+        const cleanAgg = (currentAgg === 'default' || !currentAgg) ? (candidateConfig.model.model || 'gemma4-soul:latest') : currentAgg;
+        candidateConfig.moa.aggregatorModel = cleanAgg;
+
+        if (!candidateConfig.moa.providerMapping[cleanAgg] || candidateConfig.moa.providerMapping[cleanAgg] === 'openrouter' || candidateConfig.moa.providerMapping[cleanAgg] === 'moa://local') {
+          candidateConfig.moa.providerMapping[cleanAgg] = 'custom:ollama';
+        }
+
+        if (!candidateConfig.moa.proposerModels || candidateConfig.moa.proposerModels.length === 0) {
+          candidateConfig.moa.proposerModels = ['gemma4-soul:latest', 'deepseek-coder-v2:16b', 'qwen2-5-coder-7b-32k:latest'];
+        }
+
+        for (const proposer of candidateConfig.moa.proposerModels) {
+          if (!candidateConfig.moa.providerMapping[proposer] || candidateConfig.moa.providerMapping[proposer] === 'openrouter' || candidateConfig.moa.providerMapping[proposer] === 'moa://local') {
+            candidateConfig.moa.providerMapping[proposer] = 'custom:ollama';
+          }
+        }
+
+        candidateConfig.providerMapping = { ...(candidateConfig.providerMapping || {}), ...candidateConfig.moa.providerMapping };
+
+        verboseLogs.push(`[${new Date().toLocaleTimeString()}] [MOA_LOCAL_RESOLVE] Enforced MOA aggregator (${candidateConfig.moa.aggregatorModel}) and proposer endpoints resolved to static IP: http://192.168.1.49:11434 (provider: custom:ollama)`);
       }
 
       verboseLogs.push(`[${new Date().toLocaleTimeString()}] [SOURCE] Detected source: "${data.source || 'docker_exec'}", Path: "${data.filePath || 'container'}"`);
@@ -1550,9 +1600,91 @@ export default function App() {
     }
   };
 
+  // Preset Handlers
+  const handleSavePresets = (updatedPresets: ModelPresetSnapshot[]) => {
+    setPresets(updatedPresets);
+    persistPresetsToBackend(updatedPresets);
+  };
+
+  const handleApplyPresetToAgent = (preset: ModelPresetSnapshot, targetAgentId: AgentId) => {
+    const baseConfig = configs[targetAgentId] || DEFAULT_CONFIGS[targetAgentId] || configs['hermes-agent'];
+    const updatedConfig: AgentFullConfig = {
+      ...baseConfig,
+      model: {
+        ...baseConfig.model,
+        ...preset.model
+      },
+      ...(preset.moa ? {
+        moa: {
+          ...baseConfig.moa,
+          ...preset.moa
+        }
+      } : {}),
+      ...(preset.fallback ? {
+        fallback: {
+          ...baseConfig.fallback,
+          ...preset.fallback
+        }
+      } : {}),
+      ...(preset.system ? {
+        system: {
+          ...baseConfig.system,
+          ...preset.system
+        }
+      } : {})
+    };
+
+    setConfigs(prev => {
+      const next = { ...prev, [targetAgentId]: updatedConfig };
+      saveLocalPersistence('configs', next);
+      return next;
+    });
+
+    saveAgentConfigToBackend(targetAgentId, updatedConfig).catch(() => {});
+  };
+
+  const handleApplyPresetToAllAgents = (preset: ModelPresetSnapshot) => {
+    const AGENT_IDS: AgentId[] = ['hermes-agent', 'zeroclaw', 'openclaw', 'picoclaw'];
+    setConfigs(prev => {
+      const next = { ...prev };
+      AGENT_IDS.forEach(id => {
+        const baseConfig = prev[id] || DEFAULT_CONFIGS[id] || prev['hermes-agent'];
+        next[id] = {
+          ...baseConfig,
+          model: {
+            ...baseConfig.model,
+            ...preset.model
+          },
+          ...(preset.moa ? {
+            moa: {
+              ...baseConfig.moa,
+              ...preset.moa
+            }
+          } : {}),
+          ...(preset.fallback ? {
+            fallback: {
+              ...baseConfig.fallback,
+              ...preset.fallback
+            }
+          } : {}),
+          ...(preset.system ? {
+            system: {
+              ...baseConfig.system,
+              ...preset.system
+            }
+          } : {})
+        };
+        saveAgentConfigToBackend(id, next[id]).catch(() => {});
+      });
+      saveLocalPersistence('configs', next);
+      return next;
+    });
+  };
+
   const topNavItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'config', label: 'Configuration', icon: Sliders },
+    { id: 'presets', label: 'Presets', icon: BookmarkCheck, badge: presets.length },
     { 
       id: 'everos', 
       label: 'EverOS Memory', 
@@ -1830,6 +1962,21 @@ export default function App() {
                   return next;
                 });
               }}
+            />
+          )}
+
+          {currentTab === 'presets' && (
+            <PresetsTab
+              currentAgent={currentAgent}
+              currentConfig={currentConfig}
+              allAgents={agents}
+              allConfigs={configs}
+              presets={presets}
+              onSavePresets={handleSavePresets}
+              onApplyPresetToAgent={handleApplyPresetToAgent}
+              onApplyPresetToAllAgents={handleApplyPresetToAllAgents}
+              onAddToast={addToast}
+              onNavigateTab={(tab) => setCurrentTab(tab as MainTab)}
             />
           )}
 

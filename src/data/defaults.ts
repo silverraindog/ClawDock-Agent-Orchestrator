@@ -113,13 +113,14 @@ export const DEFAULT_CONFIGS: Record<AgentId, AgentFullConfig> = {
     agentId: 'hermes-agent',
     version: '1.0.0',
     model: {
-      provider: 'anthropic',
-      model: 'claude-3-7-sonnet',
-      apiKey: '',
+      provider: 'custom',
+      model: 'gemma4-soul:latest',
+      apiKey: 'ollama',
       temperature: 0.3,
       reasoningEffort: 'high',
       maxTokens: 8192,
       contextWindow: 200000,
+      baseUrl: 'http://192.168.1.49:11434',
       topP: 0.95,
     },
     channels: {
@@ -190,24 +191,46 @@ export const DEFAULT_CONFIGS: Record<AgentId, AgentFullConfig> = {
     },
     moa: {
       enabled: true,
-      proposerModels: ['claude-3-7-sonnet', 'deepseek-r1', 'gpt-4o'],
-      aggregatorModel: 'claude-3-7-sonnet',
+      proposerModels: ['gemma4-soul:latest', 'deepseek-coder-v2:16b', 'qwen2-5-coder-7b-32k:latest'],
+      aggregatorModel: 'gemma4-soul:latest',
       rounds: 2,
       temperatureSpread: 0.3,
-      consensusThreshold: 0.85
+      consensusThreshold: 0.85,
+      providerMapping: {
+        'gemma4-soul:latest': 'custom:ollama',
+        'deepseek-coder-v2:16b': 'custom:ollama',
+        'qwen2-5-coder-7b-32k:latest': 'custom:ollama'
+      },
+      providerEndpoints: {
+        'local-ollama': 'http://192.168.1.49:11434',
+        'ollama': 'http://192.168.1.49:11434',
+        'custom': 'http://192.168.1.49:11434',
+        'custom:ollama': 'http://192.168.1.49:11434'
+      }
     },
     fallback: {
       enabled: true,
       targetAgentId: 'zeroclaw',
       strategy: 'on_offline',
-      fallbackProvider: 'ollama',
-      fallbackModel: 'hermes-3-llama-3.1-8b',
-      provider: 'ollama',
-      model: 'hermes-3-llama-3.1-8b',
+      latencyThresholdMs: 3000,
+      fallbackProvider: 'openrouter',
+      fallbackModel: 'anthropic/claude-3.7-sonnet',
+      provider: 'openrouter',
+      model: 'anthropic/claude-3.7-sonnet',
       apiKey: '',
-      baseUrl: '',
-      useProxy: true
+      baseUrl: 'https://openrouter.ai/api/v1',
+      useProxy: true,
+      providerMapping: {
+        'gemma4-soul:latest': 'custom:ollama',
+        'deepseek-coder-v2:16b': 'custom:ollama',
+        'qwen2-5-coder-7b-32k:latest': 'custom:ollama'
+      }
     },
+    providerMapping: {
+      'gemma4-soul:latest': 'custom:ollama',
+      'deepseek-coder-v2:16b': 'custom:ollama',
+      'qwen2-5-coder-7b-32k:latest': 'custom:ollama'
+    }
   },
   'zeroclaw': {
     agentId: 'zeroclaw',
@@ -1027,13 +1050,71 @@ system_preset: "engineer"
 system_prompt: "You are Hermes Agent, a premier autonomous software engineering and problem-solving AI agent. You have direct access to workspace tools, shell execution, and persistent memory. Always structure complex tasks into clear execution steps, verify your code with tests or linters, and document non-trivial architecture decisions."
 
 model:
-  provider: "anthropic"
-  model: "claude-3-7-sonnet"
+  provider: custom
+  apiKey: ollama
   temperature: 0.3
-  reasoning_effort: "high"
-  max_tokens: 8192
-  context_window: 200000
-  top_p: 0.95
+  reasoningEffort: high
+  maxTokens: 8192
+  contextWindow: 200000
+  baseUrl: http://192.168.1.49:11434
+  topP: 0.95
+  default: gemma4-soul:latest
+  base_url: http://192.168.1.49:11434/v1
+
+web:
+  backend: exa
+  provider_tier:
+    exa: free
+
+moa:
+  enabled: true
+  presets:
+    default:
+      reference_models:
+        - provider: custom:ollama
+          model: gemma4-soul:latest
+          enabled: true
+        - provider: custom:ollama
+          model: deepseek-coder-v2:16b
+          enabled: true
+        - provider: custom:ollama
+          model: qwen2-5-coder-7b-32k:latest
+          enabled: true
+      aggregator:
+        provider: custom:ollama
+        model: gemma4-soul:latest
+      degraded_reference_policy: loud
+      fanout: user_turn
+  reference_models:
+    - provider: custom:ollama
+      model: gemma4-soul:latest
+      enabled: true
+    - provider: custom:ollama
+      model: deepseek-coder-v2:16b
+      enabled: true
+    - provider: custom:ollama
+      model: qwen2-5-coder-7b-32k:latest
+      enabled: true
+  aggregator:
+    provider: custom:ollama
+    model: gemma4-soul:latest
+  degraded_reference_policy: loud
+  max_tokens: 4096
+  fanout: user_turn
+  rounds: 2
+  temperature_spread: 0.3
+  consensus_threshold: 0.85
+
+fallback:
+  enabled: true
+  strategy: "on_offline"
+  target_agent_id: "zeroclaw"
+  latency_threshold_ms: 3000
+  provider: "openrouter"
+  model: "anthropic/claude-3.7-sonnet"
+  api_key: ""
+  base_url: "https://openrouter.ai/api/v1"
+  use_proxy: true
 
 channels:
   telegram:
@@ -1067,17 +1148,6 @@ storage:
   auto_summarize_interval: 25
   max_history_turns: 100
   vector_db_url: "http://everos:8080"
-
-moa:
-  enabled: true
-  proposer_models:
-    - "claude-3-7-sonnet"
-    - "deepseek-r1"
-    - "gpt-4o"
-  aggregator_model: "claude-3-7-sonnet"
-  rounds: 2
-  temperature_spread: 0.3
-  consensus_threshold: 0.85
 
 env:
   HERMES_LOG_LEVEL: "INFO"

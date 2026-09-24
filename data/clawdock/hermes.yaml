@@ -3,16 +3,35 @@ agent_id: "hermes-agent"
 agent_name: "Hermes Code Assistant"
 persona: "Hermes Prime"
 system_preset: "engineer"
-system_prompt: "You are Hermes Agent, a premier autonomous software engineering and problem-solving AI agent. You have direct access to workspace tools, shell execution, and persistent memory. Always structure complex tasks into clear execution steps, verify your code with tests or linters, and document non-trivial architecture decisions."
+system_prompt: ""
 
 model:
-  provider: "anthropic"
-  model: "claude-3-7-sonnet"
+  provider: custom
+  apiKey: ollama
   temperature: 0.3
-  reasoning_effort: "high"
-  max_tokens: 8192
-  context_window: 200000
-  top_p: 0.95
+  reasoningEffort: high
+  maxTokens: 8192
+  contextWindow: 200000
+  baseUrl: http://192.168.1.49:11434
+  topP: 0.95
+  default: gemma4-soul:latest
+  base_url: http://192.168.1.49:11434/v1
+
+web:
+  backend: exa
+  provider_tier:
+    exa: free
+
+fallback:
+  enabled: true
+  strategy: "on_offline"
+  target_agent_id: "zeroclaw"
+  latency_threshold_ms: 3000
+  provider: "openrouter"
+  model: "anthropic/claude-3.7-sonnet"
+  api_key: ""
+  base_url: "https://openrouter.ai/api/v1"
+  use_proxy: true
 
 channels:
   telegram:
@@ -22,9 +41,6 @@ channels:
     mode: "polling"
   discord:
     enabled: false
-  slack:
-    enabled: false
-    socket_mode: true
   webhook:
     enabled: true
     port: 8080
@@ -49,16 +65,42 @@ storage:
 
 moa:
   enabled: true
-  proposer_models:
-    - "claude-3-7-sonnet"
-    - "deepseek-r1"
-    - "gpt-4o"
-  aggregator_model: "claude-3-7-sonnet"
+  presets:
+    default:
+      reference_models:
+        - provider: gemma4-soul
+          model: latest
+          enabled: true
+        - provider: deepseek-coder-v2
+          model: 16b
+          enabled: true
+        - provider: qwen2-5-coder-7b-32k
+          model: latest
+          enabled: true
+      aggregator:
+        provider: gemma4-soul
+        model: latest
+      degraded_reference_policy: loud
+      fanout: user_turn
+  reference_models:
+        - provider: gemma4-soul
+          model: latest
+          enabled: true
+        - provider: deepseek-coder-v2
+          model: 16b
+          enabled: true
+        - provider: qwen2-5-coder-7b-32k
+          model: latest
+          enabled: true
+  aggregator:
+    provider: gemma4-soul
+    model: latest
+  degraded_reference_policy: loud
+  max_tokens: 4096
+  fanout: user_turn
   rounds: 2
   temperature_spread: 0.3
   consensus_threshold: 0.85
 
 env:
-  HERMES_LOG_LEVEL: "INFO"
-  PYTHONUNBUFFERED: "1"
-  WORKSPACE_ROOT: "/workspace"
+

@@ -4,14 +4,10 @@
       "agentId": "hermes-agent",
       "version": "1.0.0",
       "model": {
-        "provider": "anthropic",
-        "model": "claude-3-7-sonnet",
-        "apiKey": "",
-        "temperature": 0.2,
-        "reasoningEffort": "high",
-        "maxTokens": 4096,
-        "contextWindow": 128000,
-        "topP": 0.95
+        "provider": "custom",
+        "model": "gemma4-soul:latest",
+        "baseUrl": "http://192.168.1.49:11434",
+        "apiKey": "ollama"
       },
       "channels": {
         "telegram": {
@@ -54,8 +50,8 @@
       "system": {
         "preset": "engineer",
         "systemPrompt": "You are hermes-agent, an autonomous AI assistant.",
-        "agentName": "Hermes Agent",
-        "personaName": "Hermes Agent",
+        "agentName": "Hermes Code Assistant",
+        "personaName": "Hermes Code Assistant",
         "language": "en-US",
         "autoFormatCode": true
       },
@@ -79,19 +75,42 @@
       },
       "moa": {
         "enabled": true,
+        "aggregatorModel": "gemma4-soul:latest",
         "proposerModels": [
-          "claude-3-7-sonnet",
-          "deepseek-r1",
-          "gpt-4o"
-        ],
-        "aggregatorModel": "claude-3-7-sonnet",
-        "rounds": 2,
-        "temperatureSpread": 0.3,
-        "consensusThreshold": 0.85
+          "gemma4-soul:latest",
+          "deepseek-coder-v2:16b",
+          "qwen2-5-coder-7b-32k:latest"
+        ]
+      },
+      "providerMapping": {
+        "latest": "qwen2-5-coder-7b-32k",
+        "16b": "deepseek-coder-v2"
       },
       "customEnv": {
         "CONTAINER_MOUNT_DIR": "/workspace/hermes-agent",
         "LOG_LEVEL": "info"
+      },
+      "fallback": {
+        "enabled": true,
+        "targetAgentId": "zeroclaw",
+        "strategy": "on_offline",
+        "latencyThresholdMs": 3000,
+        "fallbackProvider": "ollama",
+        "fallbackModel": "hermes-3-llama-3.1-8b",
+        "provider": "openrouter",
+        "model": "anthropic/claude-3.7-sonnet",
+        "apiKey": "",
+        "baseUrl": "https://openrouter.ai/api/v1",
+        "useProxy": true,
+        "target_agent_id": "zeroclaw",
+        "latency_threshold_ms": 3000,
+        "api_key": "",
+        "base_url": "https://openrouter.ai/api/v1",
+        "use_proxy": true,
+        "providerMapping": {
+          "latest": "qwen2-5-coder-7b-32k",
+          "16b": "deepseek-coder-v2"
+        }
       }
     },
     "zeroclaw": {

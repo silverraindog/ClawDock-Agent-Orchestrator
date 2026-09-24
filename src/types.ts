@@ -169,6 +169,24 @@ export interface AgentFullConfig {
 
 export type ConfigFullConfig = AgentFullConfig;
 
+export type PresetCategory = 'coding' | 'reasoning' | 'speed' | 'general' | 'moa' | 'custom';
+
+export interface ModelPresetSnapshot {
+  id: string;
+  name: string;
+  description: string;
+  category: PresetCategory | string;
+  isBuiltIn?: boolean;
+  createdAt: string;
+  updatedAt?: string;
+  targetAgentId?: AgentId | 'all';
+  tags?: string[];
+  model: ModelConfig;
+  moa?: MoAConfig;
+  fallback?: FallbackConfig;
+  system?: Partial<SystemPromptConfig>;
+}
+
 export interface SkillItem {
   id: string;
   name: string;

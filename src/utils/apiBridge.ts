@@ -1,5 +1,6 @@
-import { AgentFullConfig, AgentId, AgentInfo, DockerSystemInfo, SystemUpdateItem, LLMHealthReport } from '../types';
+import { AgentFullConfig, AgentId, AgentInfo, DockerSystemInfo, SystemUpdateItem, LLMHealthReport, ModelPresetSnapshot } from '../types';
 import { DEFAULT_CONFIGS, DEFAULT_NATIVE_FILES, INITIAL_AGENTS } from '../data/defaults';
+import { INITIAL_PRESETS } from '../data/presetsData';
 import { enhanceConfigWithNative } from './configParser';
 
 // Client-Side Resilient Persistence & Config Bridge
@@ -971,6 +972,51 @@ export function saveLocalPersistence(key: string, value: any): void {
     current[key] = value;
     localStorage.setItem(LOCAL_PERSISTENCE_KEY, JSON.stringify(current));
   } catch {}
+}
+
+export function getLocalPresets(): ModelPresetSnapshot[] {
+  try {
+    const persist = getLocalPersistence();
+    if (persist && Array.isArray(persist.presets) && persist.presets.length > 0) {
+      return persist.presets;
+    }
+  } catch {}
+  return INITIAL_PRESETS;
+}
+
+export function saveLocalPresets(presets: ModelPresetSnapshot[]): void {
+  saveLocalPersistence('presets', presets);
+}
+
+export async function fetchPresets(): Promise<ModelPresetSnapshot[]> {
+  try {
+    const res = await fetch('/api/persistence');
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.data && Array.isArray(data.data.presets) && data.data.presets.length > 0) {
+        saveLocalPresets(data.data.presets);
+        return data.data.presets;
+      }
+    }
+  } catch (err) {
+    console.warn('[API Bridge] Failed to fetch remote presets from /api/persistence:', err);
+  }
+  return getLocalPresets();
+}
+
+export async function persistPresetsToBackend(presets: ModelPresetSnapshot[]): Promise<boolean> {
+  saveLocalPresets(presets);
+  try {
+    const res = await fetch('/api/persistence', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: 'presets', value: presets })
+    });
+    return res.ok;
+  } catch (err) {
+    console.warn('[API Bridge] Failed to persist presets to backend:', err);
+    return false;
+  }
 }
 
 const AGENT_STATES_LOCAL_KEY = 'clawdock_agent_runtime_states';

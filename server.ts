@@ -1653,13 +1653,71 @@ system_preset: "engineer"
 system_prompt: "You are Hermes Agent, a premier autonomous software engineering and problem-solving AI agent. You have direct access to workspace tools, shell execution, and persistent memory. Always structure complex tasks into clear execution steps, verify your code with tests or linters, and document non-trivial architecture decisions."
 
 model:
-  provider: "anthropic"
-  model: "claude-3-7-sonnet"
+  provider: custom
+  apiKey: ollama
   temperature: 0.3
-  reasoning_effort: "high"
-  max_tokens: 8192
-  context_window: 200000
-  top_p: 0.95
+  reasoningEffort: high
+  maxTokens: 8192
+  contextWindow: 200000
+  baseUrl: http://192.168.1.49:11434
+  topP: 0.95
+  default: gemma4-soul:latest
+  base_url: http://192.168.1.49:11434/v1
+
+web:
+  backend: exa
+  provider_tier:
+    exa: free
+
+moa:
+  enabled: true
+  presets:
+    default:
+      reference_models:
+        - provider: custom:ollama
+          model: gemma4-soul:latest
+          enabled: true
+        - provider: custom:ollama
+          model: deepseek-coder-v2:16b
+          enabled: true
+        - provider: custom:ollama
+          model: qwen2-5-coder-7b-32k:latest
+          enabled: true
+      aggregator:
+        provider: custom:ollama
+        model: gemma4-soul:latest
+      degraded_reference_policy: loud
+      fanout: user_turn
+  reference_models:
+    - provider: custom:ollama
+      model: gemma4-soul:latest
+      enabled: true
+    - provider: custom:ollama
+      model: deepseek-coder-v2:16b
+      enabled: true
+    - provider: custom:ollama
+      model: qwen2-5-coder-7b-32k:latest
+      enabled: true
+  aggregator:
+    provider: custom:ollama
+    model: gemma4-soul:latest
+  degraded_reference_policy: loud
+  max_tokens: 4096
+  fanout: user_turn
+  rounds: 2
+  temperature_spread: 0.3
+  consensus_threshold: 0.85
+
+fallback:
+  enabled: true
+  strategy: "on_offline"
+  target_agent_id: "zeroclaw"
+  latency_threshold_ms: 3000
+  provider: "openrouter"
+  model: "anthropic/claude-3.7-sonnet"
+  api_key: ""
+  base_url: "https://openrouter.ai/api/v1"
+  use_proxy: true
 
 channels:
   telegram:
@@ -1693,17 +1751,6 @@ storage:
   auto_summarize_interval: 25
   max_history_turns: 100
   vector_db_url: "http://everos:8080"
-
-moa:
-  enabled: true
-  proposer_models:
-    - "claude-3-7-sonnet"
-    - "deepseek-r1"
-    - "gpt-4o"
-  aggregator_model: "claude-3-7-sonnet"
-  rounds: 2
-  temperature_spread: 0.3
-  consensus_threshold: 0.85
 
 env:
   HERMES_LOG_LEVEL: "INFO"
@@ -2344,6 +2391,61 @@ app.all('/api/persistence', (req, res, next) => {
   next();
 });
 
+// Dedicated Presets Endpoints for persistence.json
+app.get('/api/presets', (req, res) => {
+  try {
+    const current = loadClawdockPersistence();
+    const presets = Array.isArray(current.presets) ? current.presets : [];
+    return res.json({ success: true, presets, count: presets.length });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/presets', (req, res) => {
+  try {
+    const current = loadClawdockPersistence();
+    const { preset, presets } = req.body || {};
+
+    if (Array.isArray(presets)) {
+      current.presets = presets;
+      saveClawdockPersistence(current);
+      return res.json({ success: true, presets: current.presets, message: 'All presets updated in persistence.json' });
+    }
+
+    if (preset && typeof preset === 'object' && preset.id) {
+      const list = Array.isArray(current.presets) ? [...current.presets] : [];
+      const idx = list.findIndex((p: any) => p.id === preset.id);
+      if (idx >= 0) {
+        list[idx] = preset;
+      } else {
+        list.unshift(preset);
+      }
+      current.presets = list;
+      saveClawdockPersistence(current);
+      return res.json({ success: true, preset, presets: current.presets, message: 'Preset snapshot saved to persistence.json' });
+    }
+
+    return res.status(400).json({ success: false, error: 'Invalid preset payload' });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.delete('/api/presets/:id', (req, res) => {
+  try {
+    const current = loadClawdockPersistence();
+    const targetId = req.params.id;
+    if (Array.isArray(current.presets)) {
+      current.presets = current.presets.filter((p: any) => p.id !== targetId);
+      saveClawdockPersistence(current);
+    }
+    return res.json({ success: true, message: `Preset ${targetId} removed from persistence.json`, presets: current.presets || [] });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // Runtime Agent States Sync Endpoints (/api/state)
 app.all('/api/state', async (req, res, next) => {
   if (req.method === 'OPTIONS') {
@@ -2466,6 +2568,7 @@ function getAgentConfigData(agentId: string, requestedFormatVersion?: string) {
   // 3. Parse native content into structured configSchema for UI
   let parsedModelProvider = agentId === 'zeroclaw' ? 'deepseek' : agentId === 'openclaw' ? 'openai' : agentId === 'picoclaw' ? 'ollama' : 'anthropic';
   let parsedModelName = agentId === 'zeroclaw' ? 'deepseek-r1' : agentId === 'openclaw' ? 'gpt-4o' : agentId === 'picoclaw' ? 'qwen2.5-coder:7b' : 'claude-3-7-sonnet';
+  let parsedModelBaseUrl = '';
   let parsedTemperature = 0.2;
   let parsedSandboxMode = 'docker_isolated';
   let parsedMemoryBackend = 'everos';
@@ -2594,7 +2697,12 @@ function getAgentConfigData(agentId: string, requestedFormatVersion?: string) {
       const parsedYaml: any = YAML.parse(nativeContent);
       if (parsedYaml.agent_name) parsedAgentName = parsedYaml.agent_name;
       if (parsedYaml.model?.provider) parsedModelProvider = parsedYaml.model.provider;
-      if (parsedYaml.model?.model) parsedModelName = parsedYaml.model.model;
+      if (parsedYaml.model?.default || parsedYaml.model?.model || parsedYaml.model?.model_name || parsedYaml.model?.checkpoint) {
+        parsedModelName = parsedYaml.model.default || parsedYaml.model.model || parsedYaml.model.model_name || parsedYaml.model.checkpoint;
+      }
+      if (parsedYaml.model?.baseUrl || parsedYaml.model?.base_url) {
+        parsedModelBaseUrl = parsedYaml.model.baseUrl || parsedYaml.model.base_url;
+      }
       if (parsedYaml.model?.temperature !== undefined) parsedTemperature = Number(parsedYaml.model.temperature);
       
       if (parsedYaml.security?.sandbox_mode || parsedYaml.security?.sandboxMode) {
@@ -2604,16 +2712,46 @@ function getAgentConfigData(agentId: string, requestedFormatVersion?: string) {
         parsedMemoryBackend = parsedYaml.storage.memory_backend || parsedYaml.storage.memoryBackend;
       }
       if (parsedYaml.system_prompt) parsedSystemPrompt = parsedYaml.system_prompt;
+
       if (parsedYaml.moa && typeof parsedYaml.moa === 'object') {
         if (parsedYaml.moa.enabled !== undefined) moaEnabled = Boolean(parsedYaml.moa.enabled);
-        if (parsedYaml.moa.proposer_models || parsedYaml.moa.proposerModels) {
-          parsedMoaProposers = parsedYaml.moa.proposer_models || parsedYaml.moa.proposerModels;
-        }
-        if (parsedYaml.moa.aggregator_model || parsedYaml.moa.aggregatorModel) {
+
+        // Parse Aggregator
+        const aggObj = parsedYaml.moa.aggregator || parsedYaml.moa.presets?.default?.aggregator;
+        if (aggObj && typeof aggObj === 'object') {
+          if (aggObj.model) parsedMoaAggregator = aggObj.model;
+          if (aggObj.provider) parsedMoaMapping[aggObj.model] = aggObj.provider;
+        } else if (typeof aggObj === 'string') {
+          parsedMoaAggregator = aggObj;
+        } else if (parsedYaml.moa.aggregator_model || parsedYaml.moa.aggregatorModel) {
           parsedMoaAggregator = parsedYaml.moa.aggregator_model || parsedYaml.moa.aggregatorModel;
         }
+
+        // Parse Reference Models / Proposers
+        const refModels = parsedYaml.moa.reference_models || parsedYaml.moa.presets?.default?.reference_models;
+        if (Array.isArray(refModels) && refModels.length > 0) {
+          parsedMoaProposers = refModels.map((item: any) => {
+            if (typeof item === 'string') return item;
+            if (item && item.model) {
+              if (item.provider) parsedMoaMapping[item.model] = item.provider;
+              return item.model;
+            }
+            return '';
+          }).filter(Boolean);
+        } else if (parsedYaml.moa.proposer_models || parsedYaml.moa.proposerModels) {
+          parsedMoaProposers = parsedYaml.moa.proposer_models || parsedYaml.moa.proposerModels;
+        }
+
+        if (parsedYaml.moa.rounds !== undefined) parsedMoaRounds = Number(parsedYaml.moa.rounds);
+        if (parsedYaml.moa.temperature_spread !== undefined || parsedYaml.moa.temperatureSpread !== undefined) {
+          parsedMoaTempSpread = Number(parsedYaml.moa.temperature_spread ?? parsedYaml.moa.temperatureSpread);
+        }
+        if (parsedYaml.moa.consensus_threshold !== undefined || parsedYaml.moa.consensusThreshold !== undefined) {
+          parsedMoaConsensus = Number(parsedYaml.moa.consensus_threshold ?? parsedYaml.moa.consensusThreshold);
+        }
+
         if (parsedYaml.moa.provider_mapping || parsedYaml.moa.providerMapping) {
-          parsedMoaMapping = parsedYaml.moa.provider_mapping || parsedYaml.moa.providerMapping;
+          parsedMoaMapping = { ...parsedMoaMapping, ...(parsedYaml.moa.provider_mapping || parsedYaml.moa.providerMapping) };
         }
       }
       if (parsedYaml.provider_mapping || parsedYaml.providerMapping) {
@@ -2637,7 +2775,23 @@ function getAgentConfigData(agentId: string, requestedFormatVersion?: string) {
 
     // Final safety check for missing model names (don't revert to default if it's literally empty string or "provider:")
     if (parsedModelName === 'provider:' || !parsedModelName) {
-      parsedModelName = agentId === 'zeroclaw' ? 'deepseek-r1' : agentId === 'openclaw' ? 'gpt-4o' : agentId === 'picoclaw' ? 'qwen2.5-coder:7b' : 'claude-3-7-sonnet';
+      parsedModelName = agentId === 'zeroclaw' ? 'deepseek-r1' : agentId === 'openclaw' ? 'gpt-4o' : agentId === 'picoclaw' ? 'qwen2.5-coder:7b' : agentId === 'hermes-agent' ? 'gemma4-soul:latest' : 'claude-3-7-sonnet';
+    }
+
+    // Enforce MOA aggregator and proposer model URLs/endpoints are correctly resolved to local '192.168.1.49' server instead of defaulting to 'moa://local' or 'openrouter'
+    if (agentId === 'hermes-agent' || parsedModelBaseUrl?.includes('192.168.1.49') || parsedModelProvider === 'custom') {
+      if (!parsedModelBaseUrl) parsedModelBaseUrl = 'http://192.168.1.49:11434';
+      if (!parsedMoaAggregator || parsedMoaAggregator === 'default') {
+        parsedMoaAggregator = parsedModelName || 'gemma4-soul:latest';
+      }
+      if (!parsedMoaMapping[parsedMoaAggregator] || parsedMoaMapping[parsedMoaAggregator] === 'openrouter' || parsedMoaMapping[parsedMoaAggregator] === 'moa://local') {
+        parsedMoaMapping[parsedMoaAggregator] = 'custom:ollama';
+      }
+      for (const p of parsedMoaProposers) {
+        if (!parsedMoaMapping[p] || parsedMoaMapping[p] === 'openrouter' || parsedMoaMapping[p] === 'moa://local') {
+          parsedMoaMapping[p] = 'custom:ollama';
+        }
+      }
     }
   } catch (e) {
     console.error('Error parsing config details from file:', e);
@@ -2646,6 +2800,13 @@ function getAgentConfigData(agentId: string, requestedFormatVersion?: string) {
   if (!parsedMoaAggregator) {
     parsedMoaAggregator = parsedModelName;
   }
+
+  const endpointOverrides = {
+    'local-ollama': 'http://192.168.1.49:11434',
+    'ollama': 'http://192.168.1.49:11434',
+    'custom': 'http://192.168.1.49:11434',
+    'custom:ollama': 'http://192.168.1.49:11434'
+  };
 
   return {
     success: true,
@@ -2664,11 +2825,12 @@ function getAgentConfigData(agentId: string, requestedFormatVersion?: string) {
       model: {
         provider: parsedModelProvider as any,
         model: parsedModelName,
-        apiKey: '',
+        apiKey: (agentId === 'hermes-agent' && parsedModelProvider === 'custom') ? 'ollama' : '',
+        baseUrl: parsedModelBaseUrl || (agentId === 'hermes-agent' ? 'http://192.168.1.49:11434' : undefined),
         temperature: parsedTemperature,
         reasoningEffort: 'high',
-        maxTokens: 4096,
-        contextWindow: 128000,
+        maxTokens: agentId === 'hermes-agent' ? 8192 : 4096,
+        contextWindow: agentId === 'hermes-agent' ? 200000 : 128000,
         topP: 0.95
       },
       channels: {
@@ -2709,7 +2871,8 @@ function getAgentConfigData(agentId: string, requestedFormatVersion?: string) {
         rounds: parsedMoaRounds,
         temperatureSpread: parsedMoaTempSpread,
         consensusThreshold: parsedMoaConsensus,
-        providerMapping: parsedMoaMapping
+        providerMapping: parsedMoaMapping,
+        providerEndpoints: endpointOverrides
       },
       providerMapping: parsedMoaMapping,
       customEnv: {
@@ -3133,6 +3296,50 @@ app.all(['/api/llm/health', '/api/health/llm', '/api/llm-health'], async (req, r
   }
 });
 
+function parseModelAndProvider(rawInput: string, providerMapping: Record<string, string> = {}, defaultFallbackModel = 'gemma4-soul:latest'): { provider: string; model: string } {
+  const KNOWN_PROVIDERS = new Set(['custom:ollama', 'custom', 'ollama', 'openrouter', 'openai', 'anthropic', 'gemini', 'google', 'groq', 'mistral', 'together', 'deepseek']);
+  const raw = (!rawInput || rawInput === 'default') ? defaultFallbackModel : rawInput.trim();
+
+  if (raw.startsWith('custom:ollama:')) {
+    return { provider: 'custom:ollama', model: raw.slice('custom:ollama:'.length) };
+  }
+  if (raw.startsWith('ollama:') || raw.startsWith('custom:')) {
+    const modelPart = raw.slice(raw.indexOf(':') + 1);
+    return { provider: 'custom:ollama', model: modelPart };
+  }
+
+  // Check if it starts with a recognized provider prefix (e.g. openrouter:anthropic/claude-3-7-sonnet)
+  const firstColonIndex = raw.indexOf(':');
+  if (firstColonIndex !== -1 && !raw.includes('://')) {
+    const candidatePrefix = raw.slice(0, firstColonIndex).toLowerCase();
+    if (KNOWN_PROVIDERS.has(candidatePrefix)) {
+      const modelPart = raw.slice(firstColonIndex + 1);
+      return { provider: candidatePrefix, model: modelPart };
+    }
+  }
+
+  // No known provider prefix; whole string is model name (e.g. gemma4-soul:latest, deepseek-coder-v2:16b)
+  const alias = providerMapping[raw];
+  if (alias) {
+    if (alias === 'local-ollama' || alias === 'ollama' || alias === 'custom:ollama' || alias === 'custom') {
+      return { provider: 'custom:ollama', model: raw };
+    }
+    if (alias === 'remote-openrouter' || alias === 'openrouter') {
+      return { provider: 'openrouter', model: raw };
+    }
+    if (alias === 'remote-openai' || alias === 'openai') {
+      return { provider: 'openai', model: raw };
+    }
+    if (alias === 'remote-anthropic' || alias === 'anthropic') {
+      return { provider: 'anthropic', model: raw };
+    }
+    return { provider: alias, model: raw };
+  }
+
+  // Default to custom:ollama for local cluster models
+  return { provider: 'custom:ollama', model: raw };
+}
+
 function generateHermesYaml(cfg: any): string {
   const m = cfg?.model || {};
   const sys = cfg?.system || {};
@@ -3141,15 +3348,41 @@ function generateHermesYaml(cfg: any): string {
   const sto = cfg?.storage || {};
   const env = cfg?.customEnv || {};
   const fb = cfg?.fallback || {};
+  const web = cfg?.web || {};
+  const providerMapping: Record<string, string> = moa?.providerMapping || cfg?.providerMapping || {};
 
-  const provider = m?.provider && m.provider.trim() !== '' ? m.provider : 'anthropic';
-  const model = m?.model && m.model.trim() !== '' ? m.model : 'claude-3-7-sonnet';
-  const apiKey = m?.apiKey || process.env.ANTHROPIC_API_KEY || process.env.GEMINI_API_KEY || '';
+  const rawModel = m?.default || m?.model || 'gemma4-soul:latest';
+  const model = rawModel === 'default' ? 'gemma4-soul:latest' : rawModel;
+  const rawProvider = m?.provider || 'custom';
+  const isOllamaLocal = rawProvider === 'ollama' || rawProvider === 'custom' || m?.baseUrl?.includes('192.168.1.49') || m?.baseUrl === 'http://192.168.1.49:11434' || !m?.baseUrl;
+  const finalProvider = isOllamaLocal ? 'custom' : rawProvider;
+  const finalApiKey = isOllamaLocal ? (m?.apiKey || 'ollama') : (m?.apiKey || '');
+  const rawBaseUrl = m?.baseUrl || (isOllamaLocal ? 'http://192.168.1.49:11434' : '');
+  const finalBaseUrl = rawBaseUrl || 'http://192.168.1.49:11434';
+  const finalBaseUrlV1 = rawBaseUrl ? (rawBaseUrl.endsWith('/v1') ? rawBaseUrl : rawBaseUrl + '/v1') : 'http://192.168.1.49:11434/v1';
 
-  const fbProvider = fb?.provider || fb?.fallbackProvider || 'ollama';
-  const fbModel = fb?.model || fb?.fallbackModel || 'hermes-3-llama-3.1-8b';
+  // Proposer / Reference model resolution
+  const rawProposers = (moa?.proposerModels && moa.proposerModels.length > 0)
+    ? moa.proposerModels
+    : ['gemma4-soul:latest', 'deepseek-coder-v2:16b', 'qwen2-5-coder-7b-32k:latest'];
+
+  const referenceModelsList = rawProposers.map((rawModelName: string) => {
+    const resolved = parseModelAndProvider(rawModelName, providerMapping, 'gemma4-soul:latest');
+    return `        - provider: ${resolved.provider}
+          model: ${resolved.model}
+          enabled: true`;
+  }).join('\n');
+
+  // Aggregator model resolution
+  const rawAgg = moa?.aggregatorModel || model || 'gemma4-soul:latest';
+  const resolvedAgg = parseModelAndProvider(rawAgg, providerMapping, model || 'gemma4-soul:latest');
+  const aggProv = resolvedAgg.provider;
+  const aggModel = resolvedAgg.model;
+
+  const fbProvider = fb?.provider || fb?.fallbackProvider || 'openrouter';
+  const fbModel = fb?.model || fb?.fallbackModel || 'anthropic/claude-3.7-sonnet';
   const fbApiKey = fb?.apiKey || '';
-  const fbBaseUrl = fb?.baseUrl || '';
+  const fbBaseUrl = fb?.baseUrl || 'https://openrouter.ai/api/v1';
 
   return `version: "1.0.0"
 agent_id: "${cfg?.agentId || 'hermes-agent'}"
@@ -3159,14 +3392,21 @@ system_preset: "${sys?.preset || 'engineer'}"
 system_prompt: "${(sys?.systemPrompt || '').replace(/"/g, '\\"')}"
 
 model:
-  provider: "${provider}"
-  model: "${model}"
-  api_key: "${apiKey}"
+  provider: ${finalProvider}
+  apiKey: ${finalApiKey}
   temperature: ${m?.temperature ?? 0.3}
-  reasoning_effort: "${m?.reasoningEffort || 'medium'}"
-  max_tokens: ${m?.maxTokens ?? 8192}
-  context_window: ${m?.contextWindow ?? 131072}
-  top_p: ${m?.topP ?? 0.95}
+  reasoningEffort: ${m?.reasoningEffort || 'high'}
+  maxTokens: ${m?.maxTokens ?? 8192}
+  contextWindow: ${m?.contextWindow ?? 200000}
+  baseUrl: ${finalBaseUrl}
+  topP: ${m?.topP ?? 0.95}
+  default: ${model}
+  base_url: ${finalBaseUrlV1}
+
+web:
+  backend: ${web?.backend || 'exa'}
+  provider_tier:
+    exa: ${web?.provider_tier?.exa || 'free'}
 
 fallback:
   enabled: ${fb?.enabled ?? true}
@@ -3211,69 +3451,26 @@ storage:
 
 moa:
   enabled: ${moa?.enabled ?? true}
-  proposer_models:
-${(() => {
-  const providerMapping: Record<string, string> = moa?.providerMapping || cfg?.providerMapping || {};
-  const resolveModelWithProvider = (rawModelName: string): string => {
-    if (!rawModelName) return rawModelName;
-    if (rawModelName.includes(':') && (rawModelName.startsWith('ollama:') || rawModelName.startsWith('openrouter:') || rawModelName.startsWith('openai:') || rawModelName.startsWith('anthropic:') || rawModelName.startsWith('custom:'))) {
-      return rawModelName;
-    }
-    const alias = providerMapping[rawModelName];
-    if (alias) {
-      if (alias === 'local-ollama' || alias === 'ollama') return `ollama:${rawModelName}`;
-      // Force 192.168.1.49 for local aliases
-      if (alias === 'local-ollama') return `ollama:http://192.168.1.49:11434/${rawModelName}`;
-      if (alias === 'remote-openrouter' || alias === 'openrouter') return `openrouter:${rawModelName}`;
-      if (alias === 'remote-openai' || alias === 'openai') return `openai:${rawModelName}`;
-      if (alias === 'remote-anthropic' || alias === 'anthropic') return `anthropic:${rawModelName}`;
-      if (alias === 'local-vllm' || alias === 'vllm' || alias === 'custom') return `custom:${rawModelName}`;
-      return `${alias}:${rawModelName}`;
-    }
-    return rawModelName;
-  };
-  const proposers = (moa?.proposerModels || ['claude-3-7-sonnet', 'deepseek-r1']).map((p: string) => `    - "${resolveModelWithProvider(p)}"`);
-  return proposers.join('\n');
-})()}
-  aggregator_model: "${(() => {
-    const rawAgg = moa?.aggregatorModel || 'claude-3-7-sonnet';
-    const providerMapping: Record<string, string> = moa?.providerMapping || cfg?.providerMapping || {};
-    if (rawAgg.includes(':') && (rawAgg.startsWith('ollama:') || rawAgg.startsWith('openrouter:') || rawAgg.startsWith('openai:') || rawAgg.startsWith('anthropic:') || rawAgg.startsWith('custom:'))) {
-      return rawAgg;
-    }
-    const alias = providerMapping[rawAgg];
-    if (alias) {
-      if (alias === 'local-ollama' || alias === 'ollama') return `ollama:${rawAgg}`;
-      // Force 192.168.1.49 for local aliases
-      if (alias === 'local-ollama') return `ollama:http://192.168.1.49:11434/${rawAgg}`;
-      if (alias === 'remote-openrouter' || alias === 'openrouter') return `openrouter:${rawAgg}`;
-      if (alias === 'remote-openai' || alias === 'openai') return `openai:${rawAgg}`;
-      if (alias === 'remote-anthropic' || alias === 'anthropic') return `anthropic:${rawAgg}`;
-      if (alias === 'local-vllm' || alias === 'vllm' || alias === 'custom') return `custom:${rawAgg}`;
-      return `${alias}:${rawAgg}`;
-    }
-    return rawAgg;
-  })()}"
+  presets:
+    default:
+      reference_models:
+${referenceModelsList}
+      aggregator:
+        provider: ${aggProv}
+        model: ${aggModel}
+      degraded_reference_policy: loud
+      fanout: user_turn
+  reference_models:
+${referenceModelsList}
+  aggregator:
+    provider: ${aggProv}
+    model: ${aggModel}
+  degraded_reference_policy: loud
+  max_tokens: 4096
+  fanout: user_turn
   rounds: ${moa?.rounds ?? 2}
   temperature_spread: ${moa?.temperatureSpread ?? 0.3}
   consensus_threshold: ${moa?.consensusThreshold ?? 0.85}
-${(() => {
-  const providerMapping: Record<string, string> = moa?.providerMapping || cfg?.providerMapping || {};
-  if (Object.keys(providerMapping).length > 0) {
-    return `  provider_mapping:\n${Object.entries(providerMapping).map(([m, p]) => `    "${m}": "${p}"`).join('\n')}`;
-  }
-  return '';
-})()}
-  provider: "${(() => {
-    const rawAgg = moa?.aggregatorModel || 'claude-3-7-sonnet';
-    const providerMapping: Record<string, string> = moa?.providerMapping || cfg?.providerMapping || {};
-    const alias = providerMapping[rawAgg] || (rawAgg.includes(':') ? rawAgg.split(':')[0] : 'openrouter');
-    if (alias === 'local-ollama' || alias === 'ollama') return 'ollama';
-    if (alias === 'remote-openrouter' || alias === 'openrouter') return 'openrouter';
-    if (alias === 'remote-openai' || alias === 'openai') return 'openai';
-    if (alias === 'remote-anthropic' || alias === 'anthropic') return 'anthropic';
-    return alias;
-  })()}"
 
 env:
 ${Object.entries(env).map(([k, v]) => `  ${k}: "${v}"`).join('\n')}

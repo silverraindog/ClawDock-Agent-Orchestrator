@@ -29,7 +29,8 @@ import {
   AlertCircle,
   AlertTriangle,
   Globe,
-  Lock
+  Lock,
+  Layers
 } from 'lucide-react';
 import { 
   AreaChart,
@@ -45,6 +46,7 @@ import {
 } from 'recharts';
 import { AgentFullConfig, AgentInfo, DockerSystemInfo, SkillItem, MCPServerConfig, LLMHealthReport } from '../types';
 import { fetchLLMHealth } from '../utils/apiBridge';
+import { MoAConsensusMonitor } from './MoAConsensusMonitor';
 
 interface DashboardTabProps {
   agent: AgentInfo;
@@ -538,7 +540,8 @@ export const LLMHealthMonitorWidget: React.FC<{
   fallbackProvider?: string;
   currentAgent?: AgentInfo;
   allAgents?: AgentInfo[];
-}> = ({ onNavigateTab, activeProvider, fallbackProvider, currentAgent, allAgents = [] }) => {
+  config?: AgentFullConfig;
+}> = ({ onNavigateTab, activeProvider, fallbackProvider, currentAgent, allAgents = [], config }) => {
   const [healthReport, setHealthReport] = React.useState<LLMHealthReport | null>(null);
   const [loading, setLoading] = React.useState<boolean>(true);
   const [refreshing, setRefreshing] = React.useState<boolean>(false);
@@ -662,6 +665,45 @@ export const LLMHealthMonitorWidget: React.FC<{
         </div>
       </div>
 
+      {/* Visual Alert When Agent Falls Back to OpenRouter Due to Local Network Errors */}
+      {fallbackAgents.some(a => a.isRunningOnFallback && (a.fallbackProvider?.toLowerCase() === 'openrouter' || a.reason?.toLowerCase().includes('openrouter'))) && (
+        <div 
+          id="dashboard-openrouter-fallback-alert"
+          className="p-4 rounded-xl border-2 border-rose-500/70 bg-gradient-to-r from-rose-950/60 via-slate-900/90 to-amber-950/40 shadow-xl space-y-3"
+        >
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <div className="p-2 rounded-lg bg-rose-500/20 border border-rose-500/50 text-rose-400 shrink-0">
+                <AlertTriangle className="w-5 h-5 animate-pulse text-rose-400" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h4 className="text-xs sm:text-sm font-bold text-rose-200">
+                    Local Network Alert: Fallback to OpenRouter Active
+                  </h4>
+                  <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-rose-500/30 text-rose-300 border border-rose-500/50">
+                    192.168.1.49 UNREACHABLE
+                  </span>
+                </div>
+                <p className="text-xs text-slate-300 mt-0.5">
+                  The local Ollama server at <code className="text-rose-300 font-mono text-[11px]">http://192.168.1.49:11434</code> is offline or unreachable over the network. Agent requests have fallen back to OpenRouter.
+                </p>
+              </div>
+            </div>
+
+            {onNavigateTab && (
+              <button
+                onClick={() => onNavigateTab('config')}
+                className="px-3 py-1.5 rounded-xl bg-rose-500 hover:bg-rose-400 text-slate-950 text-xs font-bold shadow transition-colors flex items-center gap-1.5 self-start sm:self-center shrink-0 cursor-pointer"
+              >
+                <span>Check Agent Config</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Prominent Highlighting When Agent is Running on Fallback Configuration */}
       {hasFallbackActive && (
         <div 
@@ -729,6 +771,54 @@ export const LLMHealthMonitorWidget: React.FC<{
           </div>
         </div>
       )}
+
+      {/* MOA Architecture Endpoint Validation & Local Static IP Mapping */}
+      <div className="p-4 rounded-xl border border-indigo-500/30 bg-gradient-to-r from-indigo-950/30 via-slate-900/90 to-slate-950/80 shadow-md space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-indigo-500/20 pb-3">
+          <div className="flex items-center gap-2">
+            <div className="p-1.5 rounded-lg bg-indigo-500/20 text-indigo-400 border border-indigo-500/30">
+              <Layers className="w-4 h-4 text-indigo-400" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold text-white">MOA Local Server Endpoint Resolution</span>
+                <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+                  Target: 192.168.1.49:11434
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-400 mt-0.5">
+                Enforcing local Ollama endpoint resolution instead of defaulting to <code className="text-rose-300 font-mono text-[10px]">moa://local</code> or <code className="text-amber-300 font-mono text-[10px]">openrouter</code>.
+              </p>
+            </div>
+          </div>
+          <span className="text-[11px] font-mono text-emerald-300 bg-emerald-950/40 px-2.5 py-1 rounded-lg border border-emerald-500/30 self-start sm:self-center">
+            Provider: custom:ollama
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+          <div className="p-3 rounded-lg bg-slate-950/80 border border-slate-800 space-y-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Aggregator Model</span>
+              <span className="text-[10px] font-mono text-emerald-400">custom:ollama</span>
+            </div>
+            <div className="font-mono text-emerald-300 text-xs font-semibold flex items-center justify-between">
+              <span>{config?.moa?.aggregatorModel || 'gemma4-soul:latest'}</span>
+              <span className="text-[10px] text-slate-500 font-normal">→ http://192.168.1.49:11434</span>
+            </div>
+          </div>
+
+          <div className="p-3 rounded-lg bg-slate-950/80 border border-slate-800 space-y-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Proposers / Reference Models</span>
+              <span className="text-[10px] font-mono text-indigo-400">3 Models Active</span>
+            </div>
+            <div className="font-mono text-slate-200 text-[11px] truncate" title={(config?.moa?.proposerModels || ['gemma4-soul:latest', 'deepseek-coder-v2:16b', 'qwen2-5-coder-7b-32k:latest']).join(', ')}>
+              {(config?.moa?.proposerModels || ['gemma4-soul:latest', 'deepseek-coder-v2:16b', 'qwen2-5-coder-7b-32k:latest']).join(' • ')}
+            </div>
+          </div>
+        </div>
+      </div>
 
       {/* KPI Summary Row */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -1177,6 +1267,13 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
         status={agent?.status} 
       />
 
+      {/* MoA Consensus Monitor Visualization */}
+      <MoAConsensusMonitor
+        agent={agent}
+        config={config}
+        onNavigateTab={onNavigateTab}
+      />
+
       {/* Failback & Edge Redundancy Status Banner */}
       <div 
         id="dashboard-failback-status-card"
@@ -1271,6 +1368,7 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
         fallbackProvider={config?.fallback?.fallbackProvider || config?.fallback?.provider} 
         currentAgent={agent}
         allAgents={allAgents}
+        config={config}
       />
 
       {/* Agent Health Monitor Widget */}

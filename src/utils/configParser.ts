@@ -1,6 +1,7 @@
 import { AgentFullConfig, AgentId, ChannelConfig, FallbackConfig, LLMProvider, ModelConfig, MoAConfig } from '../types';
 import { DEFAULT_NATIVE_FILES } from '../data/defaults';
 import { mergeWithDefaultConfig } from './apiBridge';
+import YAML from 'yaml';
 
 /**
  * Checks whether the configuration indicates a local edge or self-hosted deployment
@@ -437,116 +438,177 @@ export function parseNativeConfigToSchema(
     }
   } else {
     // 3. YAML Parsing
-    const matchName = nativeContent.match(/agent_name:\s*"([^"]+)"|agent_name:\s*([^\n]+)/);
-    if (matchName) parsedAgentName = (matchName[1] || matchName[2]).trim();
+    try {
+      const parsedYaml = YAML.parse(nativeContent);
+      if (parsedYaml && typeof parsedYaml === 'object') {
+        if (parsedYaml.agent_name || parsedYaml.agentName) {
+          parsedAgentName = parsedYaml.agent_name || parsedYaml.agentName;
+        }
 
-    // Model block parsing
-    const modelBlockMatch = nativeContent.match(/model:\s*\n([\s\S]*?)(?=\n[a-z_]+:|$)/i);
-    const searchTarget = modelBlockMatch ? modelBlockMatch[1] : nativeContent;
+        if (parsedYaml.model && typeof parsedYaml.model === 'object') {
+          const ym = parsedYaml.model;
+          if (ym.provider) parsedProvider = ym.provider as LLMProvider;
+          if (ym.default || ym.model || ym.model_name || ym.checkpoint) {
+            parsedModelName = ym.default || ym.model || ym.model_name || ym.checkpoint;
+          }
+          if (ym.baseUrl || ym.base_url || ym.api_base) {
+            parsedBaseUrl = ym.baseUrl || ym.base_url || ym.api_base;
+          }
+          if (ym.apiKey || ym.api_key) parsedApiKey = ym.apiKey || ym.api_key;
+          if (ym.temperature !== undefined) parsedTemperature = Number(ym.temperature);
+          if (ym.maxTokens !== undefined || ym.max_tokens !== undefined) {
+            parsedMaxTokens = Number(ym.maxTokens ?? ym.max_tokens);
+          }
+          if (ym.contextWindow !== undefined || ym.context_window !== undefined || ym.context_length !== undefined) {
+            parsedContextLength = Number(ym.contextWindow ?? ym.context_window ?? ym.context_length);
+          }
+          if (ym.useProxy !== undefined || ym.use_proxy !== undefined) {
+            parsedUseProxy = Boolean(ym.useProxy ?? ym.use_proxy);
+          }
+        }
 
-    // Provider
-    const pMatch = searchTarget.match(/provider:\s*["']?([^"'\s\n#]+)["']?/);
-    if (pMatch && pMatch[1]) parsedProvider = pMatch[1].trim() as LLMProvider;
+        if (parsedYaml.system_prompt || parsedYaml.systemPrompt) {
+          parsedSystemPrompt = parsedYaml.system_prompt || parsedYaml.systemPrompt;
+        }
+        if (parsedYaml.system_preset || parsedYaml.systemPreset) {
+          parsedPreset = parsedYaml.system_preset || parsedYaml.systemPreset;
+        }
 
-    // Model checkpoint name: check "default:", "model:", "model_name:", "checkpoint:"
-    const defMatch = searchTarget.match(/default:\s*["']?([^"'\s\n#]+)["']?/);
-    const mMatch = searchTarget.match(/(?:model|model_name|checkpoint):\s*["']?([^"'\s\n#]+)["']?/);
-    if (defMatch && defMatch[1]) {
-      parsedModelName = defMatch[1].trim();
-    } else if (mMatch && mMatch[1] && mMatch[1] !== 'provider:') {
-      parsedModelName = mMatch[1].trim();
-    }
+        if (parsedYaml.moa && typeof parsedYaml.moa === 'object') {
+          const yMoa = parsedYaml.moa;
+          if (yMoa.enabled !== undefined) parsedMoaEnabled = Boolean(yMoa.enabled);
 
-    // Base URL
-    const bMatch = searchTarget.match(/(?:base_url|baseUrl|api_base):\s*["']?([^"'\s\n#]+)["']?/);
-    if (bMatch && bMatch[1]) parsedBaseUrl = bMatch[1].trim();
+          // Aggregator resolution
+          const aggObj = yMoa.aggregator || yMoa.presets?.default?.aggregator;
+          if (aggObj && typeof aggObj === 'object') {
+            if (aggObj.model) parsedAggregatorModel = aggObj.model;
+            if (aggObj.provider) {
+              if (!parsedProviderMapping) parsedProviderMapping = {};
+              parsedProviderMapping[aggObj.model] = aggObj.provider;
+            }
+          } else if (typeof aggObj === 'string') {
+            parsedAggregatorModel = aggObj;
+          } else if (yMoa.aggregator_model || yMoa.aggregatorModel) {
+            parsedAggregatorModel = yMoa.aggregator_model || yMoa.aggregatorModel;
+          }
 
-    // Context length / window
-    const cMatch = searchTarget.match(/(?:context_length|num_ctx|context_window):\s*([0-9]+)/);
-    if (cMatch && cMatch[1]) parsedContextLength = Number(cMatch[1]);
+          // Proposer / Reference models resolution
+          const refModels = yMoa.reference_models || yMoa.presets?.default?.reference_models;
+          if (Array.isArray(refModels) && refModels.length > 0) {
+            parsedProposerModels = refModels.map((item: any) => {
+              if (typeof item === 'string') return item;
+              if (item && item.model) {
+                if (item.provider) {
+                  if (!parsedProviderMapping) parsedProviderMapping = {};
+                  parsedProviderMapping[item.model] = item.provider;
+                }
+                return item.model;
+              }
+              return '';
+            }).filter(Boolean);
+          } else if (yMoa.proposer_models || yMoa.proposerModels) {
+            parsedProposerModels = yMoa.proposer_models || yMoa.proposerModels;
+          }
 
-    // Max tokens
-    const maxMatch = searchTarget.match(/(?:max_tokens|num_predict):\s*([0-9]+)/);
-    if (maxMatch && maxMatch[1]) parsedMaxTokens = Number(maxMatch[1]);
+          if (yMoa.provider_mapping || yMoa.providerMapping) {
+            parsedProviderMapping = { ...(parsedProviderMapping || {}), ...(yMoa.provider_mapping || yMoa.providerMapping) };
+          }
+        }
 
-    // Temperature
-    const tMatch = searchTarget.match(/temperature:\s*([0-9.]+)/);
-    if (tMatch && tMatch[1]) parsedTemperature = Number(tMatch[1]);
+        if (parsedYaml.channels && typeof parsedYaml.channels === 'object') {
+          const ch = parsedYaml.channels;
+          parsedChannels = {};
+          if (ch.discord) {
+            parsedChannels.discord = {
+              enabled: Boolean(ch.discord.enabled),
+              botToken: ch.discord.bot_token || ch.discord.botToken || 'env:DISCORD_BOT_TOKEN',
+              clientId: ch.discord.client_id || ch.discord.clientId || 'env:DISCORD_CLIENT_ID',
+              guildIds: ch.discord.guild_ids || ch.discord.guildIds || 'env:DISCORD_GUILD_ID'
+            };
+          }
+          if (ch.telegram) {
+            parsedChannels.telegram = {
+              enabled: Boolean(ch.telegram.enabled),
+              botToken: ch.telegram.bot_token || ch.telegram.botToken || '',
+              allowedUsers: ch.telegram.allowed_users || ch.telegram.allowedUsers || '@developer',
+              mode: ch.telegram.mode || 'polling'
+            };
+          }
+          if (ch.webhook) {
+            parsedChannels.webhook = {
+              enabled: Boolean(ch.webhook.enabled),
+              port: Number(ch.webhook.port || 8080),
+              authToken: ch.webhook.auth_token || ch.webhook.authToken || '',
+              corsOrigin: ch.webhook.cors_origin || ch.webhook.corsOrigin || '*'
+            };
+          }
+        }
 
-    // API key
-    const keyMatch = searchTarget.match(/(?:api_key|apiKey):\s*["']?([^"'\s\n#]+)["']?/);
-    if (keyMatch && keyMatch[1]) parsedApiKey = keyMatch[1].trim();
+        if (parsedYaml.fallback && typeof parsedYaml.fallback === 'object') {
+          const fb = parsedYaml.fallback;
+          parsedFallback = {
+            enabled: fb.enabled !== undefined ? Boolean(fb.enabled) : true,
+            fallbackProvider: (fb.provider || fb.fallback_provider || fb.fallbackProvider || 'openrouter') as LLMProvider,
+            fallbackModel: fb.model || fb.fallback_model || fb.fallbackModel || 'anthropic/claude-3.7-sonnet',
+            provider: (fb.provider || fb.fallback_provider || fb.fallbackProvider || 'openrouter') as LLMProvider,
+            model: fb.model || fb.fallback_model || fb.fallbackModel || 'anthropic/claude-3.7-sonnet',
+            apiKey: fb.api_key || fb.apiKey || '',
+            baseUrl: fb.base_url || fb.baseUrl || 'https://openrouter.ai/api/v1',
+            strategy: (fb.strategy || 'on_offline') as any,
+            targetAgentId: (fb.target_agent_id || fb.targetAgentId || 'zeroclaw') as AgentId,
+            latencyThresholdMs: Number(fb.latency_threshold_ms || fb.latencyThresholdMs || 3000),
+            useProxy: fb.use_proxy !== undefined ? Boolean(fb.use_proxy) : fb.useProxy !== undefined ? Boolean(fb.useProxy) : true
+          };
+        }
+      }
+    } catch {
+      // Fallback regex parsing if YAML parser encounters raw anomalies
+      const matchName = nativeContent.match(/agent_name:\s*"([^"]+)"|agent_name:\s*([^\n]+)/);
+      if (matchName) parsedAgentName = (matchName[1] || matchName[2]).trim();
 
-    // System prompt & preset
-    const promptMatch = nativeContent.match(/system_prompt:\s*"([^"]+)"|system_prompt:\s*([^\n]+)/);
-    if (promptMatch) parsedSystemPrompt = (promptMatch[1] || promptMatch[2]).trim();
+      const modelBlockMatch = nativeContent.match(/model:\s*\n([\s\S]*?)(?=\n[a-z_]+:|$)/i);
+      const searchTarget = modelBlockMatch ? modelBlockMatch[1] : nativeContent;
 
-    const presetMatch = nativeContent.match(/system_preset:\s*"([^"]+)"|system_preset:\s*([^\n]+)/);
-    if (presetMatch) parsedPreset = (presetMatch[1] || presetMatch[2]).trim();
+      const pMatch = searchTarget.match(/provider:\s*["']?([^"'\s\n#]+)["']?/);
+      if (pMatch && pMatch[1]) parsedProvider = pMatch[1].trim() as LLMProvider;
 
-    // MoA section if present in YAML
-    const moaBlockMatch = nativeContent.match(/moa:\s*\n([\s\S]*?)(?=\n[a-z_]+:|$)/i);
-    if (moaBlockMatch) {
-      const moaBlock = moaBlockMatch[1];
-      const aggMatch = moaBlock.match(/(?:aggregator_model|aggregatorModel):\s*["']?([^"'\s\n#]+)["']?/);
-      if (aggMatch && aggMatch[1]) parsedAggregatorModel = aggMatch[1].trim();
-      const enMatch = moaBlock.match(/enabled:\s*(true|false)/i);
-      if (enMatch) parsedMoaEnabled = enMatch[1].toLowerCase() === 'true';
-    }
+      const defMatch = searchTarget.match(/default:\s*["']?([^"'\s\n#]+)["']?/);
+      const mMatch = searchTarget.match(/(?:model|model_name|checkpoint):\s*["']?([^"'\s\n#]+)["']?/);
+      if (defMatch && defMatch[1]) {
+        parsedModelName = defMatch[1].trim();
+      } else if (mMatch && mMatch[1] && mMatch[1] !== 'provider:') {
+        parsedModelName = mMatch[1].trim();
+      }
 
-    // Channels parsing in YAML
-    const channelsBlockMatch = nativeContent.match(/channels:\s*\n([\s\S]*?)(?=\n[a-z_]+:|$)/i);
-    const targetChannelsText = channelsBlockMatch ? channelsBlockMatch[1] : nativeContent;
-    const hasDiscord = targetChannelsText.includes('discord:') || (agentId as string) === 'picoclaw';
-    const hasTelegram = targetChannelsText.includes('telegram:');
+      const bMatch = searchTarget.match(/(?:base_url|baseUrl|api_base):\s*["']?([^"'\s\n#]+)["']?/);
+      if (bMatch && bMatch[1]) parsedBaseUrl = bMatch[1].trim();
 
-    if (hasDiscord || hasTelegram) {
-      parsedChannels = {};
-      const prefersDiscord = hasDiscord || (agentId as string) === 'picoclaw';
-      const discEnMatch = targetChannelsText.match(/discord:[\s\S]*?enabled:\s*(true|false)/i);
-      parsedChannels.discord = {
-        enabled: discEnMatch ? discEnMatch[1].toLowerCase() === 'true' : prefersDiscord,
-        botToken: 'env:DISCORD_BOT_TOKEN',
-        clientId: 'env:DISCORD_CLIENT_ID',
-        guildIds: 'env:DISCORD_GUILD_ID'
-      };
+      const cMatch = searchTarget.match(/(?:context_length|num_ctx|context_window):\s*([0-9]+)/);
+      if (cMatch && cMatch[1]) parsedContextLength = Number(cMatch[1]);
 
-      const telEnMatch = targetChannelsText.match(/telegram:[\s\S]*?enabled:\s*(true|false)/i);
-      parsedChannels.telegram = {
-        enabled: telEnMatch ? telEnMatch[1].toLowerCase() === 'true' : !prefersDiscord,
-        botToken: '',
-        allowedUsers: '@developer',
-        mode: 'polling'
-      };
-    }
+      const maxMatch = searchTarget.match(/(?:max_tokens|num_predict):\s*([0-9]+)/);
+      if (maxMatch && maxMatch[1]) parsedMaxTokens = Number(maxMatch[1]);
 
-    // Fallback parsing in YAML
-    const fallbackBlockMatch = nativeContent.match(/fallback:\s*\n([\s\S]*?)(?=\n[a-z_]+:|$)/i);
-    if (fallbackBlockMatch) {
-      const fbText = fallbackBlockMatch[1];
-      const en = fbText.match(/enabled:\s*(true|false)/i);
-      const prov = fbText.match(/(?:provider|fallback_provider):\s*["']?([^"'\n\r]+)["']?/i);
-      const mod = fbText.match(/(?:model|fallback_model):\s*["']?([^"'\n\r]+)["']?/i);
-      const key = fbText.match(/(?:api_key|apiKey):\s*["']?([^"'\n\r]+)["']?/i);
-      const base = fbText.match(/(?:base_url|baseUrl):\s*["']?([^"'\n\r]+)["']?/i);
-      const strat = fbText.match(/strategy:\s*["']?([^"'\n\r]+)["']?/i);
-      const target = fbText.match(/(?:target_agent_id|targetAgentId):\s*["']?([^"'\n\r]+)["']?/i);
-      const lat = fbText.match(/(?:latency_threshold_ms|latencyThresholdMs):\s*([0-9]+)/i);
-      const proxy = fbText.match(/(?:use_proxy|useProxy):\s*(true|false)/i);
+      const tMatch = searchTarget.match(/temperature:\s*([0-9.]+)/);
+      if (tMatch && tMatch[1]) parsedTemperature = Number(tMatch[1]);
 
-      parsedFallback = {
-        enabled: en ? en[1].toLowerCase() === 'true' : false,
-        fallbackProvider: (prov ? prov[1].trim() : 'ollama') as LLMProvider,
-        fallbackModel: mod ? mod[1].trim() : 'hermes-3-llama-3.1-8b',
-        provider: (prov ? prov[1].trim() : 'ollama') as LLMProvider,
-        model: mod ? mod[1].trim() : 'hermes-3-llama-3.1-8b',
-        apiKey: key ? key[1].trim() : '',
-        baseUrl: base ? base[1].trim() : '',
-        strategy: (strat ? strat[1].trim() : 'on_offline') as any,
-        targetAgentId: (target ? target[1].trim() : 'zeroclaw') as AgentId,
-        latencyThresholdMs: lat ? Number(lat[1]) : 3000,
-        useProxy: proxy ? proxy[1].toLowerCase() === 'true' : true
-      };
+      const keyMatch = searchTarget.match(/(?:api_key|apiKey):\s*["']?([^"'\s\n#]+)["']?/);
+      if (keyMatch && keyMatch[1]) parsedApiKey = keyMatch[1].trim();
+
+      const promptMatch = nativeContent.match(/system_prompt:\s*"([^"]+)"|system_prompt:\s*([^\n]+)/);
+      if (promptMatch) parsedSystemPrompt = (promptMatch[1] || promptMatch[2]).trim();
+
+      const presetMatch = nativeContent.match(/system_preset:\s*"([^"]+)"|system_preset:\s*([^\n]+)/);
+      if (presetMatch) parsedPreset = (presetMatch[1] || presetMatch[2]).trim();
+
+      const moaBlockMatch = nativeContent.match(/moa:\s*\n([\s\S]*?)(?=\n[a-z_]+:|$)/i);
+      if (moaBlockMatch) {
+        const moaBlock = moaBlockMatch[1];
+        const aggMatch = moaBlock.match(/(?:aggregator_model|aggregatorModel):\s*["']?([^"'\s\n#]+)["']?/);
+        if (aggMatch && aggMatch[1]) parsedAggregatorModel = aggMatch[1].trim();
+        const enMatch = moaBlock.match(/enabled:\s*(true|false)/i);
+        if (enMatch) parsedMoaEnabled = enMatch[1].toLowerCase() === 'true';
+      }
     }
   }
 
@@ -707,7 +769,7 @@ export function enhanceConfigWithNative(
     if (nativeParsed.moa.proposerModels) {
       baseMerged.moa.proposerModels = nativeParsed.moa.proposerModels;
     } else if (isLocal) {
-      baseMerged.moa.proposerModels = [baseMerged.model.model, 'qwen2.5-coder:7b', 'deepseek-r1:8b'];
+      baseMerged.moa.proposerModels = [baseMerged.model.model, 'deepseek-coder-v2:16b', 'qwen2-5-coder-7b-32k:latest'];
     }
 
     if (nativeParsed.moa.providerMapping) {
@@ -718,10 +780,37 @@ export function enhanceConfigWithNative(
     if (typeof nativeParsed.moa.enabled === 'boolean') {
       baseMerged.moa.enabled = nativeParsed.moa.enabled;
     }
-  } else if (isLocal && baseMerged.moa.aggregatorModel === 'claude-3-7-sonnet') {
+  } else if (isLocal && (baseMerged.moa.aggregatorModel === 'claude-3-7-sonnet' || !baseMerged.moa.aggregatorModel)) {
     // If local and still has the hardcoded claude-3-7-sonnet default, align with local agent model
-    baseMerged.moa.aggregatorModel = baseMerged.model.model;
-    baseMerged.moa.proposerModels = [baseMerged.model.model, 'qwen2.5-coder:7b', 'deepseek-r1:8b'];
+    baseMerged.moa.aggregatorModel = baseMerged.model.model || 'gemma4-soul:latest';
+    baseMerged.moa.proposerModels = [baseMerged.model.model || 'gemma4-soul:latest', 'deepseek-coder-v2:16b', 'qwen2-5-coder-7b-32k:latest'];
+  }
+
+  // Enforce MOA aggregator and proposer endpoints are resolved to local static IP 192.168.1.49 instead of moa://local or openrouter
+  if (agentId === 'hermes-agent' || isLocal || baseMerged.model.baseUrl?.includes('192.168.1.49') || baseMerged.model.provider === 'custom') {
+    if (!baseMerged.model.baseUrl) {
+      baseMerged.model.baseUrl = 'http://192.168.1.49:11434';
+    }
+    if (!baseMerged.moa.providerEndpoints) {
+      baseMerged.moa.providerEndpoints = {};
+    }
+    baseMerged.moa.providerEndpoints['local-ollama'] = 'http://192.168.1.49:11434';
+    baseMerged.moa.providerEndpoints['ollama'] = 'http://192.168.1.49:11434';
+    baseMerged.moa.providerEndpoints['custom'] = 'http://192.168.1.49:11434';
+    baseMerged.moa.providerEndpoints['custom:ollama'] = 'http://192.168.1.49:11434';
+
+    if (!baseMerged.moa.providerMapping) baseMerged.moa.providerMapping = {};
+
+    const agg = baseMerged.moa.aggregatorModel || baseMerged.model.model || 'gemma4-soul:latest';
+    if (!baseMerged.moa.providerMapping[agg] || baseMerged.moa.providerMapping[agg] === 'openrouter' || baseMerged.moa.providerMapping[agg] === 'moa://local') {
+      baseMerged.moa.providerMapping[agg] = 'custom:ollama';
+    }
+    for (const p of (baseMerged.moa.proposerModels || [])) {
+      if (!baseMerged.moa.providerMapping[p] || baseMerged.moa.providerMapping[p] === 'openrouter' || baseMerged.moa.providerMapping[p] === 'moa://local') {
+        baseMerged.moa.providerMapping[p] = 'custom:ollama';
+      }
+    }
+    baseMerged.providerMapping = { ...(baseMerged.providerMapping || {}), ...baseMerged.moa.providerMapping };
   }
 
   if (nativeParsed.system) {

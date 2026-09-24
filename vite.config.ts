@@ -124,49 +124,112 @@ agent_id: "hermes-agent"
 agent_name: "Hermes Code Assistant"
 persona: "Hermes Prime"
 system_preset: "engineer"
+system_prompt: "You are Hermes Agent, a premier autonomous software engineering and problem-solving AI agent. You have direct access to workspace tools, shell execution, and persistent memory. Always structure complex tasks into clear execution steps, verify your code with tests or linters, and document non-trivial architecture decisions."
 
 model:
-  provider: "anthropic"
-  model: "claude-3-7-sonnet"
+  provider: custom
+  apiKey: ollama
   temperature: 0.3
-  max_tokens: 4096
-  context_window: 128000
-  reasoning_effort: "high"
+  reasoningEffort: high
+  maxTokens: 8192
+  contextWindow: 200000
+  baseUrl: http://192.168.1.49:11434
+  topP: 0.95
+  default: gemma4-soul:latest
+  base_url: http://192.168.1.49:11434/v1
 
-system:
-  system_prompt: "You are Hermes Agent, a premier autonomous software engineering and problem-solving AI agent. You have direct access to workspace tools, shell execution, and persistent memory. Always structure complex tasks into clear execution steps, verify your code with tests or linters, and document non-trivial architecture decisions."
-  language: "en-US"
-  auto_format: true
+web:
+  backend: exa
+  provider_tier:
+    exa: free
+
+moa:
+  enabled: true
+  presets:
+    default:
+      reference_models:
+        - provider: custom:ollama
+          model: gemma4-soul:latest
+          enabled: true
+        - provider: custom:ollama
+          model: deepseek-coder-v2:16b
+          enabled: true
+        - provider: custom:ollama
+          model: qwen2-5-coder-7b-32k:latest
+          enabled: true
+      aggregator:
+        provider: custom:ollama
+        model: gemma4-soul:latest
+      degraded_reference_policy: loud
+      fanout: user_turn
+  reference_models:
+    - provider: custom:ollama
+      model: gemma4-soul:latest
+      enabled: true
+    - provider: custom:ollama
+      model: deepseek-coder-v2:16b
+      enabled: true
+    - provider: custom:ollama
+      model: qwen2-5-coder-7b-32k:latest
+      enabled: true
+  aggregator:
+    provider: custom:ollama
+    model: gemma4-soul:latest
+  degraded_reference_policy: loud
+  max_tokens: 4096
+  fanout: user_turn
+  rounds: 2
+  temperature_spread: 0.3
+  consensus_threshold: 0.85
+
+fallback:
+  enabled: true
+  strategy: "on_offline"
+  target_agent_id: "zeroclaw"
+  latency_threshold_ms: 3000
+  provider: "openrouter"
+  model: "anthropic/claude-3.7-sonnet"
+  api_key: ""
+  base_url: "https://openrouter.ai/api/v1"
+  use_proxy: true
 
 channels:
   telegram:
     enabled: true
     bot_token: "env:TELEGRAM_BOT_TOKEN"
-    allowed_users: "@developer"
+    allowed_users: ["@developer", "@admin"]
     mode: "polling"
   discord:
     enabled: false
-    bot_token: ""
   slack:
     enabled: false
+    socket_mode: true
   webhook:
     enabled: true
     port: 8080
-    auth_token: "secure_bearer_token"
+    auth_token: "hermes_secret_token_99"
 
 security:
   sandbox_mode: "docker_isolated"
   allowed_directories:
     - "/workspace"
-    - "/data"
-  block_network_access: false
+    - "/tmp/agent-scratch"
+    - "/var/log/hermes"
   max_execution_time_sec: 120
+  block_network_access: false
+  require_approval_for_commands: false
 
 storage:
   memory_backend: "everos"
-  db_path: "/data/everos/memories/hermes-agent"
+  db_path: "/data/everos/memories"
   auto_summarize_interval: 25
+  max_history_turns: 100
   vector_db_url: "http://everos:8080"
+
+env:
+  HERMES_LOG_LEVEL: "INFO"
+  PYTHONUNBUFFERED: "1"
+  WORKSPACE_ROOT: "/workspace"
 `
     },
     'openclaw': {
