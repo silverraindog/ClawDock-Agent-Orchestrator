@@ -189,12 +189,14 @@ export interface DiagnosticsTabProps {
   currentAgentId?: string;
   agent?: AgentInfo;
   config?: AgentFullConfig;
+  onFixOpenClaw?: () => void;
 }
 
 export const DiagnosticsTab: React.FC<DiagnosticsTabProps> = ({
   currentAgentId = 'hermes-agent',
   agent,
-  config
+  config,
+  onFixOpenClaw
 }) => {
   // Failback simulation state
   const [isSimulatingFailback, setIsSimulatingFailback] = useState(false);
@@ -627,6 +629,18 @@ export const DiagnosticsTab: React.FC<DiagnosticsTabProps> = ({
             <Terminal className={`w-4 h-4 ${isProbing ? 'animate-pulse text-indigo-200' : ''}`} />
             {isProbing ? 'Probing All Routes...' : 'Probe Problematic Routes'}
           </button>
+
+          {onFixOpenClaw && (
+            <button
+              id="fix-openclaw-btn"
+              onClick={onFixOpenClaw}
+              className="flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold shadow-lg shadow-rose-600/25 transition-all"
+              title="Resolve database schema migration issue and restart the OpenClaw gateway"
+            >
+              <AlertTriangle className="w-4 h-4" />
+              <span>Repair OpenClaw</span>
+            </button>
+          )}
         </div>
       </div>
 

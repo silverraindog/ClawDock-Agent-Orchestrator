@@ -2048,6 +2048,7 @@ export default function App() {
               currentAgentId={selectedAgentId}
               agent={currentAgent}
               config={currentConfig}
+              onFixOpenClaw={handleFixOpenClaw}
             />
           )}
 

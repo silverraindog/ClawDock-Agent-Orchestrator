@@ -3366,8 +3366,17 @@ function generateHermesYaml(cfg: any): string {
     ? moa.proposerModels
     : ['gemma4-soul:latest', 'deepseek-coder-v2:16b', 'qwen2-5-coder-7b-32k:latest'];
 
-  const referenceModelsList = rawProposers.map((rawModelName: string) => {
-    const resolved = parseModelAndProvider(rawModelName, providerMapping, 'gemma4-soul:latest');
+  const referenceModelsList = rawProposers.map((rawModelName: any) => {
+    let resolved;
+    if (typeof rawModelName === 'string') {
+      resolved = parseModelAndProvider(rawModelName, providerMapping, 'gemma4-soul:latest');
+    } else {
+      // Handle object format: { provider: string, model: string }
+      resolved = {
+        provider: rawModelName.provider || 'custom:ollama',
+        model: rawModelName.model || 'gemma4-soul:latest'
+      };
+    }
     return `        - provider: ${resolved.provider}
           model: ${resolved.model}
           enabled: true`;
@@ -3375,7 +3384,15 @@ function generateHermesYaml(cfg: any): string {
 
   // Aggregator model resolution
   const rawAgg = moa?.aggregatorModel || model || 'gemma4-soul:latest';
-  const resolvedAgg = parseModelAndProvider(rawAgg, providerMapping, model || 'gemma4-soul:latest');
+  let resolvedAgg;
+  if (typeof rawAgg === 'string') {
+    resolvedAgg = parseModelAndProvider(rawAgg, providerMapping, model || 'gemma4-soul:latest');
+  } else {
+    resolvedAgg = {
+      provider: rawAgg.provider || 'custom:ollama',
+      model: rawAgg.model || model || 'gemma4-soul:latest'
+    };
+  }
   const aggProv = resolvedAgg.provider;
   const aggModel = resolvedAgg.model;
 
