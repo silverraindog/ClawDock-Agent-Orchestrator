@@ -1054,14 +1054,57 @@ export default function App() {
         }));
       }
 
-      const nativeContent = JSON.stringify(currentConfig, null, 2);
-      
-      // Ensure both main model and fallback configurations are saved together
+      // Ensure main model, fallback, and MOA configurations are saved and mapped to local static IP
       const normalizedConfig = {
         ...currentConfig,
         model: currentConfig.model || {},
-        fallback: currentConfig.fallback || {}
+        fallback: currentConfig.fallback || {},
+        moa: currentConfig.moa || {}
       };
+
+      // Ensure local IP MOA resolution for Ollama/Hermes
+      if (selectedAgentId === 'hermes-agent' || normalizedConfig.moa?.enabled || normalizedConfig.model?.provider === 'ollama' || normalizedConfig.model?.provider === 'custom' || normalizedConfig.model?.baseUrl?.includes('192.168.1.49')) {
+        if (!normalizedConfig.model.baseUrl || normalizedConfig.model.baseUrl === 'moa://local') {
+          normalizedConfig.model.baseUrl = 'http://192.168.1.49:11434';
+        }
+        if (!normalizedConfig.moa.providerEndpoints) {
+          normalizedConfig.moa.providerEndpoints = {};
+        }
+        normalizedConfig.moa.providerEndpoints['local-ollama'] = 'http://192.168.1.49:11434';
+        normalizedConfig.moa.providerEndpoints['ollama'] = 'http://192.168.1.49:11434';
+        normalizedConfig.moa.providerEndpoints['custom'] = 'http://192.168.1.49:11434';
+        normalizedConfig.moa.providerEndpoints['custom:ollama'] = 'http://192.168.1.49:11434';
+
+        if (!normalizedConfig.moa.providerMapping) {
+          normalizedConfig.moa.providerMapping = {};
+        }
+
+        const currentAgg = normalizedConfig.moa.aggregatorModel || normalizedConfig.model.model || 'gemma4-soul:latest';
+        const cleanAgg = (typeof currentAgg === 'string' && currentAgg !== 'default' && currentAgg) ? currentAgg : (typeof currentAgg === 'object' && currentAgg.model ? currentAgg.model : (normalizedConfig.model.model || 'gemma4-soul:latest'));
+        normalizedConfig.moa.aggregatorModel = cleanAgg;
+
+        const aggKey = typeof cleanAgg === 'string' ? cleanAgg : cleanAgg.model;
+        if (aggKey && (!normalizedConfig.moa.providerMapping[aggKey] || normalizedConfig.moa.providerMapping[aggKey] === 'openrouter' || normalizedConfig.moa.providerMapping[aggKey] === 'moa://local')) {
+          normalizedConfig.moa.providerMapping[aggKey] = 'custom:ollama';
+        }
+
+        if (!normalizedConfig.moa.proposerModels || normalizedConfig.moa.proposerModels.length === 0) {
+          normalizedConfig.moa.proposerModels = ['gemma4-soul:latest', 'deepseek-coder-v2:16b', 'qwen2-5-coder-7b-32k:latest'];
+        }
+
+        for (const proposer of normalizedConfig.moa.proposerModels) {
+          const propName = typeof proposer === 'string' ? proposer : (proposer?.model || proposer?.name);
+          if (propName) {
+            if (!normalizedConfig.moa.providerMapping[propName] || normalizedConfig.moa.providerMapping[propName] === 'openrouter' || normalizedConfig.moa.providerMapping[propName] === 'moa://local') {
+              normalizedConfig.moa.providerMapping[propName] = 'custom:ollama';
+            }
+          }
+        }
+
+        normalizedConfig.providerMapping = { ...(normalizedConfig.providerMapping || {}), ...normalizedConfig.moa.providerMapping };
+      }
+
+      const nativeContent = JSON.stringify(normalizedConfig, null, 2);
 
       // Save locally immediately to guarantee session persistence
       const updatedConfigs = { ...configs, [selectedAgentId]: normalizedConfig };

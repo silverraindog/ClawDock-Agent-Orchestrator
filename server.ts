@@ -3354,7 +3354,8 @@ function generateHermesYaml(cfg: any): string {
   const rawModel = m?.default || m?.model || 'gemma4-soul:latest';
   const model = rawModel === 'default' ? 'gemma4-soul:latest' : rawModel;
   const rawProvider = m?.provider || 'custom';
-  const isOllamaLocal = rawProvider === 'ollama' || rawProvider === 'custom' || m?.baseUrl?.includes('192.168.1.49') || m?.baseUrl === 'http://192.168.1.49:11434' || !m?.baseUrl;
+  // If explicitly 'ollama', don't force to 'custom' unless baseUrl is missing or default
+  const isOllamaLocal = (rawProvider === 'ollama' && (m?.baseUrl && !m?.baseUrl.includes('192.168.1.49'))) ? false : (rawProvider === 'ollama' || rawProvider === 'custom' || m?.baseUrl?.includes('192.168.1.49') || m?.baseUrl === 'http://192.168.1.49:11434' || !m?.baseUrl);
   const finalProvider = isOllamaLocal ? 'custom' : rawProvider;
   const finalApiKey = isOllamaLocal ? (m?.apiKey || 'ollama') : (m?.apiKey || '');
   const rawBaseUrl = m?.baseUrl || (isOllamaLocal ? 'http://192.168.1.49:11434' : '');
@@ -3468,6 +3469,14 @@ storage:
 
 moa:
   enabled: ${moa?.enabled ?? true}
+  provider_endpoints:
+    custom:ollama: "${finalBaseUrl}"
+    ollama: "${finalBaseUrl}"
+    custom: "${finalBaseUrl}"
+    local-ollama: "${finalBaseUrl}"
+  provider_mapping:
+    ${aggModel}: "custom:ollama"
+${rawProposers.map((p: any) => `    ${typeof p === 'string' ? p : p.model || p.name}: "custom:ollama"`).join('\n')}
   presets:
     default:
       reference_models:
@@ -4275,6 +4284,43 @@ app.get('/api/agents/:id/stats', (req, res) => {
     timestamp: latest.time,
     history
   });
+});
+
+// Alias resources endpoints to stats for container telemetry
+app.get(['/api/agents/:id/resources', '/api/agents/:id/metrics'], (req, res) => {
+  const agentId = req.params.id;
+  const current = agentStates[agentId] || { status: 'stopped', containerId: '' };
+  const status = current.status || 'stopped';
+  const history = agentStatsHistory[agentId] || [];
+  const latest = history[history.length - 1] || generateAgentPoint(agentId, status);
+  res.json({
+    success: true,
+    agentId,
+    status,
+    containerId: current.containerId || '',
+    cpuUsagePct: latest.cpu,
+    memoryUsageMb: latest.memoryMb,
+    memoryUsagePct: latest.memoryPct,
+    timestamp: latest.time,
+    history
+  });
+});
+
+app.get(['/api/resources', '/api/docker/resources', '/api/agents/resources'], (_req, res) => {
+  const resources: Record<string, any> = {};
+  for (const id of ['hermes-agent', 'zeroclaw', 'openclaw', 'picoclaw']) {
+    const st = agentStates[id] || { status: 'stopped' };
+    const history = agentStatsHistory[id] || [];
+    const latest = history[history.length - 1] || generateAgentPoint(id, st.status);
+    resources[id] = {
+      agentId: id,
+      status: st.status,
+      cpuUsagePct: latest.cpu,
+      memoryUsageMb: latest.memoryMb,
+      memoryUsagePct: latest.memoryPct
+    };
+  }
+  res.json({ success: true, resources, timestamp: new Date().toISOString() });
 });
 
 // Agent chat simulation / execution

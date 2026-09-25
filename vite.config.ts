@@ -2603,6 +2603,28 @@ fallback:
           }));
         }
 
+        // Resource monitoring endpoints
+        case '/api/resources':
+        case '/api/resources/':
+        case '/api/docker/resources':
+        case '/api/docker/resources/':
+        case '/api/agents/resources':
+        case '/api/agents/resources/': {
+          res.setHeader('Content-Type', 'application/json');
+          console.log(`[Vite API Server] [${timestamp}] 200 OK: GET ${pathname}`);
+          const resources: Record<string, any> = {};
+          for (const id of ['hermes-agent', 'zeroclaw', 'openclaw', 'picoclaw']) {
+            const st = agentStates[id] || { status: 'stopped' };
+            resources[id] = {
+              agentId: id,
+              status: st.status,
+              cpuUsagePct: st.status === 'running' ? 12.5 : 0,
+              memoryUsageMb: st.status === 'running' ? 140.0 : 0
+            };
+          }
+          return res.end(JSON.stringify({ success: true, resources, timestamp }));
+        }
+
         // 9. OpenClaw Skills Sync Endpoint - Specifically registers and handles /api/openclaw/skills-sync
         case '/api/openclaw/skills-sync':
         case '/api/openclaw/skills-sync/': {
@@ -2829,7 +2851,7 @@ fallback:
           }
 
           // Agent Lifecycle Actions: /api/agents/:id/:action
-          const agentActionMatch = pathname.match(/^\/api\/agents\/([^/]+)\/(start|stop|restart|install|detect|logs|docker-exec-config|doctor-fix)$/);
+          const agentActionMatch = pathname.match(/^\/api\/agents\/([^/]+)\/(start|stop|restart|install|detect|logs|docker-exec-config|doctor-fix|stats|resources|metrics)$/);
           if (agentActionMatch) {
             const agentId = agentActionMatch[1];
             const action = agentActionMatch[2];
@@ -2837,6 +2859,38 @@ fallback:
 
             res.setHeader('Content-Type', 'application/json');
             console.log(`[Vite API Server] [${timestamp}] 200 OK: ${method} /api/agents/${agentId}/${action}`);
+
+            if (action === 'stats' || action === 'resources' || action === 'metrics') {
+              const current = agentStates[agentId] || { status: 'stopped', containerId: '' };
+              const status = current.status || 'stopped';
+              const now = Date.now();
+              const timeStr = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+              const baseCpu = agentId === 'zeroclaw' ? 5.2 : agentId === 'picoclaw' ? 2.1 : agentId === 'openclaw' ? 18.5 : 14.0;
+              const baseMem = agentId === 'zeroclaw' ? 14.8 : agentId === 'picoclaw' ? 42.0 : agentId === 'openclaw' ? 235.0 : 182.5;
+              const maxMem = agentId === 'zeroclaw' || agentId === 'picoclaw' ? 200 : 512;
+
+              const points = [];
+              for (let i = 11; i >= 0; i--) {
+                const t = new Date(now - i * 5000).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                const cpu = status === 'running' ? Math.max(0.2, +((baseCpu + (Math.random() - 0.5) * 4).toFixed(1))) : 0;
+                const memoryMb = status === 'running' ? Math.max(1.0, +((baseMem + (Math.random() - 0.5) * 8).toFixed(1))) : 0;
+                const memoryPct = status === 'running' ? +(((memoryMb / maxMem) * 100).toFixed(1)) : 0;
+                points.push({ time: t, cpu, memoryMb, memoryPct });
+              }
+
+              const latest = points[points.length - 1];
+              return res.end(JSON.stringify({
+                success: true,
+                agentId,
+                status,
+                containerId: current.containerId || '',
+                cpuUsagePct: latest.cpu,
+                memoryUsageMb: latest.memoryMb,
+                memoryUsagePct: latest.memoryPct,
+                timestamp: timeStr,
+                history: points
+              }));
+            }
 
             if (action === 'doctor-fix') {
               if (agentStates[agentId]) {
