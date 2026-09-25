@@ -1319,6 +1319,22 @@ export default function App() {
     }
   };
 
+  // Run doctor fix for OpenClaw
+  const handleFixOpenClaw = async () => {
+    try {
+      const res = await fetch('/api/agents/openclaw/doctor-fix', { method: 'POST' });
+      if (res.ok) {
+        addToast('success', 'OpenClaw Repaired', 'Database schema migrated and gateway restarted successfully.');
+        // Refresh agent states to reflect gateway restart
+        handleDetectAgents();
+      } else {
+        addToast('error', 'Repair Failed', 'Could not repair OpenClaw gateway. Check server logs.');
+      }
+    } catch (err) {
+      addToast('error', 'Repair Error', 'Failed to communicate with doctor-fix endpoint.');
+    }
+  };
+
   // Chat message submit
   const handleSendMessage = async (text: string) => {
     const userMsg: ChatMessage = {
