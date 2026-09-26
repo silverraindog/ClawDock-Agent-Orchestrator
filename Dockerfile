@@ -67,7 +67,8 @@ RUN install -m 0755 -d /etc/apt/keyrings && \
 
 # Install Python requirements
 COPY python_backend/requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --upgrade pip --index-url https://pypi.tuna.tsinghua.edu.cn/simple
+RUN pip install --no-cache-dir -r requirements.txt --index-url https://pypi.tuna.tsinghua.edu.cn/simple --verbose
 
 # Copy Python backend files
 COPY python_backend/ ./
