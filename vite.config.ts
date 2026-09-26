@@ -1855,39 +1855,75 @@ fallback:
             return res.end(JSON.stringify({ success: true, message: 'All agent containers restart sequence initiated.' }));
           }
         },
-        // Resource monitoring endpoints in dynamicRouteMappings
         {
-          pattern: /^\/api\/(?:docker\/|agents\/)?resources(\/)?$/i,
-          methods: ['GET', 'POST', 'OPTIONS'],
+          pattern: /^\/api\/agents\/([^/]+)\/exec(\/)?$/i,
+          methods: ['POST', 'PUT', 'OPTIONS'],
           handler: async () => {
-            res.setHeader('Content-Type', 'application/json');
-            res.setHeader('Access-Control-Allow-Origin', '*');
-            res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-            res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept');
-            if (method === 'OPTIONS') return res.end(JSON.stringify({ success: true }));
-
-            console.log(`[Vite API Server] [${timestamp}] 200 OK: ${method} ${pathname} (Resolved via dynamicRouteMappings)`);
-            const resources: Record<string, any> = {};
-            for (const id of ['hermes-agent', 'zeroclaw', 'openclaw', 'picoclaw']) {
-              const st = agentStates[id] || { status: 'stopped' };
-              const isRunning = st.status === 'running';
-              resources[id] = {
-                agentId: id,
-                status: st.status,
-                cpuUsagePct: isRunning ? 12.5 : 0,
-                memoryUsageMb: isRunning ? 140.0 : 0
-              };
+            let body: any = {};
+            if (method === 'POST' || method === 'PUT') {
+              try {
+                body = await readRequestBody(req);
+              } catch (e) {
+                console.error('[API Bridge Debug] Error reading body:', e);
+              }
             }
-            return res.end(JSON.stringify({ success: true, resources, timestamp }));
+
+            console.log(`[API Bridge Debug] exec route hit. Method: ${method}, URL: ${pathname}`);
+            console.log(`[API Bridge Debug] Headers:`, JSON.stringify(req.headers, null, 2));
+            console.log(`[API Bridge Debug] Body:`, JSON.stringify(body, null, 2));
+
+            if (method === 'OPTIONS') {
+              res.statusCode = 200;
+              return res.end();
+            }
+
+            if (!['POST', 'PUT'].includes(method)) {
+              res.statusCode = 405;
+              res.setHeader('Content-Type', 'application/json');
+              return res.end(JSON.stringify({ error: 'Method Not Allowed', allowed: ['POST', 'PUT'] }));
+            }
+
+            const match = pathname.match(/^\/api\/agents\/([^/]+)\/exec(\/)?$/i);
+            const agentId = match ? match[1] : 'hermes-agent';
+            const command = body.command;
+
+            if (!command) {
+              res.statusCode = 400;
+              res.setHeader('Content-Type', 'application/json');
+              return res.end(JSON.stringify({ success: false, agentId, error: 'Command is required in request body.' }));
+            }
+
+            try {
+              const { execSync } = await import('child_process');
+              console.log(`[API Bridge] [${agentId}] Executing command: ${command}`);
+              const output = execSync(`docker exec ${agentId} ${command}`, { encoding: 'utf8', timeout: 10000 });
+              res.setHeader('Content-Type', 'application/json');
+              return res.end(JSON.stringify({ success: true, agentId, command, output }));
+            } catch (err: any) {
+              console.error(`[API Bridge] [${agentId}] Exec failed:`, err.message);
+              res.statusCode = 500;
+              res.setHeader('Content-Type', 'application/json');
+              return res.end(JSON.stringify({ 
+                success: false, 
+                agentId, 
+                command, 
+                error: err.message,
+                output: err.stdout || err.stderr 
+              }));
+            }
           }
         },
+        // Resource monitoring endpoints in dynamicRouteMappings
         {
           pattern: /^\/api\/agents\/([^/]+)\/(start|stop|restart|install|detect|logs|docker-exec-config|doctor-fix|metrics)(\/)?$/i,
           methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
           handler: async () => {
             const match = pathname.match(/^\/api\/agents\/([^/]+)\/(start|stop|restart|install|detect|logs|docker-exec-config|doctor-fix|metrics)(\/)?$/i);
             
-            if (!match) return res.status(404).send('Not Found');
+            if (!match) {
+              res.statusCode = 404;
+              return res.end('Not Found');
+            }
 
             const agentId = match[1];
             const action = match[2];
@@ -1898,7 +1934,8 @@ fallback:
               res.setHeader('Content-Type', 'application/json');
               return res.end(JSON.stringify({ success: true, logs: agentStates[agentId]?.logs || [] }));
             }
-            return res.status(404).send('Not Found');
+            res.statusCode = 404;
+            return res.end('Not Found');
           }
         },
         {
@@ -1922,12 +1959,23 @@ fallback:
             res.setHeader('Content-Type', 'application/json');
             return res.end(JSON.stringify({ status: 'online', totalMemories: 1420 }));
           }
-        }
+        },
       ];
 
       for (const route of dynamicRouteMappings) {
         if (route.pattern.test(pathname)) {
-          // Unified route mapping object explicitly supporting GET, POST, and all methods for all /api/* routes
+          // Check if method is allowed
+          if (route.methods && !route.methods.includes(method) && method !== 'OPTIONS') {
+            console.warn(`[Vite API Server] 405 Method Not Allowed: ${method} ${pathname}. Allowed: ${route.methods.join(', ')}`);
+            res.statusCode = 405;
+            res.setHeader('Content-Type', 'application/json');
+            return res.end(JSON.stringify({ 
+              error: 'Method Not Allowed', 
+              method, 
+              pathname, 
+              allowedMethods: route.methods 
+            }));
+          }
           return await route.handler();
         }
       }
@@ -2694,9 +2742,6 @@ fallback:
         }
 
         // Resource monitoring endpoints
-        // Removed to allow Express server to handle them directly
-
-        // 9. OpenClaw Skills Sync Endpoint - Specifically registers and handles /api/openclaw/skills-sync
         case '/api/openclaw/skills-sync':
         case '/api/openclaw/skills-sync/': {
           res.setHeader('Content-Type', 'application/json');

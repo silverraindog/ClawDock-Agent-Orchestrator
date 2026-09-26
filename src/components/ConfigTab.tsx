@@ -180,6 +180,7 @@ interface ConfigTabProps {
   allConfigs?: Record<string, AgentFullConfig>;
   allAgents?: AgentInfo[];
   onUpdateAgentConfig?: (id: AgentId, newCfg: AgentFullConfig) => void;
+  onExecuteCommand?: (command: string) => Promise<void>;
 }
 
 type ConfigSection = 'model' | 'moa' | 'channels' | 'system' | 'security' | 'storage' | 'fallback' | 'raw';
@@ -267,7 +268,8 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
   externalVerboseLog,
   allConfigs,
   allAgents,
-  onUpdateAgentConfig
+  onUpdateAgentConfig,
+  onExecuteCommand
 }) => {
   const [rawYaml, setRawYaml] = useState(() => YAML.dump(config));
   const [yamlError, setYamlError] = useState<string | null>(null);
@@ -1060,19 +1062,23 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
             <button
               id="hermes-migrate-btn"
               onClick={async () => {
-                try {
-                  const res = await fetch(`/api/agents/${agentId}/exec`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ command: 'hermes migrate' })
-                  });
-                  if (res.ok) {
-                    alert('Migration triggered successfully!');
-                  } else {
-                    alert('Failed to trigger migration.');
+                if (onExecuteCommand) {
+                  await onExecuteCommand('hermes migrate');
+                } else {
+                  try {
+                    const res = await fetch(`/api/agents/${agentId}/exec`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ command: 'hermes migrate' })
+                    });
+                    if (res.ok) {
+                      alert('Migration triggered successfully!');
+                    } else {
+                      alert('Failed to trigger migration.');
+                    }
+                  } catch (e) {
+                    alert('Error triggering migration.');
                   }
-                } catch (e) {
-                  alert('Error triggering migration.');
                 }
               }}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-amber-300 hover:text-white bg-amber-950/60 hover:bg-amber-900/60 border border-amber-500/30 transition-colors"

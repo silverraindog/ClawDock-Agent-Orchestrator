@@ -53,6 +53,7 @@ import {
   fetchSystemUpdates,
   fetchDockerSystemStatus,
   executeAgentCommand,
+  AgentExecResult,
   getLocalPresets,
   saveLocalPresets,
   fetchPresets,
@@ -173,6 +174,7 @@ export default function App() {
   ]);
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [execHistory, setExecHistory] = useState<AgentExecResult[]>([]);
   const [menuLayout, setMenuLayout] = useState<'stacked' | 'docked_bottom'>(() => {
     try {
       return (localStorage.getItem('clawdock_menu_layout') as any) || 'stacked';
@@ -1306,6 +1308,7 @@ export default function App() {
 
     try {
       const result = await executeAgentCommand(selectedAgentId, command);
+      setExecHistory(prev => [result, ...prev]);
       if (result.success) {
         addToast('success', 'Command Executed', `Finished: ${command}`);
         setInjectionAlertsMap(prev => ({
@@ -1478,6 +1481,33 @@ export default function App() {
 
   // Chat message submit
   const handleSendMessage = async (text: string) => {
+    // Check if it's a direct command (starting with /)
+    if (text.startsWith('/')) {
+      const command = text.slice(1).trim();
+      if (command) {
+        setIsThinking(true);
+        try {
+          const result = await executeAgentCommand(selectedAgentId, command);
+          setExecHistory(prev => [result, ...prev]);
+          
+          // Also add to chat as a system message
+          const systemMsg: ChatMessage = {
+            id: 'exec_' + Date.now(),
+            sender: 'system',
+            agentId: selectedAgentId,
+            content: `Executed: ${command}\nOutput: ${result.output.slice(0, 500)}${result.output.length > 500 ? '...' : ''}`,
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          };
+          setMessages(prev => [...prev, systemMsg]);
+          return;
+        } catch (err) {
+          console.error('Exec failed:', err);
+        } finally {
+          setIsThinking(false);
+        }
+      }
+    }
+
     const userMsg: ChatMessage = {
       id: 'msg_' + Date.now(),
       sender: 'user',
@@ -2197,8 +2227,12 @@ export default function App() {
             <ConsoleTab
               agent={currentAgent}
               messages={messages}
+              execHistory={execHistory}
               onSendMessage={handleSendMessage}
-              onClearHistory={() => setMessages([])}
+              onClearHistory={() => {
+                setMessages([]);
+                setExecHistory([]);
+              }}
               isThinking={isThinking}
             />
           )}

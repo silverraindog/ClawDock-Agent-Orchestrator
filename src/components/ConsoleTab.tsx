@@ -16,10 +16,12 @@ import {
   ArrowDown
 } from 'lucide-react';
 import { AgentInfo, ChatMessage } from '../types';
+import { AgentExecResult } from '../utils/apiBridge';
 
 interface ConsoleTabProps {
   agent: AgentInfo;
   messages: ChatMessage[];
+  execHistory: AgentExecResult[];
   onSendMessage: (text: string) => void;
   onClearHistory: () => void;
   isThinking: boolean;
@@ -28,6 +30,7 @@ interface ConsoleTabProps {
 export const ConsoleTab: React.FC<ConsoleTabProps> = ({
   agent,
   messages,
+  execHistory,
   onSendMessage,
   onClearHistory,
   isThinking
@@ -37,6 +40,7 @@ export const ConsoleTab: React.FC<ConsoleTabProps> = ({
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [liveStream, setLiveStream] = useState(false);
   const [liveLogs, setLiveLogs] = useState<string[]>([]);
+  const [isHistoryExpanded, setIsHistoryExpanded] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const logsEndRef = useRef<HTMLDivElement>(null);
 
@@ -157,6 +161,55 @@ export const ConsoleTab: React.FC<ConsoleTabProps> = ({
             Clear Terminal
           </button>
         </div>
+      </div>
+
+      {/* Execution History Panel (Collapsible) */}
+      <div className="rounded-xl border border-slate-800 bg-slate-900/50 overflow-hidden transition-all duration-300">
+        <button
+          onClick={() => setIsHistoryExpanded(!isHistoryExpanded)}
+          className="w-full flex items-center justify-between p-3 text-xs font-bold text-slate-300 hover:text-white hover:bg-slate-800/50 transition-colors"
+        >
+          <div className="flex items-center gap-2">
+            <Clock className="w-4 h-4 text-indigo-400" />
+            <span>Command Execution History</span>
+            <span className="px-1.5 py-0.5 rounded-full bg-slate-800 text-[10px] text-slate-400 border border-slate-700">
+              {execHistory.length}
+            </span>
+          </div>
+          <ChevronRight className={`w-4 h-4 transition-transform ${isHistoryExpanded ? 'rotate-90' : ''}`} />
+        </button>
+        
+        {isHistoryExpanded && (
+          <div className="p-3 pt-0 max-h-[300px] overflow-y-auto space-y-2">
+            {execHistory.length === 0 ? (
+              <div className="py-8 text-center text-slate-500 text-[11px] italic">
+                No commands executed yet. Use /prefix to run direct container commands.
+              </div>
+            ) : (
+              execHistory.map((exec, idx) => (
+                <div key={idx} className="p-2.5 rounded-lg bg-slate-950 border border-slate-800/80 font-mono text-[11px] space-y-1.5">
+                  <div className="flex items-center justify-between gap-2 border-b border-slate-800 pb-1 mb-1">
+                    <div className="flex items-center gap-2">
+                      <span className={`w-1.5 h-1.5 rounded-full ${exec.success ? 'bg-emerald-400' : 'bg-rose-400'}`} />
+                      <span className="text-indigo-400 font-bold">$ {exec.command}</span>
+                    </div>
+                    <span className="text-[10px] text-slate-500">
+                      {new Date(exec.timestamp).toLocaleTimeString()}
+                    </span>
+                  </div>
+                  <div className="text-slate-400 whitespace-pre-wrap break-all leading-tight">
+                    {exec.output || (exec.success ? '(No output)' : exec.error)}
+                  </div>
+                  {!exec.success && exec.error && (
+                    <div className="text-rose-400/80 italic text-[10px]">
+                      Error: {exec.error}
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+        )}
       </div>
 
       {/* Chat / Terminal Window */}
