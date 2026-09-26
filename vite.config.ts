@@ -1882,18 +1882,21 @@ fallback:
           }
         },
         {
-          pattern: /^\/api\/agents\/([^/]+)\/(start|stop|restart|install|detect|logs|docker-exec-config|doctor-fix|metrics|exec)(\/)?$/i,
+          pattern: /^\/api\/agents\/([^/]+)\/(start|stop|restart|install|detect|logs|docker-exec-config|doctor-fix|metrics)(\/)?$/i,
           methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
           handler: async () => {
-            const match = pathname.match(/^\/api\/agents\/([^/]+)\/(start|stop|restart|install|detect|logs|docker-exec-config|doctor-fix|metrics|exec)(\/)?$/i);
-            console.log(`[API Bridge] Path: ${pathname}, Match: ${!!match}, AgentId: ${match ? match[1] : 'null'}, Action: ${match ? match[2] : 'null'}`);
-            const agentId = match ? match[1] : 'hermes-agent';
-            const action = match ? match[2] : 'logs';
+            const match = pathname.match(/^\/api\/agents\/([^/]+)\/(start|stop|restart|install|detect|logs|docker-exec-config|doctor-fix|metrics)(\/)?$/i);
+            
+            if (!match) return res.status(404).send('Not Found');
+
+            const agentId = match[1];
+            const action = match[2];
+
+            console.log(`[API Bridge] Path: ${pathname}, Match: ${!!match}, AgentId: ${agentId}, Action: ${action}`);
+            
             if (action === 'logs') {
+              res.setHeader('Content-Type', 'application/json');
               return res.end(JSON.stringify({ success: true, logs: agentStates[agentId]?.logs || [] }));
-            }
-            if (action === 'exec') {
-              return res.end(JSON.stringify({ success: true, message: 'Exec forwarded' }));
             }
             return res.status(404).send('Not Found');
           }
@@ -2691,26 +2694,7 @@ fallback:
         }
 
         // Resource monitoring endpoints
-        case '/api/resources':
-        case '/api/resources/':
-        case '/api/docker/resources':
-        case '/api/docker/resources/':
-        case '/api/agents/resources':
-        case '/api/agents/resources/': {
-          res.setHeader('Content-Type', 'application/json');
-          console.log(`[Vite API Server] [${timestamp}] 200 OK: GET ${pathname}`);
-          const resources: Record<string, any> = {};
-          for (const id of ['hermes-agent', 'zeroclaw', 'openclaw', 'picoclaw']) {
-            const st = agentStates[id] || { status: 'stopped' };
-            resources[id] = {
-              agentId: id,
-              status: st.status,
-              cpuUsagePct: st.status === 'running' ? 12.5 : 0,
-              memoryUsageMb: st.status === 'running' ? 140.0 : 0
-            };
-          }
-          return res.end(JSON.stringify({ success: true, resources, timestamp }));
-        }
+        // Removed to allow Express server to handle them directly
 
         // 9. OpenClaw Skills Sync Endpoint - Specifically registers and handles /api/openclaw/skills-sync
         case '/api/openclaw/skills-sync':

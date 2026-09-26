@@ -3921,7 +3921,7 @@ app.get('/api/agents/:id/detect', (req, res) => {
 });
 
 // Execute CLI command inside agent Docker container
-app.post('/api/agents/:id/exec', (req, res) => {
+app.all('/api/agents/:id/exec', (req, res) => {
   const agentId = req.params.id;
   const { command } = req.body || {};
 
