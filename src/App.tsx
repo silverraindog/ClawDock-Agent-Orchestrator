@@ -349,7 +349,7 @@ export default function App() {
     const pollInterval = setInterval(() => {
       loadAgentStates();
       checkDocker();
-    }, 7000);
+    }, 5000);
 
     return () => {
       clearInterval(pollInterval);

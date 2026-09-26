@@ -1063,13 +1063,13 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
               id="hermes-migrate-btn"
               onClick={async () => {
                 if (onExecuteCommand) {
-                  await onExecuteCommand('hermes migrate');
+                  await onExecuteCommand('hermes migrate xai --apply --no-backup');
                 } else {
                   try {
                     const res = await fetch(`/api/agents/${agentId}/exec`, {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ command: 'hermes migrate' })
+                      body: JSON.stringify({ command: 'hermes migrate xai --apply --no-backup' })
                     });
                     if (res.ok) {
                       alert('Migration triggered successfully!');
