@@ -1882,48 +1882,20 @@ fallback:
           }
         },
         {
-          pattern: /^\/api\/agents\/([^/]+)\/(start|stop|restart|install|detect|logs|docker-exec-config|doctor-fix|stats|resources|metrics)(\/)?$/i,
+          pattern: /^\/api\/agents\/([^/]+)\/(start|stop|restart|install|detect|logs|docker-exec-config|doctor-fix|metrics|exec)(\/)?$/i,
           methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
           handler: async () => {
-            const match = pathname.match(/^\/api\/agents\/([^/]+)\/(start|stop|restart|install|detect|logs|docker-exec-config|doctor-fix|stats|resources|metrics)(\/)?$/i);
+            const match = pathname.match(/^\/api\/agents\/([^/]+)\/(start|stop|restart|install|detect|logs|docker-exec-config|doctor-fix|metrics|exec)(\/)?$/i);
+            console.log(`[API Bridge] Path: ${pathname}, Match: ${!!match}, AgentId: ${match ? match[1] : 'null'}, Action: ${match ? match[2] : 'null'}`);
             const agentId = match ? match[1] : 'hermes-agent';
             const action = match ? match[2] : 'logs';
-            res.setHeader('Content-Type', 'application/json');
             if (action === 'logs') {
               return res.end(JSON.stringify({ success: true, logs: agentStates[agentId]?.logs || [] }));
             }
-            if (action === 'stats' || action === 'resources' || action === 'metrics') {
-              const current = agentStates[agentId] || { status: 'stopped', containerId: '' };
-              const status = current.status || 'stopped';
-              const now = Date.now();
-              const timeStr = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
-              const baseCpu = agentId === 'zeroclaw' ? 5.2 : agentId === 'picoclaw' ? 2.1 : agentId === 'openclaw' ? 18.5 : 14.0;
-              const baseMem = agentId === 'zeroclaw' ? 14.8 : agentId === 'picoclaw' ? 42.0 : agentId === 'openclaw' ? 235.0 : 182.5;
-              const maxMem = agentId === 'zeroclaw' || agentId === 'picoclaw' ? 200 : 512;
-
-              const points = [];
-              for (let i = 11; i >= 0; i--) {
-                const t = new Date(now - i * 5000).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
-                const cpu = status === 'running' ? Math.max(0.2, +((baseCpu + (Math.random() - 0.5) * 4).toFixed(1))) : 0;
-                const memoryMb = status === 'running' ? Math.max(1.0, +((baseMem + (Math.random() - 0.5) * 8).toFixed(1))) : 0;
-                const memoryPct = status === 'running' ? +(((memoryMb / maxMem) * 100).toFixed(1)) : 0;
-                points.push({ time: t, cpu, memoryMb, memoryPct });
-              }
-
-              const latest = points[points.length - 1];
-              return res.end(JSON.stringify({
-                success: true,
-                agentId,
-                status,
-                containerId: current.containerId || '',
-                cpuUsagePct: latest.cpu,
-                memoryUsageMb: latest.memoryMb,
-                memoryUsagePct: latest.memoryPct,
-                timestamp: timeStr,
-                history: points
-              }));
+            if (action === 'exec') {
+              return res.end(JSON.stringify({ success: true, message: 'Exec forwarded' }));
             }
-            return res.end(JSON.stringify({ success: true, status: 'running', action }));
+            return res.status(404).send('Not Found');
           }
         },
         {
