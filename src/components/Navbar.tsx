@@ -121,7 +121,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           </h1>
         </div>
         <span className="px-2 py-0.5 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 rounded text-[10px] uppercase font-bold tracking-widest">
-          v1.4.2
+          v0.0.1
         </span>
       </div>
 
@@ -153,9 +153,14 @@ export const Navbar: React.FC<NavbarProps> = ({
               currentAgent?.status === 'running' ? 'bg-emerald-400 animate-pulse' :
               currentAgent?.status === 'stopped' ? 'bg-amber-400' : 'bg-cyan-400'
             }`} />
-            <span className="font-medium text-xs sm:text-sm">
-              {currentAgent?.name || selectedAgentId || 'Agent'}
-            </span>
+            <div className="flex flex-col items-start leading-none gap-0.5">
+              <span className="font-bold text-xs sm:text-sm">
+                {currentAgent?.name || selectedAgentId || 'Agent'}
+              </span>
+              <span className="text-[9px] font-mono text-indigo-400/70 font-bold uppercase tracking-tighter">
+                {currentAgent.version.startsWith('v') ? currentAgent.version : `v${currentAgent.version}`}
+              </span>
+            </div>
             <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform ${dropdownOpen ? 'rotate-180' : ''}`} />
           </button>
 
@@ -300,6 +305,26 @@ export const Navbar: React.FC<NavbarProps> = ({
           <Code2 className="w-3.5 h-3.5 text-indigo-400" />
           <span>Code &amp; Dockerfile</span>
         </button>
+
+        {/* Selected Agent Version Tag */}
+        <div className="hidden lg:flex items-center gap-2 px-2.5 py-1 rounded-lg bg-indigo-500/5 border border-indigo-500/10">
+          <div className="flex flex-col items-end leading-none gap-0.5">
+            <span className="text-[7px] uppercase font-bold text-slate-500 tracking-tighter">Agent Version</span>
+            <span className="text-[10px] font-mono font-bold text-indigo-400">
+              {currentAgent.version.startsWith('v') ? currentAgent.version : `v${currentAgent.version}`}
+            </span>
+          </div>
+        </div>
+
+        {/* Global App Version Tag */}
+        <div className="flex items-center gap-2 px-2.5 py-1 rounded-lg bg-slate-800 border border-slate-700">
+          <div className="flex flex-col items-end leading-none gap-0.5">
+            <span className="text-[7px] uppercase font-bold text-slate-500 tracking-tighter">App Build</span>
+            <span className="text-[10px] font-mono font-bold text-slate-200">
+              v0.0.1
+            </span>
+          </div>
+        </div>
       </div>
     </header>
   );

@@ -146,8 +146,13 @@ export const AgentHealthWidget: React.FC<{ runningAgents: AgentInfo[] }> = ({ ru
             <div key={agent.id} className="p-4 rounded-xl border border-slate-800 bg-slate-950 flex flex-col justify-between gap-3 hover:border-slate-700 transition-colors">
               <div className="flex items-center justify-between">
                 <div>
-                  <div className="text-xs font-bold text-slate-200 truncate max-w-[120px]" title={agent.name}>
-                    {agent.name}
+                  <div className="flex items-center gap-2">
+                    <div className="text-xs font-bold text-slate-200 truncate max-w-[120px]" title={agent.name}>
+                      {agent.name}
+                    </div>
+                    <span className="px-1 py-0.5 rounded text-[8px] font-mono font-bold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 leading-none">
+                      {agent.version.startsWith('v') ? agent.version : `v${agent.version}`}
+                    </span>
                   </div>
                   <div className="text-[9px] font-mono text-slate-500 truncate" title={agent.containerId}>
                     ID: {agent.containerId || 'detached'}
@@ -290,7 +295,12 @@ export const ResourceMonitorWidget: React.FC<{ runningAgents: AgentInfo[] }> = (
           return (
             <div key={agent.id} className="p-4 rounded-xl border border-slate-800 bg-slate-950 flex flex-col gap-3">
               <div className="flex justify-between items-center text-xs font-bold text-slate-200">
-                <span>{agent.name}</span>
+                <div className="flex items-center gap-2">
+                  <span>{agent.name}</span>
+                  <span className="px-1 py-0.5 rounded text-[8px] font-mono font-bold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 leading-none">
+                    {agent.version.startsWith('v') ? agent.version : `v${agent.version}`}
+                  </span>
+                </div>
                 <span className="font-mono text-[10px] text-slate-500">{agent.containerId}</span>
               </div>
               <div className="flex gap-4">
