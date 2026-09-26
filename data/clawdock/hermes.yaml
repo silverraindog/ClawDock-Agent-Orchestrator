@@ -3,7 +3,7 @@ agent_id: "hermes-agent"
 agent_name: "Hermes Code Assistant"
 persona: "Hermes Prime"
 system_preset: "engineer"
-system_prompt: ""
+system_prompt: "You are Hermes Agent, a premier autonomous software engineering and problem-solving AI agent. You have direct access to workspace tools, shell execution, and persistent memory. Always structure complex tasks into clear execution steps, verify your code with tests or linters, and document non-trivial architecture decisions."
 
 model:
   provider: custom
@@ -21,6 +21,45 @@ web:
   backend: exa
   provider_tier:
     exa: free
+
+moa:
+  enabled: true
+  presets:
+    default:
+      reference_models:
+        - provider: custom:ollama
+          model: gemma4-soul:latest
+          enabled: true
+        - provider: custom:ollama
+          model: deepseek-coder-v2:16b
+          enabled: true
+        - provider: custom:ollama
+          model: qwen2-5-coder-7b-32k:latest
+          enabled: true
+      aggregator:
+        provider: custom:ollama
+        model: gemma4-soul:latest
+      degraded_reference_policy: loud
+      fanout: user_turn
+  reference_models:
+    - provider: custom:ollama
+      model: gemma4-soul:latest
+      enabled: true
+    - provider: custom:ollama
+      model: deepseek-coder-v2:16b
+      enabled: true
+    - provider: custom:ollama
+      model: qwen2-5-coder-7b-32k:latest
+      enabled: true
+  aggregator:
+    provider: custom:ollama
+    model: gemma4-soul:latest
+  degraded_reference_policy: loud
+  max_tokens: 4096
+  fanout: user_turn
+  rounds: 2
+  temperature_spread: 0.3
+  consensus_threshold: 0.85
 
 fallback:
   enabled: true
@@ -41,6 +80,9 @@ channels:
     mode: "polling"
   discord:
     enabled: false
+  slack:
+    enabled: false
+    socket_mode: true
   webhook:
     enabled: true
     port: 8080
@@ -63,44 +105,7 @@ storage:
   max_history_turns: 100
   vector_db_url: "http://everos:8080"
 
-moa:
-  enabled: true
-  presets:
-    default:
-      reference_models:
-        - provider: gemma4-soul
-          model: latest
-          enabled: true
-        - provider: deepseek-coder-v2
-          model: 16b
-          enabled: true
-        - provider: qwen2-5-coder-7b-32k
-          model: latest
-          enabled: true
-      aggregator:
-        provider: gemma4-soul
-        model: latest
-      degraded_reference_policy: loud
-      fanout: user_turn
-  reference_models:
-        - provider: gemma4-soul
-          model: latest
-          enabled: true
-        - provider: deepseek-coder-v2
-          model: 16b
-          enabled: true
-        - provider: qwen2-5-coder-7b-32k
-          model: latest
-          enabled: true
-  aggregator:
-    provider: gemma4-soul
-    model: latest
-  degraded_reference_policy: loud
-  max_tokens: 4096
-  fanout: user_turn
-  rounds: 2
-  temperature_spread: 0.3
-  consensus_threshold: 0.85
-
 env:
-
+  HERMES_LOG_LEVEL: "INFO"
+  PYTHONUNBUFFERED: "1"
+  WORKSPACE_ROOT: "/workspace"

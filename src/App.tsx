@@ -545,43 +545,69 @@ export default function App() {
       }
 
       // Enforce MOA aggregator and proposer model URLs/endpoints are correctly resolved to local 192.168.1.49 server instead of moa://local or openrouter
-      if (agentId === 'hermes-agent' || candidateConfig.moa?.enabled || candidateConfig.model?.baseUrl?.includes('192.168.1.49')) {
-        if (!candidateConfig.model.baseUrl || candidateConfig.model.baseUrl === 'moa://local') {
-          candidateConfig.model.baseUrl = 'http://192.168.1.49:11434';
+      const staticIpEndpoint = 'http://192.168.1.49:11434';
+      if (agentId === 'hermes-agent' || candidateConfig.moa?.enabled || candidateConfig.model?.baseUrl?.includes('192.168.1.49') || candidateConfig.model?.baseUrl === 'moa://local') {
+        if (!candidateConfig.model.baseUrl || candidateConfig.model.baseUrl === 'moa://local' || candidateConfig.model.baseUrl.includes('local')) {
+          candidateConfig.model.baseUrl = staticIpEndpoint;
         }
         if (!candidateConfig.moa.providerEndpoints) {
           candidateConfig.moa.providerEndpoints = {};
         }
-        candidateConfig.moa.providerEndpoints['local-ollama'] = 'http://192.168.1.49:11434';
-        candidateConfig.moa.providerEndpoints['ollama'] = 'http://192.168.1.49:11434';
-        candidateConfig.moa.providerEndpoints['custom'] = 'http://192.168.1.49:11434';
-        candidateConfig.moa.providerEndpoints['custom:ollama'] = 'http://192.168.1.49:11434';
+        if (!candidateConfig.moa.proposerEndpoints) {
+          candidateConfig.moa.proposerEndpoints = {};
+        }
+        candidateConfig.moa.providerEndpoints['local-ollama'] = staticIpEndpoint;
+        candidateConfig.moa.providerEndpoints['ollama'] = staticIpEndpoint;
+        candidateConfig.moa.providerEndpoints['custom'] = staticIpEndpoint;
+        candidateConfig.moa.providerEndpoints['custom:ollama'] = staticIpEndpoint;
+        candidateConfig.moa.providerEndpoints['moa'] = staticIpEndpoint;
 
         if (!candidateConfig.moa.providerMapping) {
           candidateConfig.moa.providerMapping = {};
         }
 
+        delete candidateConfig.moa.providerMapping['latest'];
+        delete candidateConfig.moa.providerMapping['16b'];
+
         const currentAgg = candidateConfig.moa.aggregatorModel || candidateConfig.model.model || 'gemma4-soul:latest';
-        const cleanAgg = (currentAgg === 'default' || !currentAgg) ? (candidateConfig.model.model || 'gemma4-soul:latest') : currentAgg;
+        let cleanAgg = (currentAgg === 'default' || !currentAgg) ? (candidateConfig.model.model || 'gemma4-soul:latest') : currentAgg;
+        if (cleanAgg === 'latest') cleanAgg = 'gemma4-soul:latest';
+        if (cleanAgg === '16b') cleanAgg = 'deepseek-coder-v2:16b';
         candidateConfig.moa.aggregatorModel = cleanAgg;
 
-        if (!candidateConfig.moa.providerMapping[cleanAgg] || candidateConfig.moa.providerMapping[cleanAgg] === 'openrouter' || candidateConfig.moa.providerMapping[cleanAgg] === 'moa://local') {
-          candidateConfig.moa.providerMapping[cleanAgg] = 'custom:ollama';
-        }
+        candidateConfig.moa.providerMapping[cleanAgg] = 'custom';
+        candidateConfig.moa.providerEndpoints[cleanAgg] = staticIpEndpoint;
 
         if (!candidateConfig.moa.proposerModels || candidateConfig.moa.proposerModels.length === 0) {
           candidateConfig.moa.proposerModels = ['gemma4-soul:latest', 'deepseek-coder-v2:16b', 'qwen2-5-coder-7b-32k:latest'];
         }
 
-        for (const proposer of candidateConfig.moa.proposerModels) {
-          if (!candidateConfig.moa.providerMapping[proposer] || candidateConfig.moa.providerMapping[proposer] === 'openrouter' || candidateConfig.moa.providerMapping[proposer] === 'moa://local') {
-            candidateConfig.moa.providerMapping[proposer] = 'custom:ollama';
+        candidateConfig.moa.proposerModels = candidateConfig.moa.proposerModels.map((proposer: any) => {
+          let prop = typeof proposer === 'string' ? proposer : (proposer?.model || proposer?.name);
+          if (prop === 'latest') prop = 'gemma4-soul:latest';
+          if (prop === '16b') prop = 'deepseek-coder-v2:16b';
+          if (prop) {
+            candidateConfig.moa.providerMapping[prop] = 'custom';
+            candidateConfig.moa.proposerEndpoints[prop] = staticIpEndpoint;
+            candidateConfig.moa.providerEndpoints[prop] = staticIpEndpoint;
           }
-        }
+          return prop;
+        }).filter(Boolean);
+
+        Object.keys(candidateConfig.moa.proposerEndpoints).forEach(key => {
+          candidateConfig.moa.proposerEndpoints[key] = staticIpEndpoint;
+        });
 
         candidateConfig.providerMapping = { ...(candidateConfig.providerMapping || {}), ...candidateConfig.moa.providerMapping };
+        delete candidateConfig.providerMapping['latest'];
+        delete candidateConfig.providerMapping['16b'];
 
-        verboseLogs.push(`[${new Date().toLocaleTimeString()}] [MOA_LOCAL_RESOLVE] Enforced MOA aggregator (${candidateConfig.moa.aggregatorModel}) and proposer endpoints resolved to static IP: http://192.168.1.49:11434 (provider: custom:ollama)`);
+        // Replace any remaining instances of 'moa://local' with 'http://192.168.1.49:11434'
+        let candidateStr = JSON.stringify(candidateConfig);
+        candidateStr = candidateStr.replace(/moa:\/\/local\/?/g, staticIpEndpoint);
+        candidateConfig = JSON.parse(candidateStr);
+
+        verboseLogs.push(`[${new Date().toLocaleTimeString()}] [MOA_LOCAL_RESOLVE] Enforced MOA aggregator (${candidateConfig.moa.aggregatorModel}) and proposer endpoints resolved to static IP: http://192.168.1.49:11434 (provider: custom)`);
       }
 
       verboseLogs.push(`[${new Date().toLocaleTimeString()}] [SOURCE] Detected source: "${data.source || 'docker_exec'}", Path: "${data.filePath || 'container'}"`);
@@ -1055,81 +1081,153 @@ export default function App() {
       }
 
       // Ensure main model, fallback, and MOA configurations are saved and mapped to local static IP
-      const normalizedConfig = {
+      let normalizedConfig = {
         ...currentConfig,
         model: currentConfig.model || {},
         fallback: currentConfig.fallback || {},
         moa: currentConfig.moa || {}
       };
 
-      // Ensure local IP MOA resolution for Ollama/Hermes
-      if (selectedAgentId === 'hermes-agent' || normalizedConfig.moa?.enabled || normalizedConfig.model?.provider === 'ollama' || normalizedConfig.model?.provider === 'custom' || normalizedConfig.model?.baseUrl?.includes('192.168.1.49')) {
-        if (!normalizedConfig.model.baseUrl || normalizedConfig.model.baseUrl === 'moa://local') {
-          normalizedConfig.model.baseUrl = 'http://192.168.1.49:11434';
-        }
-        if (!normalizedConfig.moa.providerEndpoints) {
-          normalizedConfig.moa.providerEndpoints = {};
-        }
-        normalizedConfig.moa.providerEndpoints['local-ollama'] = 'http://192.168.1.49:11434';
-        normalizedConfig.moa.providerEndpoints['ollama'] = 'http://192.168.1.49:11434';
-        normalizedConfig.moa.providerEndpoints['custom'] = 'http://192.168.1.49:11434';
-        normalizedConfig.moa.providerEndpoints['custom:ollama'] = 'http://192.168.1.49:11434';
+      const STATIC_OLLAMA_ENDPOINT = 'http://192.168.1.49:11434';
 
-        if (!normalizedConfig.moa.providerMapping) {
-          normalizedConfig.moa.providerMapping = {};
-        }
-
-        const currentAgg = normalizedConfig.moa.aggregatorModel || normalizedConfig.model.model || 'gemma4-soul:latest';
-        const cleanAgg = (typeof currentAgg === 'string' && currentAgg !== 'default' && currentAgg) ? currentAgg : (typeof currentAgg === 'object' && currentAgg.model ? currentAgg.model : (normalizedConfig.model.model || 'gemma4-soul:latest'));
-        normalizedConfig.moa.aggregatorModel = cleanAgg;
-
-        const aggKey = typeof cleanAgg === 'string' ? cleanAgg : cleanAgg.model;
-        if (aggKey && (!normalizedConfig.moa.providerMapping[aggKey] || normalizedConfig.moa.providerMapping[aggKey] === 'openrouter' || normalizedConfig.moa.providerMapping[aggKey] === 'moa://local')) {
-          normalizedConfig.moa.providerMapping[aggKey] = 'custom:ollama';
-        }
-
-        if (!normalizedConfig.moa.proposerModels || normalizedConfig.moa.proposerModels.length === 0) {
-          normalizedConfig.moa.proposerModels = ['gemma4-soul:latest', 'deepseek-coder-v2:16b', 'qwen2-5-coder-7b-32k:latest'];
-        }
-
-        for (const proposer of normalizedConfig.moa.proposerModels) {
-          const propName = typeof proposer === 'string' ? proposer : (proposer?.model || proposer?.name);
-          if (propName) {
-            if (!normalizedConfig.moa.providerMapping[propName] || normalizedConfig.moa.providerMapping[propName] === 'openrouter' || normalizedConfig.moa.providerMapping[propName] === 'moa://local') {
-              normalizedConfig.moa.providerMapping[propName] = 'custom:ollama';
-            }
-          }
-        }
-
-        normalizedConfig.providerMapping = { ...(normalizedConfig.providerMapping || {}), ...normalizedConfig.moa.providerMapping };
+      // Explicitly enforce the static IP 192.168.1.49 for all MOA proposer endpoints during config saving
+      if (!normalizedConfig.moa.proposerEndpoints) {
+        normalizedConfig.moa.proposerEndpoints = {};
+      }
+      if (!normalizedConfig.moa.providerEndpoints) {
+        normalizedConfig.moa.providerEndpoints = {};
+      }
+      if (!normalizedConfig.moa.providerMapping) {
+        normalizedConfig.moa.providerMapping = {};
       }
 
-      const nativeContent = JSON.stringify(normalizedConfig, null, 2);
+      // Populate known provider alias endpoints with static IP
+      normalizedConfig.moa.providerEndpoints['local-ollama'] = STATIC_OLLAMA_ENDPOINT;
+      normalizedConfig.moa.providerEndpoints['ollama'] = STATIC_OLLAMA_ENDPOINT;
+      normalizedConfig.moa.providerEndpoints['custom'] = STATIC_OLLAMA_ENDPOINT;
+      normalizedConfig.moa.providerEndpoints['custom:ollama'] = STATIC_OLLAMA_ENDPOINT;
+      normalizedConfig.moa.providerEndpoints['moa'] = STATIC_OLLAMA_ENDPOINT;
+
+      // Ensure model baseUrl does not use moa://local or http://local
+      if (!normalizedConfig.model.baseUrl || normalizedConfig.model.baseUrl === 'moa://local' || normalizedConfig.model.baseUrl.includes('local')) {
+        normalizedConfig.model.baseUrl = STATIC_OLLAMA_ENDPOINT;
+      }
+      if (normalizedConfig.fallback?.baseUrl === 'moa://local' || normalizedConfig.fallback?.baseUrl?.includes('local')) {
+        normalizedConfig.fallback.baseUrl = STATIC_OLLAMA_ENDPOINT;
+      }
+
+      delete normalizedConfig.moa.providerMapping['latest'];
+      delete normalizedConfig.moa.providerMapping['16b'];
+
+      const currentAgg = normalizedConfig.moa.aggregatorModel || normalizedConfig.model.model || 'gemma4-soul:latest';
+      let cleanAgg = (typeof currentAgg === 'string' && currentAgg !== 'default' && currentAgg) ? currentAgg : (typeof currentAgg === 'object' && currentAgg.model ? currentAgg.model : (normalizedConfig.model.model || 'gemma4-soul:latest'));
+      if (cleanAgg === 'latest') cleanAgg = 'gemma4-soul:latest';
+      if (cleanAgg === '16b') cleanAgg = 'deepseek-coder-v2:16b';
+      normalizedConfig.moa.aggregatorModel = cleanAgg;
+
+      normalizedConfig.moa.providerMapping[cleanAgg] = 'custom';
+      normalizedConfig.moa.providerEndpoints[cleanAgg] = STATIC_OLLAMA_ENDPOINT;
+
+      if (!normalizedConfig.moa.proposerModels || normalizedConfig.moa.proposerModels.length === 0) {
+        normalizedConfig.moa.proposerModels = ['gemma4-soul:latest', 'deepseek-coder-v2:16b', 'qwen2-5-coder-7b-32k:latest'];
+      }
+
+      // Explicitly map all proposer models to static IP endpoints
+      normalizedConfig.moa.proposerModels = normalizedConfig.moa.proposerModels.map((proposer: any) => {
+        let propName = typeof proposer === 'string' ? proposer : (proposer?.model || proposer?.name);
+        if (propName === 'latest') propName = 'gemma4-soul:latest';
+        if (propName === '16b') propName = 'deepseek-coder-v2:16b';
+        if (propName) {
+          normalizedConfig.moa.providerMapping[propName] = 'custom';
+          normalizedConfig.moa.proposerEndpoints[propName] = STATIC_OLLAMA_ENDPOINT;
+          normalizedConfig.moa.providerEndpoints[propName] = STATIC_OLLAMA_ENDPOINT;
+        }
+        return propName;
+      }).filter(Boolean);
+
+      // Force any existing keys in proposerEndpoints to static IP
+      Object.keys(normalizedConfig.moa.proposerEndpoints).forEach(key => {
+        normalizedConfig.moa.proposerEndpoints[key] = STATIC_OLLAMA_ENDPOINT;
+      });
+
+      // Force any existing keys in providerEndpoints matching 'local' to static IP
+      Object.keys(normalizedConfig.moa.providerEndpoints).forEach(key => {
+        if (normalizedConfig.moa.providerEndpoints[key].includes('local')) {
+          normalizedConfig.moa.providerEndpoints[key] = STATIC_OLLAMA_ENDPOINT;
+        }
+      });
+
+      normalizedConfig.providerMapping = { ...(normalizedConfig.providerMapping || {}), ...normalizedConfig.moa.providerMapping };
+      delete normalizedConfig.providerMapping['latest'];
+      delete normalizedConfig.providerMapping['16b'];
+
+      // Replace any instances of 'moa://local' in normalizedConfig
+      const configJsonBeforeSanitize = JSON.stringify(normalizedConfig, null, 2);
+      console.group('%c[handleSaveConfig] MOA Static IP & Endpoint Sanitization Audit', 'color: #38bdf8; font-weight: bold;');
+      console.log('[handleSaveConfig] Config JSON BEFORE moa://local replacement:\n', configJsonBeforeSanitize);
+      
+      let sanitizedConfigJson = JSON.stringify(normalizedConfig);
+      sanitizedConfigJson = sanitizedConfigJson.replace(/moa:\/\/local\/?/g, STATIC_OLLAMA_ENDPOINT);
+      sanitizedConfigJson = sanitizedConfigJson.replace(/http:\/\/local(?::\d+)?\/?/g, STATIC_OLLAMA_ENDPOINT);
+      normalizedConfig = JSON.parse(sanitizedConfigJson);
+      
+      console.log('[handleSaveConfig] Config JSON AFTER moa://local replacement:\n', JSON.stringify(normalizedConfig, null, 2));
+      console.groupEnd();
+
+      let nativeContent = JSON.stringify(normalizedConfig, null, 2);
+      nativeContent = nativeContent.replace(/moa:\/\/local\/?/g, STATIC_OLLAMA_ENDPOINT);
+      nativeContent = nativeContent.replace(/http:\/\/local(?::\d+)?\/?/g, STATIC_OLLAMA_ENDPOINT);
 
       // Save locally immediately to guarantee session persistence
       const updatedConfigs = { ...configs, [selectedAgentId]: normalizedConfig };
       saveLocalPersistence('configs', updatedConfigs);
       setConfigs(updatedConfigs);
 
-      // Sync explicitly with backend persistence.json
+      // Sync explicitly with backend persistence.json, replacing any instances of 'moa://local'
       try {
+        let persistencePayload = JSON.stringify({ configs: updatedConfigs });
+        persistencePayload = persistencePayload.replace(/moa:\/\/local\/?/g, STATIC_OLLAMA_ENDPOINT);
+        persistencePayload = persistencePayload.replace(/http:\/\/local(?::\d+)?\/?/g, STATIC_OLLAMA_ENDPOINT);
         await fetch('/api/persistence', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ configs: updatedConfigs })
+          body: persistencePayload
         });
       } catch (err) {
         console.warn('[handleSaveConfig] Persistence sync failed:', err);
       }
 
+      // Generate the final JSON payload for the config PUT request and explicitly replace 'moa://local' with 'http://192.168.1.49:11434'
+      const payloadObject = { 
+        config: normalizedConfig,
+        nativeContent, 
+        restartContainer 
+      };
+
+      // Granular logging before and after regex replacement of 'moa://local' on generated JSON payload
+      const exactJsonBeforeReplacement = JSON.stringify(payloadObject, null, 2);
+      const rawStringBeforeReplacement = JSON.stringify(payloadObject);
+
+      console.group('%c[handleSaveConfig] Generated JSON Payload moa://local Replacement Audit', 'color: #10b981; font-weight: bold; font-size: 12px;');
+      console.log('[handleSaveConfig] Static IP Target Address:', STATIC_OLLAMA_ENDPOINT);
+      console.log('[handleSaveConfig] Contains "moa://local" BEFORE replacement?:', rawStringBeforeReplacement.includes('moa://local'));
+      console.log('[handleSaveConfig] >>> EXACT JSON STRING BEFORE REPLACEMENT:\n' + exactJsonBeforeReplacement);
+
+      // Execute regex replacement
+      let generatedJsonPayload = rawStringBeforeReplacement.replace(/moa:\/\/local\/?/g, STATIC_OLLAMA_ENDPOINT);
+      generatedJsonPayload = generatedJsonPayload.replace(/http:\/\/local(?::\d+)?\/?/g, STATIC_OLLAMA_ENDPOINT);
+
+      const exactJsonAfterReplacement = JSON.stringify(JSON.parse(generatedJsonPayload), null, 2);
+      console.log('[handleSaveConfig] Contains "moa://local" AFTER replacement?:', generatedJsonPayload.includes('moa://local'));
+      console.log('[handleSaveConfig] Contains "192.168.1.49" AFTER replacement?:', generatedJsonPayload.includes('192.168.1.49'));
+      console.log('[handleSaveConfig] >>> EXACT JSON STRING AFTER REPLACEMENT:\n' + exactJsonAfterReplacement);
+      console.log('[handleSaveConfig] Final Raw Request Body being sent over network (PUT /api/agents/' + selectedAgentId + '/config):\n', generatedJsonPayload);
+      console.groupEnd();
+
       const res = await fetch(`/api/agents/${selectedAgentId}/config`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          config: normalizedConfig,
-          nativeContent, 
-          restartContainer 
-        })
+        body: generatedJsonPayload
       });
       const data = await res.json();
 

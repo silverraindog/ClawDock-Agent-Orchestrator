@@ -3297,15 +3297,19 @@ app.all(['/api/llm/health', '/api/health/llm', '/api/llm-health'], async (req, r
 });
 
 function parseModelAndProvider(rawInput: string, providerMapping: Record<string, string> = {}, defaultFallbackModel = 'gemma4-soul:latest'): { provider: string; model: string } {
-  const KNOWN_PROVIDERS = new Set(['custom:ollama', 'custom', 'ollama', 'openrouter', 'openai', 'anthropic', 'gemini', 'google', 'groq', 'mistral', 'together', 'deepseek']);
-  const raw = (!rawInput || rawInput === 'default') ? defaultFallbackModel : rawInput.trim();
+  const KNOWN_PROVIDERS = new Set(['custom', 'ollama', 'openrouter', 'openai', 'anthropic', 'gemini', 'google', 'groq', 'mistral', 'together', 'deepseek']);
+  let raw = (!rawInput || rawInput === 'default') ? defaultFallbackModel : rawInput.trim();
+
+  // Repair known corrupted single-token model names
+  if (raw === 'latest') raw = 'gemma4-soul:latest';
+  if (raw === '16b') raw = 'deepseek-coder-v2:16b';
 
   if (raw.startsWith('custom:ollama:')) {
-    return { provider: 'custom:ollama', model: raw.slice('custom:ollama:'.length) };
+    return { provider: 'custom', model: raw.slice('custom:ollama:'.length) };
   }
   if (raw.startsWith('ollama:') || raw.startsWith('custom:')) {
     const modelPart = raw.slice(raw.indexOf(':') + 1);
-    return { provider: 'custom:ollama', model: modelPart };
+    return { provider: 'custom', model: modelPart };
   }
 
   // Check if it starts with a recognized provider prefix (e.g. openrouter:anthropic/claude-3-7-sonnet)
@@ -3314,7 +3318,7 @@ function parseModelAndProvider(rawInput: string, providerMapping: Record<string,
     const candidatePrefix = raw.slice(0, firstColonIndex).toLowerCase();
     if (KNOWN_PROVIDERS.has(candidatePrefix)) {
       const modelPart = raw.slice(firstColonIndex + 1);
-      return { provider: candidatePrefix, model: modelPart };
+      return { provider: candidatePrefix === 'ollama' ? 'custom' : candidatePrefix, model: modelPart };
     }
   }
 
@@ -3322,7 +3326,7 @@ function parseModelAndProvider(rawInput: string, providerMapping: Record<string,
   const alias = providerMapping[raw];
   if (alias) {
     if (alias === 'local-ollama' || alias === 'ollama' || alias === 'custom:ollama' || alias === 'custom') {
-      return { provider: 'custom:ollama', model: raw };
+      return { provider: 'custom', model: raw };
     }
     if (alias === 'remote-openrouter' || alias === 'openrouter') {
       return { provider: 'openrouter', model: raw };
@@ -3336,8 +3340,8 @@ function parseModelAndProvider(rawInput: string, providerMapping: Record<string,
     return { provider: alias, model: raw };
   }
 
-  // Default to custom:ollama for local cluster models
-  return { provider: 'custom:ollama', model: raw };
+  // Default to custom provider for local cluster models
+  return { provider: 'custom', model: raw };
 }
 
 function generateHermesYaml(cfg: any): string {
@@ -3349,13 +3353,15 @@ function generateHermesYaml(cfg: any): string {
   const env = cfg?.customEnv || {};
   const fb = cfg?.fallback || {};
   const web = cfg?.web || {};
-  const providerMapping: Record<string, string> = moa?.providerMapping || cfg?.providerMapping || {};
+  const providerMapping: Record<string, string> = { ...(moa?.providerMapping || {}), ...(cfg?.providerMapping || {}) };
+  delete providerMapping['latest'];
+  delete providerMapping['16b'];
 
   const rawModel = m?.default || m?.model || 'gemma4-soul:latest';
-  const model = rawModel === 'default' ? 'gemma4-soul:latest' : rawModel;
+  const model = (rawModel === 'default' || rawModel === 'latest') ? 'gemma4-soul:latest' : rawModel;
   const rawProvider = m?.provider || 'custom';
-  // If explicitly 'ollama', don't force to 'custom' unless baseUrl is missing or default
-  const isOllamaLocal = (rawProvider === 'ollama' && (m?.baseUrl && !m?.baseUrl.includes('192.168.1.49'))) ? false : (rawProvider === 'ollama' || rawProvider === 'custom' || m?.baseUrl?.includes('192.168.1.49') || m?.baseUrl === 'http://192.168.1.49:11434' || !m?.baseUrl);
+  // If explicitly 'ollama' or local 192.168.1.49 address, map to 'custom' for hermes
+  const isOllamaLocal = rawProvider === 'ollama' || rawProvider === 'custom' || m?.baseUrl?.includes('192.168.1.49') || m?.baseUrl === 'http://192.168.1.49:11434' || !m?.baseUrl;
   const finalProvider = isOllamaLocal ? 'custom' : rawProvider;
   const finalApiKey = isOllamaLocal ? (m?.apiKey || 'ollama') : (m?.apiKey || '');
   const rawBaseUrl = m?.baseUrl || (isOllamaLocal ? 'http://192.168.1.49:11434' : '');
@@ -3370,32 +3376,67 @@ function generateHermesYaml(cfg: any): string {
   const referenceModelsList = rawProposers.map((rawModelName: any) => {
     let resolved;
     if (typeof rawModelName === 'string') {
-      resolved = parseModelAndProvider(rawModelName, providerMapping, 'gemma4-soul:latest');
+      const s = rawModelName === 'latest' ? 'gemma4-soul:latest' : rawModelName === '16b' ? 'deepseek-coder-v2:16b' : rawModelName;
+      resolved = parseModelAndProvider(s, providerMapping, 'gemma4-soul:latest');
     } else {
-      // Handle object format: { provider: string, model: string }
-      resolved = {
-        provider: rawModelName.provider || 'custom:ollama',
-        model: rawModelName.model || 'gemma4-soul:latest'
-      };
+      const p = rawModelName.provider || '';
+      const mod = rawModelName.model || 'gemma4-soul:latest';
+      if (p && !['custom', 'ollama', 'openrouter', 'openai', 'anthropic', 'gemini'].includes(p)) {
+        // Corrupted split object { provider: 'gemma4-soul', model: 'latest' }
+        resolved = {
+          provider: 'custom',
+          model: `${p}:${mod}`
+        };
+      } else {
+        resolved = {
+          provider: (p === 'custom:ollama' || p === 'ollama' || !p) ? 'custom' : p,
+          model: mod === 'latest' ? 'gemma4-soul:latest' : mod === '16b' ? 'deepseek-coder-v2:16b' : mod
+        };
+      }
     }
-    return `        - provider: ${resolved.provider}
+
+    const itemProv = (resolved.provider === 'custom:ollama' || resolved.provider === 'ollama') ? 'custom' : resolved.provider;
+    const itemBaseUrl = itemProv === 'custom' ? finalBaseUrlV1 : '';
+    const itemApiKey = itemProv === 'custom' ? finalApiKey : '';
+
+    return `        - provider: ${itemProv}
           model: ${resolved.model}
+          base_url: ${itemBaseUrl || finalBaseUrlV1}
+          api_key: ${itemApiKey || finalApiKey}
           enabled: true`;
   }).join('\n');
 
   // Aggregator model resolution
-  const rawAgg = moa?.aggregatorModel || model || 'gemma4-soul:latest';
+  let rawAgg = moa?.aggregatorModel || model || 'gemma4-soul:latest';
+  if (rawAgg === 'latest') rawAgg = 'gemma4-soul:latest';
+  if (rawAgg === '16b') rawAgg = 'deepseek-coder-v2:16b';
+
   let resolvedAgg;
   if (typeof rawAgg === 'string') {
     resolvedAgg = parseModelAndProvider(rawAgg, providerMapping, model || 'gemma4-soul:latest');
   } else {
-    resolvedAgg = {
-      provider: rawAgg.provider || 'custom:ollama',
-      model: rawAgg.model || model || 'gemma4-soul:latest'
-    };
+    const p = rawAgg.provider || '';
+    const mod = rawAgg.model || model || 'gemma4-soul:latest';
+    if (p && !['custom', 'ollama', 'openrouter', 'openai', 'anthropic', 'gemini'].includes(p)) {
+      resolvedAgg = {
+        provider: 'custom',
+        model: `${p}:${mod}`
+      };
+    } else {
+      resolvedAgg = {
+        provider: (p === 'custom:ollama' || p === 'ollama' || !p) ? 'custom' : p,
+        model: mod === 'latest' ? 'gemma4-soul:latest' : mod === '16b' ? 'deepseek-coder-v2:16b' : mod
+      };
+    }
   }
-  const aggProv = resolvedAgg.provider;
+
+  let aggProv = resolvedAgg.provider;
+  if (aggProv === 'custom:ollama' || aggProv === 'ollama' || !['custom', 'openrouter', 'openai', 'anthropic', 'gemini'].includes(aggProv)) {
+    aggProv = 'custom';
+  }
   const aggModel = resolvedAgg.model;
+  const aggBaseUrl = aggProv === 'custom' ? finalBaseUrlV1 : '';
+  const aggApiKey = aggProv === 'custom' ? finalApiKey : '';
 
   const fbProvider = fb?.provider || fb?.fallbackProvider || 'openrouter';
   const fbModel = fb?.model || fb?.fallbackModel || 'anthropic/claude-3.7-sonnet';
@@ -3470,13 +3511,13 @@ storage:
 moa:
   enabled: ${moa?.enabled ?? true}
   provider_endpoints:
-    custom:ollama: "${finalBaseUrl}"
-    ollama: "${finalBaseUrl}"
     custom: "${finalBaseUrl}"
+    ollama: "${finalBaseUrl}"
+    custom:ollama: "${finalBaseUrl}"
     local-ollama: "${finalBaseUrl}"
   provider_mapping:
-    ${aggModel}: "custom:ollama"
-${rawProposers.map((p: any) => `    ${typeof p === 'string' ? p : p.model || p.name}: "custom:ollama"`).join('\n')}
+    ${aggModel}: "custom"
+${rawProposers.map((p: any) => `    ${typeof p === 'string' ? (p === 'latest' ? 'gemma4-soul:latest' : p === '16b' ? 'deepseek-coder-v2:16b' : p) : p.model || p.name}: "custom"`).join('\n')}
   presets:
     default:
       reference_models:
@@ -3484,6 +3525,8 @@ ${referenceModelsList}
       aggregator:
         provider: ${aggProv}
         model: ${aggModel}
+        base_url: ${aggBaseUrl || finalBaseUrlV1}
+        api_key: ${aggApiKey || finalApiKey}
       degraded_reference_policy: loud
       fanout: user_turn
   reference_models:
@@ -3491,6 +3534,8 @@ ${referenceModelsList}
   aggregator:
     provider: ${aggProv}
     model: ${aggModel}
+    base_url: ${aggBaseUrl || finalBaseUrlV1}
+    api_key: ${aggApiKey || finalApiKey}
   degraded_reference_policy: loud
   max_tokens: 4096
   fanout: user_turn
@@ -3560,9 +3605,9 @@ app.put('/api/agents/:id/config', (req, res) => {
     }
 
     // Extract target model and provider if present
-    const targetModel = config?.model?.model || 'claude-3-7-sonnet';
-    const targetProvider = config?.model?.provider || 'anthropic';
-    const targetApiKey = config?.model?.apiKey || '';
+    const targetModel = (agentId === 'hermes-agent' && (!config?.model?.model || config?.model?.model === 'claude-3-7-sonnet' || config?.model?.model === 'latest')) ? 'gemma4-soul:latest' : (config?.model?.model || 'gemma4-soul:latest');
+    const targetProvider = (agentId === 'hermes-agent' && (!config?.model?.provider || config?.model?.provider === 'anthropic' || config?.model?.provider === 'ollama' || config?.model?.provider === 'custom:ollama')) ? 'custom' : (config?.model?.provider || 'custom');
+    const targetApiKey = config?.model?.apiKey || (agentId === 'hermes-agent' ? 'ollama' : '');
 
     // Attempt real Docker container execution & CLI config setting if Docker is available
     let containerRestarted = false;
@@ -3587,7 +3632,7 @@ app.put('/api/agents/:id/config', (req, res) => {
             // Write config file directly into container paths so hermes finds it immediately
             if (agentId === 'hermes-agent') {
               try {
-                execSync(`docker exec -i ${cName} sh -c "mkdir -p /root/.hermes /opt/hermes /etc/hermes && cat > /root/.hermes/config.yaml && cp /root/.hermes/config.yaml /opt/hermes/config.yaml && cp /root/.hermes/config.yaml /workspace/hermes.yaml"`, {
+                execSync(`docker exec -i ${cName} sh -c "mkdir -p /root/.hermes /opt/hermes /etc/hermes /home/sargus/.hermes /home/sargus/.hermes-data && cat > /root/.hermes/config.yaml && cp /root/.hermes/config.yaml /opt/hermes/config.yaml && cp /root/.hermes/config.yaml /workspace/hermes.yaml && cp /root/.hermes/config.yaml /etc/hermes/config.yaml && cp /root/.hermes/config.yaml /home/sargus/.hermes-data/config.yaml && cp /root/.hermes/config.yaml /home/sargus/.hermes/config.yaml"`, {
                   input: nativeContent,
                   encoding: 'utf8',
                   timeout: 3000,

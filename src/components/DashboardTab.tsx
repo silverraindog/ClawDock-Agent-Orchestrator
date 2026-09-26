@@ -207,6 +207,8 @@ export const ResourceMonitorWidget: React.FC<{ runningAgents: AgentInfo[] }> = (
   const [resourceData, setResourceData] = React.useState<Record<string, { cpu: number; mem: number; i: number }[]>>({});
 
   React.useEffect(() => {
+    console.log('[DashboardTab] [ResourceMonitorWidget] useEffect mounted - initializing resource polling from /api/resources');
+
     const initialData: Record<string, { cpu: number; mem: number; i: number }[]> = {};
     runningAgents.forEach(agent => {
       initialData[agent.id] = Array.from({ length: 15 }).map((_, i) => ({
@@ -217,25 +219,53 @@ export const ResourceMonitorWidget: React.FC<{ runningAgents: AgentInfo[] }> = (
     });
     setResourceData(initialData);
 
-    const interval = setInterval(() => {
-      setResourceData(prev => {
-        const next = { ...prev };
-        runningAgents.forEach(agent => {
-          const currentList = prev[agent.id] || [];
-          const last = currentList[currentList.length - 1];
-          
-          const newCpu = Math.max(5, Math.min(95, last.cpu + (Math.random() - 0.5) * 10));
-          const newMem = Math.max(20, Math.min(500, last.mem + (Math.random() - 0.5) * 20));
+    const fetchResources = async () => {
+      const endpoint = '/api/resources';
+      console.log(`[DashboardTab] [ResourceMonitorWidget] [${new Date().toLocaleTimeString()}] Fetching resources from ${endpoint}...`);
+      try {
+        const res = await fetch(endpoint);
+        console.log(`[DashboardTab] [ResourceMonitorWidget] GET ${endpoint} response HTTP status: ${res.status} ${res.statusText}`);
+        
+        if (!res.ok) {
+          console.error(`[DashboardTab] [ResourceMonitorWidget] ${endpoint} returned error status: ${res.status} (${res.statusText})`);
+          return;
+        }
 
-          const newList = [...currentList, { cpu: newCpu, mem: newMem, i: Date.now() }];
-          if (newList.length > 15) newList.shift();
-          next[agent.id] = newList;
-        });
-        return next;
-      });
-    }, 2000);
+        const data = await res.json();
+        console.log(`[DashboardTab] [ResourceMonitorWidget] Received payload from ${endpoint}:`, data);
 
-    return () => clearInterval(interval);
+        if (data && data.resources) {
+          setResourceData(prev => {
+            const next = { ...prev };
+            runningAgents.forEach(agent => {
+              const currentList = prev[agent.id] || [];
+              const agentRes = data.resources[agent.id];
+              const cpu = (agentRes && typeof agentRes.cpuUsagePct === 'number')
+                ? agentRes.cpuUsagePct
+                : Math.max(5, Math.min(95, (currentList[currentList.length - 1]?.cpu || 15) + (Math.random() - 0.5) * 10));
+              const mem = (agentRes && typeof agentRes.memoryUsageMb === 'number')
+                ? agentRes.memoryUsageMb
+                : Math.max(20, Math.min(500, (currentList[currentList.length - 1]?.mem || 50) + (Math.random() - 0.5) * 20));
+
+              const newList = [...currentList, { cpu, mem, i: Date.now() }];
+              if (newList.length > 15) newList.shift();
+              next[agent.id] = newList;
+            });
+            return next;
+          });
+        }
+      } catch (err: any) {
+        console.error(`[DashboardTab] [ResourceMonitorWidget] Exception during GET ${endpoint}:`, err);
+      }
+    };
+
+    fetchResources();
+    const interval = setInterval(fetchResources, 2000);
+
+    return () => {
+      console.log('[DashboardTab] [ResourceMonitorWidget] useEffect cleanup - clearing interval');
+      clearInterval(interval);
+    };
   }, [runningAgents]);
 
   if (runningAgents.length === 0) return null;

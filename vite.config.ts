@@ -442,6 +442,28 @@ base_url = "${fbBase}"
 api_key = "${fbKey}"
 `;
     } else {
+      const moa = cfg?.moa || {};
+      const moaEn = moa.enabled !== undefined ? moa.enabled : true;
+      let aggMod = moa.aggregatorModel || modelName || 'gemma4-soul:latest';
+      if (aggMod === 'latest') aggMod = 'gemma4-soul:latest';
+      if (aggMod === '16b') aggMod = 'deepseek-coder-v2:16b';
+
+      const proposers = (moa.proposerModels && moa.proposerModels.length > 0)
+        ? moa.proposerModels.map((p: any) => {
+            const s = typeof p === 'string' ? p : (p?.model || p?.name);
+            return s === 'latest' ? 'gemma4-soul:latest' : s === '16b' ? 'deepseek-coder-v2:16b' : s;
+          }).filter(Boolean)
+        : ['gemma4-soul:latest', 'deepseek-coder-v2:16b', 'qwen2-5-coder-7b-32k:latest'];
+
+      const localBaseUrl = baseUrl || 'http://192.168.1.49:11434';
+      const localBaseUrlV1 = localBaseUrl.endsWith('/v1') ? localBaseUrl : `${localBaseUrl}/v1`;
+
+      const refList = proposers.map((p: string) => `        - provider: custom
+          model: ${p}
+          base_url: ${localBaseUrlV1}
+          api_key: ${apiKey || 'ollama'}
+          enabled: true`).join('\n');
+
       return `version: "1.0.0"
 agent_id: "${agentId}"
 agent_name: "${cfg?.agentName || agentId}"
@@ -449,17 +471,53 @@ persona: "Hermes Prime"
 system_preset: "${preset}"
 
 model:
-  provider: "${modelProv}"
-  model: "${modelName}"
+  provider: "${modelProv === 'ollama' ? 'custom' : modelProv}"
+  model: "${modelName === 'latest' ? 'gemma4-soul:latest' : modelName}"
   temperature: ${temp}
   max_tokens: ${maxTok}
   context_window: ${ctxWin}
-  base_url: "${baseUrl}"
-  api_key: "${apiKey}"
+  base_url: "${localBaseUrlV1}"
+  baseUrl: "${localBaseUrl}"
+  api_key: "${apiKey || 'ollama'}"
 
 system:
   system_prompt: "${systemPrompt.replace(/"/g, '\\"')}"
   language: "en-US"
+
+moa:
+  enabled: ${moaEn}
+  provider_endpoints:
+    custom: "${localBaseUrl}"
+    ollama: "${localBaseUrl}"
+    custom:ollama: "${localBaseUrl}"
+    local-ollama: "${localBaseUrl}"
+  provider_mapping:
+    ${aggMod}: "custom"
+${proposers.map((p: string) => `    ${p}: "custom"`).join('\n')}
+  presets:
+    default:
+      reference_models:
+${refList}
+      aggregator:
+        provider: custom
+        model: ${aggMod}
+        base_url: ${localBaseUrlV1}
+        api_key: ${apiKey || 'ollama'}
+      degraded_reference_policy: loud
+      fanout: user_turn
+  reference_models:
+${refList}
+  aggregator:
+    provider: custom
+    model: ${aggMod}
+    base_url: ${localBaseUrlV1}
+    api_key: ${apiKey || 'ollama'}
+  degraded_reference_policy: loud
+  max_tokens: 4096
+  fanout: user_turn
+  rounds: ${moa.rounds ?? 2}
+  temperature_spread: ${moa.temperatureSpread ?? 0.3}
+  consensus_threshold: ${moa.consensusThreshold ?? 0.85}
 
 fallback:
   enabled: ${fbEn}
@@ -1797,16 +1855,73 @@ fallback:
             return res.end(JSON.stringify({ success: true, message: 'All agent containers restart sequence initiated.' }));
           }
         },
+        // Resource monitoring endpoints in dynamicRouteMappings
         {
-          pattern: /^\/api\/agents\/([^/]+)\/(start|stop|restart|install|detect|logs|docker-exec-config|doctor-fix)(\/)?$/i,
+          pattern: /^\/api\/(docker\/|agents\/)?resources(\/)?$/i,
+          methods: ['GET', 'POST', 'OPTIONS'],
+          handler: async () => {
+            res.setHeader('Content-Type', 'application/json');
+            res.setHeader('Access-Control-Allow-Origin', '*');
+            res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+            res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept');
+            if (method === 'OPTIONS') return res.end(JSON.stringify({ success: true }));
+
+            console.log(`[Vite API Server] [${timestamp}] 200 OK: ${method} ${pathname} (Resolved via dynamicRouteMappings)`);
+            const resources: Record<string, any> = {};
+            for (const id of ['hermes-agent', 'zeroclaw', 'openclaw', 'picoclaw']) {
+              const st = agentStates[id] || { status: 'stopped' };
+              const isRunning = st.status === 'running';
+              resources[id] = {
+                agentId: id,
+                status: st.status,
+                cpuUsagePct: isRunning ? 12.5 : 0,
+                memoryUsageMb: isRunning ? 140.0 : 0
+              };
+            }
+            return res.end(JSON.stringify({ success: true, resources, timestamp }));
+          }
+        },
+        {
+          pattern: /^\/api\/agents\/([^/]+)\/(start|stop|restart|install|detect|logs|docker-exec-config|doctor-fix|stats|resources|metrics)(\/)?$/i,
           methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
           handler: async () => {
-            const match = pathname.match(/^\/api\/agents\/([^/]+)\/(start|stop|restart|install|detect|logs|docker-exec-config|doctor-fix)(\/)?$/i);
+            const match = pathname.match(/^\/api\/agents\/([^/]+)\/(start|stop|restart|install|detect|logs|docker-exec-config|doctor-fix|stats|resources|metrics)(\/)?$/i);
             const agentId = match ? match[1] : 'hermes-agent';
             const action = match ? match[2] : 'logs';
             res.setHeader('Content-Type', 'application/json');
             if (action === 'logs') {
               return res.end(JSON.stringify({ success: true, logs: agentStates[agentId]?.logs || [] }));
+            }
+            if (action === 'stats' || action === 'resources' || action === 'metrics') {
+              const current = agentStates[agentId] || { status: 'stopped', containerId: '' };
+              const status = current.status || 'stopped';
+              const now = Date.now();
+              const timeStr = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+              const baseCpu = agentId === 'zeroclaw' ? 5.2 : agentId === 'picoclaw' ? 2.1 : agentId === 'openclaw' ? 18.5 : 14.0;
+              const baseMem = agentId === 'zeroclaw' ? 14.8 : agentId === 'picoclaw' ? 42.0 : agentId === 'openclaw' ? 235.0 : 182.5;
+              const maxMem = agentId === 'zeroclaw' || agentId === 'picoclaw' ? 200 : 512;
+
+              const points = [];
+              for (let i = 11; i >= 0; i--) {
+                const t = new Date(now - i * 5000).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                const cpu = status === 'running' ? Math.max(0.2, +((baseCpu + (Math.random() - 0.5) * 4).toFixed(1))) : 0;
+                const memoryMb = status === 'running' ? Math.max(1.0, +((baseMem + (Math.random() - 0.5) * 8).toFixed(1))) : 0;
+                const memoryPct = status === 'running' ? +(((memoryMb / maxMem) * 100).toFixed(1)) : 0;
+                points.push({ time: t, cpu, memoryMb, memoryPct });
+              }
+
+              const latest = points[points.length - 1];
+              return res.end(JSON.stringify({
+                success: true,
+                agentId,
+                status,
+                containerId: current.containerId || '',
+                cpuUsagePct: latest.cpu,
+                memoryUsageMb: latest.memoryMb,
+                memoryUsagePct: latest.memoryPct,
+                timestamp: timeStr,
+                history: points
+              }));
             }
             return res.end(JSON.stringify({ success: true, status: 'running', action }));
           }

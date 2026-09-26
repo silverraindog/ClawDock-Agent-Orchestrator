@@ -83,8 +83,9 @@
         ]
       },
       "providerMapping": {
-        "latest": "qwen2-5-coder-7b-32k",
-        "16b": "deepseek-coder-v2"
+        "gemma4-soul:latest": "custom",
+        "deepseek-coder-v2:16b": "custom",
+        "qwen2-5-coder-7b-32k:latest": "custom"
       },
       "customEnv": {
         "CONTAINER_MOUNT_DIR": "/workspace/hermes-agent",

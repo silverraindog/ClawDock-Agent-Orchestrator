@@ -481,37 +481,64 @@ export function parseNativeConfigToSchema(
           // Aggregator resolution
           const aggObj = yMoa.aggregator || yMoa.presets?.default?.aggregator;
           if (aggObj && typeof aggObj === 'object') {
-            if (aggObj.model) parsedAggregatorModel = aggObj.model;
-            if (aggObj.provider) {
+            const rawModel = aggObj.model || '';
+            const rawProv = aggObj.provider || '';
+            if (rawProv && !['custom', 'ollama', 'openrouter', 'openai', 'anthropic', 'gemini', 'groq', 'deepseek', 'mistral'].includes(rawProv)) {
+              // Corrupted split: provider was model name and model was tag (e.g. gemma4-soul:latest)
+              parsedAggregatorModel = `${rawProv}:${rawModel}`;
               if (!parsedProviderMapping) parsedProviderMapping = {};
-              parsedProviderMapping[aggObj.model] = aggObj.provider;
+              parsedProviderMapping[parsedAggregatorModel] = 'custom';
+            } else {
+              parsedAggregatorModel = rawModel === 'latest' ? 'gemma4-soul:latest' : rawModel === '16b' ? 'deepseek-coder-v2:16b' : rawModel;
+              if (rawProv) {
+                if (!parsedProviderMapping) parsedProviderMapping = {};
+                parsedProviderMapping[parsedAggregatorModel] = rawProv === 'custom:ollama' ? 'custom' : rawProv;
+              }
             }
           } else if (typeof aggObj === 'string') {
-            parsedAggregatorModel = aggObj;
+            parsedAggregatorModel = aggObj === 'latest' ? 'gemma4-soul:latest' : aggObj === '16b' ? 'deepseek-coder-v2:16b' : aggObj;
           } else if (yMoa.aggregator_model || yMoa.aggregatorModel) {
-            parsedAggregatorModel = yMoa.aggregator_model || yMoa.aggregatorModel;
+            const a = yMoa.aggregator_model || yMoa.aggregatorModel;
+            parsedAggregatorModel = a === 'latest' ? 'gemma4-soul:latest' : a === '16b' ? 'deepseek-coder-v2:16b' : a;
           }
 
           // Proposer / Reference models resolution
           const refModels = yMoa.reference_models || yMoa.presets?.default?.reference_models;
           if (Array.isArray(refModels) && refModels.length > 0) {
             parsedProposerModels = refModels.map((item: any) => {
-              if (typeof item === 'string') return item;
+              if (typeof item === 'string') {
+                return item === 'latest' ? 'gemma4-soul:latest' : item === '16b' ? 'deepseek-coder-v2:16b' : item;
+              }
               if (item && item.model) {
-                if (item.provider) {
+                const itemProv = item.provider || '';
+                const itemModel = item.model || '';
+                if (itemProv && !['custom', 'ollama', 'openrouter', 'openai', 'anthropic', 'gemini', 'groq', 'deepseek', 'mistral'].includes(itemProv)) {
+                  const fullModel = `${itemProv}:${itemModel}`;
                   if (!parsedProviderMapping) parsedProviderMapping = {};
-                  parsedProviderMapping[item.model] = item.provider;
+                  parsedProviderMapping[fullModel] = 'custom';
+                  return fullModel;
                 }
-                return item.model;
+                const resolvedModel = itemModel === 'latest' ? 'gemma4-soul:latest' : itemModel === '16b' ? 'deepseek-coder-v2:16b' : itemModel;
+                if (itemProv) {
+                  if (!parsedProviderMapping) parsedProviderMapping = {};
+                  parsedProviderMapping[resolvedModel] = itemProv === 'custom:ollama' ? 'custom' : itemProv;
+                }
+                return resolvedModel;
               }
               return '';
             }).filter(Boolean);
           } else if (yMoa.proposer_models || yMoa.proposerModels) {
-            parsedProposerModels = yMoa.proposer_models || yMoa.proposerModels;
+            parsedProposerModels = (yMoa.proposer_models || yMoa.proposerModels).map((m: string) => 
+              m === 'latest' ? 'gemma4-soul:latest' : m === '16b' ? 'deepseek-coder-v2:16b' : m
+            );
           }
 
           if (yMoa.provider_mapping || yMoa.providerMapping) {
             parsedProviderMapping = { ...(parsedProviderMapping || {}), ...(yMoa.provider_mapping || yMoa.providerMapping) };
+          }
+          if (parsedProviderMapping) {
+            delete parsedProviderMapping['latest'];
+            delete parsedProviderMapping['16b'];
           }
         }
 
