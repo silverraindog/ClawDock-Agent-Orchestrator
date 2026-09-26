@@ -1,5 +1,7 @@
 import { AgentFullConfig, AgentId, AgentInfo, DockerSystemInfo, SystemUpdateItem, LLMHealthReport, ModelPresetSnapshot } from '../types';
 import { DEFAULT_CONFIGS, DEFAULT_NATIVE_FILES, INITIAL_AGENTS } from '../data/defaults';
+import * as YAML from 'js-yaml';
+import * as toml from 'smol-toml';
 import { INITIAL_PRESETS } from '../data/presetsData';
 import { enhanceConfigWithNative } from './configParser';
 
@@ -1338,14 +1340,35 @@ export async function saveAgentConfigToBackend(
   nativeContent?: string,
   restart: boolean = false
 ): Promise<boolean> {
+  const STATIC_OLLAMA_ENDPOINT = 'http://192.168.1.49:11434';
+  
+  // Ensure nativeContent is generated correctly if missing
+  let finalNativeContent = nativeContent;
+  if (!finalNativeContent) {
+    const nativeInfo = DEFAULT_NATIVE_FILES[agentId] || DEFAULT_NATIVE_FILES['hermes-agent'];
+    if (nativeInfo.format === 'yaml') {
+      finalNativeContent = YAML.dump(config);
+    } else if (nativeInfo.format === 'toml') {
+      finalNativeContent = toml.stringify(config as any);
+    } else {
+      finalNativeContent = JSON.stringify(config, null, 2);
+    }
+  }
+
+  // Sanitize native content string
+  if (finalNativeContent) {
+    finalNativeContent = finalNativeContent.replace(/moa:\/\/local\/?/g, STATIC_OLLAMA_ENDPOINT);
+    finalNativeContent = finalNativeContent.replace(/http:\/\/local(?::\d+)?\/?/g, STATIC_OLLAMA_ENDPOINT);
+  }
+
   // Always save locally first for instantaneous responsiveness
   try {
     const current = getLocalPersistence();
     if (!current.configs) current.configs = {};
     current.configs[agentId] = config;
-    if (nativeContent) {
+    if (finalNativeContent) {
       if (!current.nativeFiles) current.nativeFiles = {};
-      current.nativeFiles[agentId] = nativeContent;
+      current.nativeFiles[agentId] = finalNativeContent;
     }
     localStorage.setItem(LOCAL_PERSISTENCE_KEY, JSON.stringify(current));
   } catch {}
@@ -1357,7 +1380,7 @@ export async function saveAgentConfigToBackend(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         config,
-        nativeContent,
+        nativeContent: finalNativeContent,
         restart,
         restartContainer: restart
       })

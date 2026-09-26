@@ -33,8 +33,11 @@ import {
   INITIAL_AGENTS, 
   DEFAULT_CONFIGS, 
   INITIAL_SKILLS, 
-  INITIAL_MCP_SERVERS 
+  INITIAL_MCP_SERVERS,
+  DEFAULT_NATIVE_FILES
 } from './data/defaults';
+import * as YAML from 'js-yaml';
+import * as toml from 'smol-toml';
 import { INITIAL_UPDATES } from './data/updatesData';
 import { 
   fetchAllAgentConfigs, 
@@ -1003,7 +1006,7 @@ export default function App() {
   };
 
   // Save config with restartContainer toggle and pre-save running container verification
-  const handleSaveConfig = async (restartContainer: boolean = true) => {
+  const handleSaveConfig = async (restartContainer: boolean = true, manualNativeContent?: string) => {
     setIsSavingConfig(true);
     try {
       // Client-side validation: Ensure model is selected and exists in catalog or is valid custom model string
@@ -1190,7 +1193,20 @@ export default function App() {
       console.log('[handleSaveConfig] Config JSON AFTER moa://local replacement:\n', JSON.stringify(normalizedConfig, null, 2));
       console.groupEnd();
 
-      let nativeContent = JSON.stringify(normalizedConfig, null, 2);
+      // Determine final native content format
+      let nativeContent = manualNativeContent;
+      if (!nativeContent) {
+        const nativeInfo = DEFAULT_NATIVE_FILES[selectedAgentId] || DEFAULT_NATIVE_FILES['hermes-agent'];
+        if (nativeInfo.format === 'yaml') {
+          nativeContent = YAML.dump(normalizedConfig);
+        } else if (nativeInfo.format === 'toml') {
+          nativeContent = toml.stringify(normalizedConfig as any);
+        } else {
+          nativeContent = JSON.stringify(normalizedConfig, null, 2);
+        }
+      }
+
+      // Explicitly sanitize the native content string (whether manual or generated)
       nativeContent = nativeContent.replace(/moa:\/\/local\/?/g, STATIC_OLLAMA_ENDPOINT);
       nativeContent = nativeContent.replace(/http:\/\/local(?::\d+)?\/?/g, STATIC_OLLAMA_ENDPOINT);
 

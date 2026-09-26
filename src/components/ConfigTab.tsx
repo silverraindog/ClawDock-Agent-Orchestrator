@@ -170,7 +170,7 @@ interface ConfigTabProps {
   agentId: AgentId;
   config: AgentFullConfig;
   onChangeConfig: (newConfig: AgentFullConfig) => void;
-  onSaveConfig: (restartContainer: boolean) => void;
+  onSaveConfig: (restartContainer: boolean, manualNativeContent?: string) => void;
   onResetDefaults: () => void;
   isSaving: boolean;
   onInjectConfig?: (agentId: AgentId) => Promise<void>;
@@ -910,7 +910,7 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
     setPendingRestartParam(null);
 
     // Always persist configuration and API keys immediately so user inputs are never lost
-    onSaveConfig(restartContainer);
+    onSaveConfig(restartContainer, rawMode === 'native' ? rawText : undefined);
   };
 
   useEffect(() => {
@@ -1453,7 +1453,7 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
               onClick={() => {
                 setShowSaveValidationWarning(false);
                 if (pendingRestartParam !== null) {
-                  onSaveConfig(pendingRestartParam);
+                  onSaveConfig(pendingRestartParam, rawMode === 'native' ? rawText : undefined);
                 }
               }}
               className="px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-semibold shadow-sm transition-colors"
