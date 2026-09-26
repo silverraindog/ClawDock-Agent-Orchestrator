@@ -93,6 +93,9 @@ import {
   KeyContext,
   ModelKeyStatus
 } from '../utils/moaSuggestions';
+import { YamlEditor } from './YamlEditor';
+import { validateYamlConfig } from '../utils/yamlValidator';
+import * as YAML from 'js-yaml';
 
 export {
   suggestModelCombinations,
@@ -266,6 +269,8 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
   allAgents,
   onUpdateAgentConfig
 }) => {
+  const [rawYaml, setRawYaml] = useState(() => YAML.dump(config));
+  const [yamlError, setYamlError] = useState<string | null>(null);
   const [activeSection, setActiveSection] = useState<ConfigSection>('model');
   const [copiedRaw, setCopiedRaw] = useState(false);
   const [rawText, setRawText] = useState(JSON.stringify(config, null, 2));
