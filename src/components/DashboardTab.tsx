@@ -224,7 +224,7 @@ export const ResourceMonitorWidget: React.FC<{ runningAgents: AgentInfo[] }> = (
       console.log(`[DashboardTab] [ResourceMonitorWidget] [${new Date().toLocaleTimeString()}] Fetching resources from ${endpoint}...`);
       try {
         const res = await fetch(endpoint);
-        console.log(`[DashboardTab] [ResourceMonitorWidget] GET ${endpoint} response HTTP status: ${res.status} ${res.statusText}`);
+        console.log(`[DashboardTab] [ResourceMonitorWidget] GET ${endpoint} complete. Full response object:`, res);
         
         if (!res.ok) {
           console.error(`[DashboardTab] [ResourceMonitorWidget] ${endpoint} returned error status: ${res.status} (${res.statusText})`);

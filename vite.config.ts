@@ -1857,7 +1857,7 @@ fallback:
         },
         // Resource monitoring endpoints in dynamicRouteMappings
         {
-          pattern: /^\/api\/(docker\/|agents\/)?resources(\/)?$/i,
+          pattern: /^\/api\/(?:docker\/|agents\/)?resources(\/)?$/i,
           methods: ['GET', 'POST', 'OPTIONS'],
           handler: async () => {
             res.setHeader('Content-Type', 'application/json');
