@@ -180,24 +180,33 @@ export const ConsoleTab: React.FC<ConsoleTabProps> = ({
         </button>
         
         {isHistoryExpanded && (
-          <div className="p-3 pt-0 max-h-[300px] overflow-y-auto space-y-2">
+          <div className="p-3 pt-0 max-h-[300px] overflow-y-auto space-y-2 custom-scrollbar">
             {execHistory.length === 0 ? (
               <div className="py-8 text-center text-slate-500 text-[11px] italic">
                 No commands executed yet. Use /prefix to run direct container commands.
               </div>
             ) : (
               execHistory.map((exec, idx) => (
-                <div key={idx} className="p-2.5 rounded-lg bg-slate-950 border border-slate-800/80 font-mono text-[11px] space-y-1.5">
+                <div key={idx} className="group relative p-2.5 rounded-lg bg-slate-950 border border-slate-800/80 font-mono text-[11px] space-y-1.5 hover:border-indigo-500/30 transition-colors shadow-sm">
                   <div className="flex items-center justify-between gap-2 border-b border-slate-800 pb-1 mb-1">
                     <div className="flex items-center gap-2">
                       <span className={`w-1.5 h-1.5 rounded-full ${exec.success ? 'bg-emerald-400' : 'bg-rose-400'}`} />
                       <span className="text-indigo-400 font-bold">$ {exec.command}</span>
                     </div>
-                    <span className="text-[10px] text-slate-500">
-                      {new Date(exec.timestamp).toLocaleTimeString()}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => onSendMessage(`/${exec.command}`)}
+                        className="opacity-0 group-hover:opacity-100 p-1 rounded bg-slate-800 hover:bg-indigo-600 text-slate-400 hover:text-white transition-all border border-slate-700"
+                        title="Re-run command"
+                      >
+                        <RefreshCw className="w-3 h-3" />
+                      </button>
+                      <span className="text-[10px] text-slate-500">
+                        {new Date(exec.timestamp).toLocaleTimeString()}
+                      </span>
+                    </div>
                   </div>
-                  <div className="text-slate-400 whitespace-pre-wrap break-all leading-tight">
+                  <div className="text-slate-400 whitespace-pre-wrap break-all leading-tight max-h-[100px] overflow-y-auto custom-scrollbar pr-1">
                     {exec.output || (exec.success ? '(No output)' : exec.error)}
                   </div>
                   {!exec.success && exec.error && (

@@ -1161,7 +1161,7 @@ fallback:
       }
 
       const timestamp = new Date().toISOString();
-      const method = req.method || 'GET';
+      const method = (req.method || 'GET').toUpperCase();
       const parsedUrl = new URL(req.url, 'http://localhost');
       const rawPath = parsedUrl.pathname;
       const pathname = rawPath.length > 1 && rawPath.endsWith('/') ? rawPath.slice(0, -1) : rawPath;
@@ -1857,40 +1857,43 @@ fallback:
         },
         {
           pattern: /^\/api\/agents\/([^/]+)\/exec(\/)?$/i,
-          methods: ['POST', 'PUT', 'OPTIONS'],
+          methods: ['GET', 'POST', 'PUT', 'OPTIONS'],
           handler: async () => {
             let body: any = {};
             if (method === 'POST' || method === 'PUT') {
               try {
                 body = await readRequestBody(req);
               } catch (e) {
-                console.error('[API Bridge Debug] Error reading body:', e);
+                console.error('[Vite API Server Debug] Error reading body:', e);
               }
             }
 
-            console.log(`[API Bridge Debug] exec route hit. Method: ${method}, URL: ${pathname}`);
-            console.log(`[API Bridge Debug] Headers:`, JSON.stringify(req.headers, null, 2));
-            console.log(`[API Bridge Debug] Body:`, JSON.stringify(body, null, 2));
+            console.log(`[Vite API Server Debug] exec route hit. Method: ${method}, URL: ${pathname}`);
+            console.log(`[Vite API Server Debug] Headers:`, JSON.stringify(req.headers, null, 2));
+            console.log(`[Vite API Server Debug] Body:`, JSON.stringify(body, null, 2));
 
             if (method === 'OPTIONS') {
               res.statusCode = 200;
+              res.setHeader('Access-Control-Allow-Origin', '*');
+              res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS');
+              res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept');
               return res.end();
             }
 
-            if (!['POST', 'PUT'].includes(method)) {
+            if (!['POST', 'PUT', 'GET'].includes(method)) {
               res.statusCode = 405;
               res.setHeader('Content-Type', 'application/json');
-              return res.end(JSON.stringify({ error: 'Method Not Allowed', allowed: ['POST', 'PUT'] }));
+              return res.end(JSON.stringify({ error: 'Method Not Allowed', allowed: ['POST', 'PUT', 'GET'] }));
             }
 
             const match = pathname.match(/^\/api\/agents\/([^/]+)\/exec(\/)?$/i);
             const agentId = match ? match[1] : 'hermes-agent';
-            const command = body.command;
+            const command = body.command || parsedUrl.searchParams.get('command');
 
             if (!command) {
               res.statusCode = 400;
               res.setHeader('Content-Type', 'application/json');
-              return res.end(JSON.stringify({ success: false, agentId, error: 'Command is required in request body.' }));
+              return res.end(JSON.stringify({ success: false, agentId, error: 'Command is required in request body or as query parameter.' }));
             }
 
             try {
@@ -1953,6 +1956,25 @@ fallback:
           }
         },
         {
+          pattern: /^\/api\/resources(\/)?$/i,
+          methods: ['GET', 'OPTIONS'],
+          handler: async () => {
+            res.setHeader('Content-Type', 'application/json');
+            if (method === 'OPTIONS') {
+              res.statusCode = 200;
+              return res.end();
+            }
+            const resources: Record<string, any> = {};
+            ['hermes-agent', 'zeroclaw', 'openclaw', 'picoclaw'].forEach(id => {
+              resources[id] = {
+                cpuUsagePct: Math.random() * 20 + 5,
+                memoryUsageMb: 100 + Math.random() * 200
+              };
+            });
+            return res.end(JSON.stringify({ success: true, resources, timestamp: new Date().toISOString() }));
+          }
+        },
+        {
           pattern: /^\/api\/everos(\/.*)?$/i,
           methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
           handler: async () => {
@@ -1966,14 +1988,17 @@ fallback:
         if (route.pattern.test(pathname)) {
           // Check if method is allowed
           if (route.methods && !route.methods.includes(method) && method !== 'OPTIONS') {
-            console.warn(`[Vite API Server] 405 Method Not Allowed: ${method} ${pathname}. Allowed: ${route.methods.join(', ')}`);
+            console.warn(`[Vite API Server] 405 Method Not Allowed: ${method} ${pathname}`);
+            console.warn(`[Vite API Server] Allowed for this route: ${route.methods.join(', ')}`);
+            console.warn(`[Vite API Server] Request Headers:`, JSON.stringify(req.headers, null, 2));
             res.statusCode = 405;
             res.setHeader('Content-Type', 'application/json');
             return res.end(JSON.stringify({ 
               error: 'Method Not Allowed', 
               method, 
               pathname, 
-              allowedMethods: route.methods 
+              allowedMethods: route.methods,
+              timestamp: new Date().toISOString()
             }));
           }
           return await route.handler();

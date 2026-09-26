@@ -37,81 +37,83 @@ interface ContainerStatsChartProps {
 
 export const ContainerStatsChart: React.FC<ContainerStatsChartProps> = ({ agent }) => {
   const [history, setHistory] = useState<{ time: string; cpu: number; memory: number }[]>([]);
+  const [error, setError] = useState<string | null>(null);
 
-  const generateInitialHistory = (baseCpu: number, baseMem: number, isRunning: boolean) => {
-    const data = [];
-    const now = Date.now();
-    for (let i = 11; i >= 0; i--) {
-      const timeStr = new Date(now - i * 2000).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
-      if (isRunning) {
-        const noiseCpu = Math.max(0.1, +(baseCpu * (0.8 + Math.random() * 0.4)).toFixed(1));
-        const noiseMem = Math.max(1, +(baseMem * (0.97 + Math.random() * 0.06)).toFixed(1));
-        data.push({ time: timeStr, cpu: noiseCpu, memory: noiseMem });
-      } else {
-        data.push({ time: timeStr, cpu: 0, memory: 0 });
+  const fetchMetrics = async () => {
+    try {
+      const res = await fetch(`/api/agents/${agent.id}/metrics`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      
+      if (data.success && data.history) {
+        // Map backend history to chart format
+        const chartData = data.history.map((h: any) => ({
+          time: h.time || new Date().toLocaleTimeString(),
+          cpu: h.cpu,
+          memory: h.memoryMb || h.memory
+        }));
+        setHistory(chartData.slice(-15)); // Keep last 15 points
+        setError(null);
       }
+    } catch (err: any) {
+      console.warn(`[ContainerStatsChart] Failed to fetch metrics for ${agent.id}:`, err.message);
+      setError(err.message);
     }
-    return data;
   };
 
   useEffect(() => {
-    setHistory(generateInitialHistory(agent.cpuUsagePct, agent.memoryUsageMb, agent.status === 'running'));
-
-    const interval = setInterval(() => {
-      const timeStr = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
-      setHistory(prev => {
-        let nextCpu = 0;
-        let nextMem = 0;
-        if (agent.status === 'running') {
-          nextCpu = Math.max(0.1, +(agent.cpuUsagePct * (0.85 + Math.random() * 0.3)).toFixed(1));
-          nextMem = Math.max(1, +(agent.memoryUsageMb * (0.98 + Math.random() * 0.04)).toFixed(1));
-        }
-        const updated = [...prev, { time: timeStr, cpu: nextCpu, memory: nextMem }];
-        return updated.slice(-12);
-      });
-    }, 2000);
-
+    fetchMetrics();
+    const interval = setInterval(fetchMetrics, 3000);
     return () => clearInterval(interval);
-  }, [agent.status, agent.cpuUsagePct, agent.memoryUsageMb]);
+  }, [agent.id, agent.status]);
+
+  const latestCpu = history.length > 0 ? history[history.length - 1].cpu : 0;
+  const latestMem = history.length > 0 ? history[history.length - 1].memory : 0;
 
   return (
     <div className="mt-3 p-3 rounded-xl bg-slate-950/60 border border-slate-800/80 space-y-2">
       <div className="flex items-center justify-between text-[11px] font-mono text-slate-400">
         <span className="flex items-center gap-1">
-          <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse" />
-          Real-Time Resource Trends
+          <span className={`w-1.5 h-1.5 rounded-full ${agent.status === 'running' ? 'bg-indigo-500 animate-pulse' : 'bg-slate-600'}`} />
+          {agent.status === 'running' ? 'Live Resource Metrics' : 'Container Offline'}
         </span>
         <div className="flex items-center gap-2.5">
-          <span className="text-indigo-400">CPU: {history[history.length - 1]?.cpu || 0}%</span>
-          <span className="text-emerald-400">MEM: {history[history.length - 1]?.memory || 0} MB</span>
+          <span className="text-indigo-400">CPU: {latestCpu.toFixed(1)}%</span>
+          <span className="text-emerald-400">MEM: {latestMem.toFixed(1)} MB</span>
         </div>
       </div>
       
       <div className="h-[110px] w-full select-none">
-        <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={history} margin={{ top: 5, right: 5, left: -25, bottom: -10 }}>
-            <defs>
-              <linearGradient id={`colorCpu-${agent.id}`} x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#6366f1" stopOpacity={0.2}/>
-                <stop offset="95%" stopColor="#6366f1" stopOpacity={0}/>
-              </linearGradient>
-              <linearGradient id={`colorMem-${agent.id}`} x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#10b981" stopOpacity={0.2}/>
-                <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
-              </linearGradient>
-            </defs>
-            <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.15} />
-            <XAxis dataKey="time" hide />
-            <YAxis yAxisId="left" domain={[0, 'auto']} tick={{ fontSize: 8, fill: '#64748b' }} stroke="#6366f1" width={30} opacity={0.6} tickLine={false} />
-            <YAxis yAxisId="right" orientation="right" domain={[0, 'auto']} tick={{ fontSize: 8, fill: '#64748b' }} stroke="#10b981" width={30} opacity={0.6} tickLine={false} />
-            <Tooltip 
-              contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', borderRadius: '8px', fontSize: '10px', color: '#cbd5e1' }}
-              labelStyle={{ color: '#64748b' }}
-            />
-            <Area yAxisId="left" type="monotone" dataKey="cpu" name="CPU (%)" stroke="#6366f1" strokeWidth={1.5} fillOpacity={1} fill={`url(#colorCpu-${agent.id})`} isAnimationActive={false} />
-            <Area yAxisId="right" type="monotone" dataKey="memory" name="Mem (MB)" stroke="#10b981" strokeWidth={1.5} fillOpacity={1} fill={`url(#colorMem-${agent.id})`} isAnimationActive={false} />
-          </AreaChart>
-        </ResponsiveContainer>
+        {error && history.length === 0 ? (
+          <div className="h-full flex items-center justify-center text-[10px] text-slate-600 italic">
+            Metrics unavailable
+          </div>
+        ) : (
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={history} margin={{ top: 5, right: 5, left: -25, bottom: -10 }}>
+              <defs>
+                <linearGradient id={`colorCpu-${agent.id}`} x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#6366f1" stopOpacity={0.2}/>
+                  <stop offset="95%" stopColor="#6366f1" stopOpacity={0}/>
+                </linearGradient>
+                <linearGradient id={`colorMem-${agent.id}`} x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#10b981" stopOpacity={0.2}/>
+                  <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.15} />
+              <XAxis dataKey="time" hide />
+              <YAxis yAxisId="left" domain={[0, 'auto']} tick={{ fontSize: 8, fill: '#64748b' }} stroke="#6366f1" width={30} opacity={0.6} tickLine={false} />
+              <YAxis yAxisId="right" orientation="right" domain={[0, 'auto']} tick={{ fontSize: 8, fill: '#64748b' }} stroke="#10b981" width={30} opacity={0.6} tickLine={false} />
+              <Tooltip 
+                contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', borderRadius: '8px', fontSize: '10px', color: '#cbd5e1' }}
+                labelStyle={{ color: '#64748b' }}
+              />
+              <Area yAxisId="left" type="monotone" dataKey="cpu" name="CPU (%)" stroke="#6366f1" strokeWidth={1.5} fillOpacity={1} fill={`url(#colorCpu-${agent.id})`} isAnimationActive={false} />
+              <Area yAxisId="right" type="monotone" dataKey="memory" name="Mem (MB)" stroke="#10b981" strokeWidth={1.5} fillOpacity={1} fill={`url(#colorMem-${agent.id})`} isAnimationActive={false} />
+            </AreaChart>
+          </ResponsiveContainer>
+        )}
       </div>
     </div>
   );
@@ -440,26 +442,35 @@ networks:
                     </div>
 
                     <div>
-                      {agent.status === 'running' ? (
-                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                          Running
-                        </span>
-                      ) : agent.status === 'restarting' ? (
-                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
-                          <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse" />
-                          Restarting
-                        </span>
-                      ) : agent.status === 'stopped' ? (
-                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                          <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
-                          Stopped
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
-                          Host Local
-                        </span>
-                      )}
+                      <div className="flex flex-col items-end gap-1.5">
+                        {agent.status === 'running' ? (
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                            Running
+                          </span>
+                        ) : agent.status === 'restarting' ? (
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+                            <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse" />
+                            Restarting
+                          </span>
+                        ) : agent.status === 'stopped' ? (
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                            <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                            Stopped
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
+                            Host Local
+                          </span>
+                        )}
+
+                        {agent.status === 'running' && agent.avgLatencyMs > 500 && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-rose-500/10 text-rose-400 border border-rose-500/30 animate-pulse">
+                            <AlertTriangle className="w-3 h-3" />
+                            HIGH LATENCY ({Math.round(agent.avgLatencyMs)}ms)
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
 

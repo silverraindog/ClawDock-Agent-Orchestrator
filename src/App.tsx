@@ -174,7 +174,21 @@ export default function App() {
   ]);
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [execHistory, setExecHistory] = useState<AgentExecResult[]>([]);
+  const [execHistory, setExecHistory] = useState<AgentExecResult[]>(() => {
+    try {
+      const saved = localStorage.getItem('clawdock_exec_history');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('clawdock_exec_history', JSON.stringify(execHistory));
+    } catch {}
+  }, [execHistory]);
+
   const [menuLayout, setMenuLayout] = useState<'stacked' | 'docked_bottom'>(() => {
     try {
       return (localStorage.getItem('clawdock_menu_layout') as any) || 'stacked';

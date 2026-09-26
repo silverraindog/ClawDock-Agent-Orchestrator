@@ -369,10 +369,11 @@ export const DockerLogsInspector: React.FC<DockerLogsInspectorProps> = ({
           <button
             id="docker-logs-clear-btn"
             onClick={handleClearLogs}
-            className="p-1.5 rounded-lg bg-slate-800 hover:bg-rose-900/30 text-slate-400 hover:text-rose-400 border border-slate-700 transition-colors"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-rose-900/30 text-slate-400 hover:text-rose-400 border border-slate-700 transition-colors text-xs font-medium"
             title="Clear current view"
           >
             <Trash2 className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Clear Logs</span>
           </button>
 
           {/* Fullscreen Toggle */}

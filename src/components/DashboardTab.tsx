@@ -1053,6 +1053,17 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
   onOpenDiscovery,
   allAgents = []
 }) => {
+  // Polling mechanism to fetch agent status updates every 5 seconds
+  React.useEffect(() => {
+    const pollInterval = setInterval(() => {
+      if (onDetectAgent) {
+        onDetectAgent();
+      }
+    }, 5000);
+
+    return () => clearInterval(pollInterval);
+  }, [onDetectAgent]);
+
   const activeSkillsCount = skills.filter(s => s.installed).length;
   const activeMcpCount = mcpServers.filter(m => m.enabled).length;
 

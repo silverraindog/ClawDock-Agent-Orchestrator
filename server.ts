@@ -5402,6 +5402,17 @@ setInterval(() => {
   }
 }, 30000);
 
+app.get('/api/resources', (req, res) => {
+  const resources: Record<string, any> = {};
+  ['hermes-agent', 'zeroclaw', 'openclaw', 'picoclaw'].forEach(id => {
+    resources[id] = {
+      cpuUsagePct: Math.random() * 20 + 5,
+      memoryUsageMb: 100 + Math.random() * 200
+    };
+  });
+  res.json({ success: true, resources, timestamp: new Date().toISOString() });
+});
+
 app.post('/api/agents/:id/rollback', (req, res) => {
   const { id } = req.params;
   const { tag, version } = req.body;
