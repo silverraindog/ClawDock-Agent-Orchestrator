@@ -1056,6 +1056,31 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          {agentId === 'hermes-agent' && (
+            <button
+              id="hermes-migrate-btn"
+              onClick={async () => {
+                try {
+                  const res = await fetch(`/api/agents/${agentId}/exec`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ command: 'hermes migrate' })
+                  });
+                  if (res.ok) {
+                    alert('Migration triggered successfully!');
+                  } else {
+                    alert('Failed to trigger migration.');
+                  }
+                } catch (e) {
+                  alert('Error triggering migration.');
+                }
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-amber-300 hover:text-white bg-amber-950/60 hover:bg-amber-900/60 border border-amber-500/30 transition-colors"
+            >
+              <Database className="w-3.5 h-3.5 text-amber-400" />
+              Config Migrate
+            </button>
+          )}
           {onInjectConfig && (
             <button
               id="inject-exec-config-btn"
