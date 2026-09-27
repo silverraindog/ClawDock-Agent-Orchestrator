@@ -1040,7 +1040,7 @@ export const MODEL_OPTIONS = {
 
 export const DEFAULT_NATIVE_FILES: Record<string, { fileName: string; format: string; content: string }> = {
   'hermes-agent': {
-    fileName: 'hermes.yaml',
+    fileName: 'config.yaml',
     format: 'yaml',
     content: `version: "1.0.0"
 agent_id: "hermes-agent"

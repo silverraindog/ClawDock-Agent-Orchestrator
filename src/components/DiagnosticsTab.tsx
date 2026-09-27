@@ -145,7 +145,7 @@ const INSPECTOR_TARGETS: InspectorTarget[] = [
     method: 'POST',
     endpoint: '/api/agents/hermes-agent/docker-exec-config',
     category: 'docker-exec',
-    description: 'Executes container extraction and reads mounted hermes.yaml configuration.'
+    description: 'Executes container extraction and reads mounted config.yaml configuration.'
   },
   {
     id: 'hermes-docker-exec-get',
@@ -198,6 +198,146 @@ export const DiagnosticsTab: React.FC<DiagnosticsTabProps> = ({
   config,
   onFixOpenClaw
 }) => {
+  // --- Start of Request Logs and Agent Config Poll additions ---
+  interface RequestLogEntry {
+    id: string;
+    timestamp: string;
+    method: string;
+    url: string;
+    pathname: string;
+    status: number;
+    durationMs?: number;
+    clientIp?: string;
+  }
+
+  interface AgentConfigStatus {
+    agentId: string;
+    fileName: string;
+    filePath: string;
+    lastContent: string | null;
+    lastCheckTime: string;
+    status: 'synced' | 'changed';
+    lastChangedTime: string | null;
+    changeCount: number;
+  }
+
+  // Poll State for last 50 entries of serverRequestLogs
+  const [last50Logs, setLast50Logs] = useState<RequestLogEntry[]>([]);
+  const [logsPollCount, setLogsPollCount] = useState(0);
+
+  // Poll State for each agent's config file (updated every 10 seconds)
+  const [configPollStatuses, setConfigPollStatuses] = useState<Record<string, AgentConfigStatus>>({
+    'hermes-agent': { agentId: 'hermes-agent', fileName: 'config.yaml', filePath: '/data/clawdock/config.yaml', lastContent: null, lastCheckTime: '-', status: 'synced', lastChangedTime: null, changeCount: 0 },
+    'zeroclaw': { agentId: 'zeroclaw', fileName: 'zeroclaw.json', filePath: '/data/clawdock/zeroclaw.json', lastContent: null, lastCheckTime: '-', status: 'synced', lastChangedTime: null, changeCount: 0 },
+    'openclaw': { agentId: 'openclaw', fileName: 'openclaw.json', filePath: '/data/clawdock/openclaw.json', lastContent: null, lastCheckTime: '-', status: 'synced', lastChangedTime: null, changeCount: 0 },
+    'picoclaw': { agentId: 'picoclaw', fileName: 'picoclaw.json', filePath: '/data/clawdock/picoclaw.json', lastContent: null, lastCheckTime: '-', status: 'synced', lastChangedTime: null, changeCount: 0 }
+  });
+  const [isConfigPolling, setIsConfigPolling] = useState(false);
+  const [configPollCount, setConfigPollCount] = useState(0);
+
+  // Fetch serverRequestLogs and slice to last 50 entries
+  const fetchLast50Logs = async () => {
+    try {
+      const res = await fetch('/api/diagnostics/request-logs');
+      if (res.ok) {
+        const data = await res.json();
+        if (data && Array.isArray(data.logs)) {
+          setLast50Logs(data.logs.slice(0, 50));
+        }
+      }
+    } catch (err) {
+      console.error('Error fetching last 50 request logs:', err);
+    } finally {
+      setLogsPollCount(prev => prev + 1);
+    }
+  };
+
+  // Poll config file for each agent every 10 seconds to check if updated
+  const pingAgentConfigs = async () => {
+    setIsConfigPolling(true);
+    const agentIds = ['hermes-agent', 'zeroclaw', 'openclaw', 'picoclaw'];
+    const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+    for (const id of agentIds) {
+      try {
+        const res = await fetch(`/api/agents/${id}/config`);
+        if (res.ok) {
+          const data = await res.json();
+          const content = data?.nativeContent || '';
+          
+          setConfigPollStatuses(prev => {
+            const current = prev[id];
+            let newStatus = current.status;
+            let newChangeCount = current.changeCount;
+            let newLastChangedTime = current.lastChangedTime;
+
+            if (current.lastContent !== null && current.lastContent !== content) {
+              newStatus = 'changed';
+              newChangeCount += 1;
+              newLastChangedTime = timeStr;
+              console.log(`[Config Poll] Detected modification in configuration for agent: ${id}`);
+            }
+
+            return {
+              ...prev,
+              [id]: {
+                ...current,
+                lastContent: content,
+                lastCheckTime: timeStr,
+                status: newStatus,
+                lastChangedTime: newLastChangedTime,
+                changeCount: newChangeCount
+              }
+            };
+          });
+        }
+      } catch (err) {
+        console.error(`Error polling config for agent ${id}:`, err);
+      }
+    }
+    setIsConfigPolling(false);
+    setConfigPollCount(prev => prev + 1);
+  };
+
+  // Set up both polling intervals
+  useEffect(() => {
+    fetchLast50Logs();
+    const logsInterval = setInterval(fetchLast50Logs, 3000);
+
+    const primeAndStartConfigPolling = async () => {
+      const agentIds = ['hermes-agent', 'zeroclaw', 'openclaw', 'picoclaw'];
+      const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      for (const id of agentIds) {
+        try {
+          const res = await fetch(`/api/agents/${id}/config`);
+          if (res.ok) {
+            const data = await res.json();
+            const content = data?.nativeContent || '';
+            setConfigPollStatuses(prev => ({
+              ...prev,
+              [id]: {
+                ...prev[id],
+                lastContent: content,
+                lastCheckTime: timeStr
+              }
+            }));
+          }
+        } catch (err) {
+          console.error(`Error priming config for agent ${id}:`, err);
+        }
+      }
+    };
+
+    primeAndStartConfigPolling();
+    const configInterval = setInterval(pingAgentConfigs, 10000);
+
+    return () => {
+      clearInterval(logsInterval);
+      clearInterval(configInterval);
+    };
+  }, []);
+  // --- End of Request Logs and Agent Config Poll additions ---
+
   // Failback simulation state
   const [isSimulatingFailback, setIsSimulatingFailback] = useState(false);
   const [simAgentId, setSimAgentId] = useState<string>(currentAgentId || 'hermes-agent');
@@ -1178,6 +1318,199 @@ export const DiagnosticsTab: React.FC<DiagnosticsTabProps> = ({
             {backendPersistenceData}
           </pre>
         </div>
+      </div>
+
+      {/* 1. CONFIGURATION INTEGRITY MONITOR */}
+      <div className="p-6 rounded-2xl border border-indigo-500/30 bg-slate-900/80 shadow-xl space-y-4">
+        <div>
+          <h3 className="text-base font-bold text-white flex items-center gap-2">
+            <Cpu className="w-5 h-5 text-indigo-400" />
+            Agent Configuration Integrity Monitor (10s Polling)
+          </h3>
+          <p className="text-xs text-slate-400 mt-1">
+            Real-time status check verifying if configuration files on disk have changed on-the-fly.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {(Object.values(configPollStatuses) as AgentConfigStatus[]).map((cfg) => {
+            const hasChanged = cfg.status === 'changed';
+            return (
+              <div
+                key={cfg.agentId}
+                className={`rounded-xl border p-4 space-y-3 transition-all ${
+                  hasChanged
+                    ? 'border-amber-500/40 bg-amber-950/15'
+                    : 'border-slate-800 bg-slate-950/40 hover:border-slate-700'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-white tracking-wide">{cfg.agentId}</span>
+                    <span className="text-slate-500 text-xs">·</span>
+                    <span className="text-slate-400 text-xs font-mono">{cfg.fileName}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 text-xs">
+                    {hasChanged ? (
+                      <span className="inline-flex items-center gap-1 text-amber-400 font-semibold animate-pulse">
+                        <AlertTriangle className="w-3.5 h-3.5" />
+                        Modified
+                      </span>
+                    ) : (
+                      <span className="text-slate-400 text-[11px]">
+                        Synchronized
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="space-y-1 text-xs text-slate-400 font-mono">
+                  <div className="truncate text-[10px] text-slate-500">
+                    Path: <span className="text-slate-400">{cfg.filePath}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-[11px] pt-1">
+                    <span>Last Polled Check:</span>
+                    <span className="text-slate-300 font-bold tabular-nums">{cfg.lastCheckTime}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span>Detected Changes:</span>
+                    <span className={`font-bold tabular-nums ${hasChanged ? 'text-amber-400' : 'text-slate-500'}`}>
+                      {cfg.changeCount}
+                    </span>
+                  </div>
+                  {cfg.lastChangedTime && (
+                    <div className="flex items-center justify-between text-[11px] text-amber-300/90">
+                      <span>Last Changed At:</span>
+                      <span className="tabular-nums font-bold">{cfg.lastChangedTime}</span>
+                    </div>
+                  )}
+                </div>
+
+                {hasChanged && (
+                  <button
+                    onClick={() => {
+                      setConfigPollStatuses(prev => ({
+                        ...prev,
+                        [cfg.agentId]: {
+                          ...prev[cfg.agentId],
+                          status: 'synced'
+                        }
+                      }));
+                    }}
+                    className="w-full mt-2 py-1.5 px-3 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 text-[11px] font-semibold transition-all border border-amber-500/20"
+                  >
+                    Acknowledge Change
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* 2. DEDICATED HTTP REQUEST LOGS STREAM (LAST 50 ENTRIES) */}
+      <div className="p-6 rounded-2xl border border-slate-800 bg-slate-900/80 shadow-xl space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <h3 className="text-base font-bold text-white flex items-center gap-2">
+              <Activity className="w-5 h-5 text-indigo-400" />
+              Live HTTP Audit Stream (Last 50 Requests)
+            </h3>
+            <p className="text-xs text-slate-400 mt-1">
+              Active polling of request logs from <code className="text-indigo-300 font-mono">/api/diagnostics/request-logs</code>.
+            </p>
+          </div>
+          <div className="flex items-center gap-2.5">
+            <span className="flex items-center gap-1.5 text-xs text-emerald-400 font-medium">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping inline-block" />
+              Live Feed
+            </span>
+            <span className="text-slate-500 text-xs">|</span>
+            <span className="text-[11px] font-mono text-slate-500">
+              Polls: <strong className="text-slate-400 font-bold tabular-nums">{logsPollCount}</strong>
+            </span>
+          </div>
+        </div>
+
+        {last50Logs.length === 0 ? (
+          <div className="text-center py-10 rounded-xl bg-slate-950/60 border border-slate-800 text-slate-500 text-xs">
+            No server requests logged yet. Trigger some system activity or click "Probe Problematic Routes" above.
+          </div>
+        ) : (
+          <div className="overflow-x-auto max-h-96 overflow-y-auto rounded-xl border border-slate-800 bg-slate-950 shadow-inner scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-slate-900">
+            <table className="w-full text-left border-collapse text-xs">
+              <thead className="sticky top-0 z-10 bg-slate-900/95 backdrop-blur-sm border-b border-slate-800 shadow-sm">
+                <tr className="text-slate-400 font-mono text-[10px] uppercase tracking-wider">
+                  <th className="py-2.5 px-3.5 font-semibold">Method</th>
+                  <th className="py-2.5 px-3.5 font-semibold">Request Path</th>
+                  <th className="py-2.5 px-3.5 font-semibold text-center">Status</th>
+                  <th className="py-2.5 px-3.5 font-semibold text-right">Latency</th>
+                  <th className="py-2.5 px-3.5 font-semibold text-right">Client IP</th>
+                  <th className="py-2.5 px-3.5 font-semibold text-right">Time</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800/60 font-mono">
+                {last50Logs.map((log) => {
+                  const status = log.status;
+                  const is2xx = status >= 200 && status < 300;
+                  const is3xx = status >= 300 && status < 400;
+                  const is4xx = status >= 400 && status < 500;
+                  const is5xx = status >= 500;
+
+                  return (
+                    <tr
+                      key={log.id}
+                      className="hover:bg-slate-900/35 transition-colors"
+                    >
+                      <td className="py-2 px-3.5 font-bold">
+                        <span
+                          className={`inline-block px-2 py-0.5 rounded text-[9px] font-bold ${
+                            log.method === 'GET'
+                              ? 'bg-sky-500/10 text-sky-400 border border-sky-500/20'
+                              : log.method === 'POST'
+                              ? 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/20'
+                              : log.method === 'PUT'
+                              ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                              : log.method === 'DELETE'
+                              ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
+                              : 'bg-slate-800 text-slate-300'
+                          }`}
+                        >
+                          {log.method}
+                        </span>
+                      </td>
+                      <td className="py-2 px-3.5 text-indigo-300 font-medium max-w-[320px] truncate" title={log.url}>
+                        {log.pathname || log.url}
+                      </td>
+                      <td className="py-2 px-3.5 text-center">
+                        <span
+                          className={`font-bold ${
+                            is2xx ? 'text-emerald-400' :
+                            is3xx ? 'text-amber-400' :
+                            is4xx ? 'text-rose-400 animate-pulse' :
+                            is5xx ? 'text-red-500 font-black animate-bounce' :
+                            'text-slate-400'
+                          }`}
+                        >
+                          {status}
+                        </span>
+                      </td>
+                      <td className="py-2 px-3.5 text-right text-slate-300 tabular-nums font-semibold">
+                        {log.durationMs !== undefined ? `${log.durationMs}ms` : '<1ms'}
+                      </td>
+                      <td className="py-2 px-3.5 text-right text-slate-500 text-[10px] tabular-nums">
+                        {log.clientIp || '127.0.0.1'}
+                      </td>
+                      <td className="py-2 px-3.5 text-right text-slate-400 tabular-nums">
+                        {new Date(log.timestamp).toLocaleTimeString([], { hour12: false })}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {/* NEW SUB-COMPONENT: Live Server Request Logs Table (/api/diagnostics/request-logs) */}

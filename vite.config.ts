@@ -117,7 +117,7 @@ function apiServerPlugin(): Plugin {
 
   const defaultNativeFiles: Record<string, { fileName: string; format: string; content: string }> = {
     'hermes-agent': {
-      fileName: 'hermes.yaml',
+      fileName: 'config.yaml',
       format: 'yaml',
       content: `version: "1.0.0"
 agent_id: "hermes-agent"
@@ -1631,6 +1631,40 @@ fallback:
               configs[id] = getAgentConfig(id);
             }
             return res.end(JSON.stringify({ success: true, configs }));
+          }
+        },
+        {
+          pattern: /^\/api\/agents\/([^/]+)\/version(\/)?$/i,
+          methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+          handler: async () => {
+            res.setHeader('Content-Type', 'application/json');
+            const match = pathname.match(/^\/api\/agents\/([^/]+)\/version(\/)?$/i);
+            const agentId = match ? match[1] : 'hermes-agent';
+            const st = agentStates[agentId] || { status: 'running', version: 'v1.0.0', dockerImage: `clawdock-${agentId}:latest` };
+            return res.end(JSON.stringify({
+              success: true,
+              agentId,
+              version: st.version || 'v1.0.0',
+              dockerImage: st.dockerImage || `clawdock-${agentId}:latest`,
+              status: st.status || 'running',
+              timestamp
+            }));
+          }
+        },
+        {
+          pattern: /^\/api\/agents\/([^/]+)\/logs(\/)?$/i,
+          methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+          handler: async () => {
+            res.setHeader('Content-Type', 'application/json');
+            const match = pathname.match(/^\/api\/agents\/([^/]+)\/logs(\/)?$/i);
+            const agentId = match ? match[1] : 'hermes-agent';
+            const st = agentStates[agentId] || { logs: [] };
+            return res.end(JSON.stringify({
+              success: true,
+              agentId,
+              logs: st.logs || [],
+              timestamp
+            }));
           }
         },
         {

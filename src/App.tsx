@@ -76,6 +76,7 @@ import { ExportTab } from './components/ExportTab';
 import { UpdatesTab } from './components/UpdatesTab';
 import { EverOSTab } from './components/EverOSTab';
 import { DiagnosticsTab } from './components/DiagnosticsTab';
+import { AgentLogsTab } from './components/AgentLogsTab';
 import { ToastContainer, ToastMessage } from './components/Toast';
 import { ContainerDiscoveryModal } from './components/ContainerDiscoveryModal';
 import { ConfigInjectionAlert, InjectionStatusInfo } from './components/ConfigInjectionAlert';
@@ -87,7 +88,7 @@ import {
 } from './utils/configValidator';
 import { enhanceConfigWithNative, detectOpenClawConfigFormat } from './utils/configParser';
 
-type MainTab = 'dashboard' | 'config' | 'presets' | 'everos' | 'skills' | 'mcp' | 'docker' | 'console' | 'export' | 'updates' | 'diagnostics';
+type MainTab = 'dashboard' | 'config' | 'presets' | 'everos' | 'skills' | 'mcp' | 'docker' | 'console' | 'export' | 'updates' | 'diagnostics' | 'agent-logs';
 
 export default function App() {
   const [agents, setAgents] = useState<AgentInfo[]>(() => {
@@ -365,8 +366,40 @@ export default function App() {
       checkDocker();
     }, 5000);
 
+    // 6. 30-second polling mechanism to keep agent versions in sync with docker image changes
+    const refreshAgentVersions = async () => {
+      const agentIds = ['hermes-agent', 'zeroclaw', 'openclaw', 'picoclaw'];
+      for (const id of agentIds) {
+        try {
+          const res = await fetch(`/api/agents/${id}/version`);
+          if (res.ok) {
+            const data = await res.json();
+            if (data && data.success) {
+              setAgents(prev => prev.map(agent => {
+                if (agent.id === id) {
+                  const newVer = data.version || agent.version;
+                  const newImg = data.dockerImage || agent.dockerImage;
+                  if (agent.version !== newVer || agent.dockerImage !== newImg) {
+                    return {
+                      ...agent,
+                      version: newVer,
+                      dockerImage: newImg
+                    };
+                  }
+                }
+                return agent;
+              }));
+            }
+          }
+        } catch {}
+      }
+    };
+
+    const versionInterval = setInterval(refreshAgentVersions, 30000);
+
     return () => {
       clearInterval(pollInterval);
+      clearInterval(versionInterval);
     };
   }, []);
 
@@ -1016,6 +1049,63 @@ export default function App() {
     }
   };
 
+  // Hermes YAML generator helper
+  const generateHermesYaml = (cfg: any): string => {
+    const m = cfg?.model || {};
+    const sys = cfg?.system || {};
+    const moa = cfg?.moa || {};
+    const sec = cfg?.security || {};
+    const sto = cfg?.storage || {};
+    const fb = cfg?.fallback || {};
+    const model = m?.default || m?.model || 'gemma4-soul:latest';
+    const provider = m?.provider || 'custom';
+    const baseUrl = m?.baseUrl || 'http://192.168.1.49:11434';
+    const apiKey = m?.apiKey || 'ollama';
+
+    return `version: "1.0.0"
+agent_id: "${cfg?.agentId || 'hermes-agent'}"
+agent_name: "${sys?.agentName || 'Hermes Code Assistant'}"
+persona: "${sys?.personaName || 'Hermes Prime'}"
+system_preset: "${sys?.preset || 'engineer'}"
+system_prompt: "${(sys?.systemPrompt || '').replace(/"/g, '\\"')}"
+
+model:
+  provider: ${provider}
+  apiKey: ${apiKey}
+  temperature: ${m?.temperature ?? 0.3}
+  reasoningEffort: ${m?.reasoningEffort || 'high'}
+  maxTokens: ${m?.maxTokens ?? 8192}
+  contextWindow: ${m?.contextWindow ?? 200000}
+  baseUrl: ${baseUrl}
+  topP: ${m?.topP ?? 0.95}
+  default: ${model}
+  base_url: ${baseUrl}/v1
+
+fallback:
+  enabled: ${fb?.enabled ?? true}
+  strategy: "${fb?.strategy || 'on_offline'}"
+  target_agent_id: "${fb?.targetAgentId || 'zeroclaw'}"
+  provider: "${fb?.provider || 'ollama'}"
+  model: "${fb?.model || 'hermes-3-llama-3.1-8b'}"
+  base_url: "${fb?.baseUrl || baseUrl}"
+  api_key: "${fb?.apiKey || ''}"
+
+security:
+  sandbox_mode: "${sec?.sandboxMode || 'docker_isolated'}"
+  max_execution_time_sec: ${sec?.maxExecutionTimeSec ?? 120}
+
+storage:
+  memory_backend: "${sto?.memoryBackend || 'everos'}"
+  db_path: "${sto?.dbPath || '/data/everos/memories'}"
+
+moa:
+  enabled: ${moa?.enabled ?? true}
+  rounds: ${moa?.rounds ?? 2}
+  temperature_spread: ${moa?.temperatureSpread ?? 0.3}
+  consensus_threshold: ${moa?.consensusThreshold ?? 0.85}
+`;
+  };
+
   // Save config with restartContainer toggle and pre-save running container verification
   const handleSaveConfig = async (restartContainer: boolean = true, manualNativeContent?: string) => {
     setIsSavingConfig(true);
@@ -1209,7 +1299,11 @@ export default function App() {
       if (!nativeContent) {
         const nativeInfo = DEFAULT_NATIVE_FILES[selectedAgentId] || DEFAULT_NATIVE_FILES['hermes-agent'];
         if (nativeInfo.format === 'yaml') {
-          nativeContent = YAML.dump(normalizedConfig);
+          if (selectedAgentId === 'hermes-agent') {
+            nativeContent = generateHermesYaml(normalizedConfig);
+          } else {
+            nativeContent = YAML.dump(normalizedConfig);
+          }
         } else if (nativeInfo.format === 'toml') {
           nativeContent = toml.stringify(normalizedConfig as any);
         } else {
@@ -1945,6 +2039,7 @@ export default function App() {
   const bottomNavItems = [
     { id: 'docker', label: 'Docker Engine', icon: Container },
     { id: 'console', label: 'Console', icon: Terminal },
+    { id: 'agent-logs', label: 'Agent Logs', icon: Layers },
     { 
       id: 'updates', 
       label: 'Updates', 
@@ -2291,6 +2386,14 @@ export default function App() {
                 setExecHistory([]);
               }}
               isThinking={isThinking}
+            />
+          )}
+
+          {currentTab === 'agent-logs' && (
+            <AgentLogsTab
+              agents={agents}
+              selectedAgentId={selectedAgentId}
+              onSelectAgent={setSelectedAgentId}
             />
           )}
 
