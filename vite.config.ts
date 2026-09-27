@@ -1286,10 +1286,17 @@ fallback:
               'ollama'
             ).toLowerCase().trim();
 
-            const targetBaseUrl = (queryBaseUrl || 'http://localhost:11434').trim();
+            const targetBaseUrl = (queryBaseUrl || 'http://192.168.1.49:11434').trim();
             console.log(`[Vite API Server Proxy] [${timestamp}] Fetching model list from baseUrl "${targetBaseUrl}" (Provider: ${queryProvider}) to bypass browser CORS`);
 
-            const cleanBase = targetBaseUrl.replace(/\/+$/, '').replace(/\/v1\/?$/, '');
+            // Sanitize: Fix concatenation bugs like '11434host:11434'
+            let sanitizedBase = targetBaseUrl;
+            if (sanitizedBase.includes('11434host:11434')) {
+              sanitizedBase = sanitizedBase.replace('11434host:11434', '192.168.1.49:11434');
+            }
+            if (!sanitizedBase.startsWith('http')) sanitizedBase = 'http://' + sanitizedBase;
+
+            const cleanBase = sanitizedBase.replace(/\/+$/, '').replace(/\/v1\/?$/, '');
             const probeEndpoints: string[] = [];
 
             if (queryProvider === 'ollama' || cleanBase.includes('11434')) {

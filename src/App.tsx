@@ -1109,6 +1109,19 @@ moa:
   // Save config with restartContainer toggle and pre-save running container verification
   const handleSaveConfig = async (restartContainer: boolean = true, manualNativeContent?: string) => {
     setIsSavingConfig(true);
+
+    // Sanitize baseUrl to prevent '11434host:11434' style corruption
+    const sanitize = (url: string) => {
+      if (!url) return 'http://192.168.1.49:11434';
+      let clean = url.replace(/11434host:11434/g, '192.168.1.49:11434');
+      if (!clean.startsWith('http')) clean = 'http://' + clean;
+      return clean;
+    };
+    
+    // Sanitize config in place
+    selectedAgentConfig.model.baseUrl = sanitize(selectedAgentConfig.model.baseUrl);
+    selectedAgentConfig.fallback.baseUrl = sanitize(selectedAgentConfig.fallback.baseUrl);
+
     try {
       // Client-side validation: Ensure model is selected and exists in catalog or is valid custom model string
       if (!currentConfig.model || !currentConfig.model.model || currentConfig.model.model.trim() === '') {
