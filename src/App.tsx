@@ -94,10 +94,21 @@ export default function App() {
     try {
       const local = getLocalAgentStates();
       if (local && Object.keys(local).length > 0) {
+        const getVersionFromImage = (image?: string): string | null => {
+          if (!image) return null;
+          const parts = image.split(':');
+          if (parts.length > 1) {
+            const tag = parts[parts.length - 1];
+            if (tag && tag !== 'latest') return tag;
+          }
+          return null;
+        };
+
         return INITIAL_AGENTS.filter(a => local[a.id] !== undefined).map(a => {
           const s = local[a.id];
-          const ver = s.version || a.version;
-          const img = s.dockerImage || (ver ? a.dockerImage.replace(/:[^:]+$/, `:${ver}`) : a.dockerImage);
+          const img = s.dockerImage || a.dockerImage;
+          const extractedVer = getVersionFromImage(img);
+          const ver = extractedVer || s.version || a.version;
           return {
             ...a,
             status: (s.status as any) || a.status,
@@ -2012,6 +2023,7 @@ export default function App() {
           onOpenDiscovery={() => setIsDiscoveryOpen(true)}
           updatesCount={updates.filter(u => u.status === 'update_available').length}
           onOpenUpdates={() => setCurrentTab('updates')}
+          updates={updates}
         />
 
         {/* Navigation Bar: Top Menu & Bottom Menu (Zero Horizontal Scrolling) */}
@@ -2148,6 +2160,8 @@ export default function App() {
               onDetectAgent={handleDetectAgents}
               onOpenDiscovery={() => setIsDiscoveryOpen(true)}
               allAgents={agents}
+              onRestartAgent={handleRestartAgent}
+              onSelectAgent={setSelectedAgentId}
             />
           )}
 

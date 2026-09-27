@@ -59,10 +59,15 @@ interface DashboardTabProps {
   onDetectAgent: () => void;
   onOpenDiscovery: () => void;
   allAgents?: AgentInfo[];
+  onRestartAgent?: (agentId: string) => void;
+  onSelectAgent?: (agentId: string) => void;
 }
 
 // Sub-component for Agent Health real-time latency ping chart
-export const AgentHealthWidget: React.FC<{ runningAgents: AgentInfo[] }> = ({ runningAgents }) => {
+export const AgentHealthWidget: React.FC<{ 
+  runningAgents: AgentInfo[];
+  onRestartAgent?: (agentId: string) => void;
+}> = ({ runningAgents, onRestartAgent }) => {
   // Store rolling latency data for each running agent
   const [latencyData, setLatencyData] = React.useState<Record<string, { val: number; i: number }[]>>({});
 
@@ -192,12 +197,28 @@ export const AgentHealthWidget: React.FC<{ runningAgents: AgentInfo[] }> = ({ ru
                 </ResponsiveContainer>
               </div>
 
-              <div className="flex items-center justify-between text-[9px] text-slate-500">
-                <span className="flex items-center gap-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                  Port: {agent.defaultPort}
-                </span>
-                <span className="font-mono">Avg: {Math.round(points.reduce((acc, p) => acc + p.val, 0) / Math.max(1, points.length))}ms</span>
+              <div className="flex flex-col gap-2 pt-2 border-t border-slate-900">
+                <div className="flex items-center justify-between text-[9px] text-slate-500">
+                  <span className="flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                    Port: {agent.defaultPort}
+                  </span>
+                  <span className="font-mono">Avg: {Math.round(points.reduce((acc, p) => acc + p.val, 0) / Math.max(1, points.length))}ms</span>
+                </div>
+                {onRestartAgent && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onRestartAgent(agent.id);
+                    }}
+                    disabled={agent.status === 'restarting'}
+                    className="w-full py-1 rounded bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 text-white font-bold text-[10px] text-center transition-all flex items-center justify-center gap-1 cursor-pointer shadow-sm shadow-indigo-500/10"
+                    title="Quick restart container"
+                  >
+                    <RefreshCw className={`w-2.5 h-2.5 ${agent.status === 'restarting' ? 'animate-spin' : ''}`} />
+                    <span>Quick Restart</span>
+                  </button>
+                )}
               </div>
             </div>
           );
@@ -208,7 +229,10 @@ export const AgentHealthWidget: React.FC<{ runningAgents: AgentInfo[] }> = ({ ru
 };
 
 // Sub-component for Agent Resource Usage (CPU/Memory)
-export const ResourceMonitorWidget: React.FC<{ runningAgents: AgentInfo[] }> = ({ runningAgents }) => {
+export const ResourceMonitorWidget: React.FC<{ 
+  runningAgents: AgentInfo[];
+  onRestartAgent?: (agentId: string) => void;
+}> = ({ runningAgents, onRestartAgent }) => {
   const [resourceData, setResourceData] = React.useState<Record<string, { cpu: number; mem: number; i: number }[]>>({});
 
   React.useEffect(() => {
@@ -260,7 +284,8 @@ export const ResourceMonitorWidget: React.FC<{ runningAgents: AgentInfo[] }> = (
           });
         }
       } catch (err: any) {
-        console.error(`[DashboardTab] [ResourceMonitorWidget] Exception during GET ${endpoint}:`, err);
+        // Handle transient network errors during server/container restarts gracefully without breaking the dashboard
+        console.warn(`[DashboardTab] [ResourceMonitorWidget] Transient connection/polling warning during GET ${endpoint} (Server may be restarting):`, err.message || err);
       }
     };
 
@@ -333,6 +358,22 @@ export const ResourceMonitorWidget: React.FC<{ runningAgents: AgentInfo[] }> = (
                   </div>
                 </div>
               </div>
+              {onRestartAgent && (
+                <div className="pt-2 border-t border-slate-900/60 flex justify-end">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onRestartAgent(agent.id);
+                    }}
+                    disabled={agent.status === 'restarting'}
+                    className="py-1 px-3 rounded bg-slate-800 hover:bg-slate-700 hover:text-white border border-slate-700 text-slate-300 font-bold text-[10px] flex items-center gap-1.5 transition-all cursor-pointer"
+                    title="Quick restart container"
+                  >
+                    <RefreshCw className={`w-2.5 h-2.5 text-indigo-400 ${agent.status === 'restarting' ? 'animate-spin' : ''}`} />
+                    <span>Quick Restart</span>
+                  </button>
+                </div>
+              )}
             </div>
           );
         })}
@@ -1051,6 +1092,111 @@ export const LLMHealthMonitorWidget: React.FC<{
   );
 };
 
+// Sub-component for Agent Orchestration Control Hub (All agent cards with Quick Restart action)
+export const AgentControlHub: React.FC<{ 
+  agents: AgentInfo[]; 
+  onRestartAgent?: (agentId: string) => void;
+  selectedAgentId: string;
+  onSelectAgent?: (agentId: string) => void;
+}> = ({ agents, onRestartAgent, selectedAgentId, onSelectAgent }) => {
+  return (
+    <div className="p-5 rounded-2xl border border-slate-800 bg-slate-900/90 space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="space-y-0.5">
+          <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
+            <Server className="w-4 h-4 text-indigo-400" />
+            Agent Swarm Orchestration Control Hub
+          </h3>
+          <p className="text-[11px] text-slate-400">
+            Quick status control, container heartbeat action, and live service status across all swarm agents.
+          </p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+        {agents.map((ag) => {
+          const isSelected = ag.id === selectedAgentId;
+          const isRunning = ag.status === 'running';
+          const isRestarting = ag.status === 'restarting';
+          
+          return (
+            <div 
+              key={ag.id} 
+              className={`p-4 rounded-xl border transition-all flex flex-col justify-between gap-3 ${
+                isSelected 
+                  ? 'bg-indigo-500/5 border-indigo-500/40 shadow-md shadow-indigo-500/5' 
+                  : 'bg-slate-950 border-slate-800/80 hover:border-slate-700/85'
+              }`}
+            >
+              <div className="space-y-1.5">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0 flex-1">
+                    <h4 className="text-xs font-bold text-white truncate flex items-center gap-1.5" title={ag.name}>
+                      {ag.name}
+                      {isSelected && (
+                        <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 shrink-0 animate-pulse" title="Active Focus Agent" />
+                      )}
+                    </h4>
+                    <p className="text-[9px] font-mono text-slate-500 truncate uppercase mt-0.5">
+                      {ag.framework}
+                    </p>
+                  </div>
+                  <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-bold shrink-0 ${
+                    isRunning 
+                      ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' 
+                      : isRestarting 
+                        ? 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/20'
+                        : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                  }`}>
+                    <span className={`w-1 h-1 rounded-full shrink-0 ${
+                      isRunning ? 'bg-emerald-400 animate-pulse' : isRestarting ? 'bg-indigo-400 animate-spin' : 'bg-amber-400'
+                    }`} />
+                    {isRunning ? 'Running' : isRestarting ? 'Restarting' : 'Stopped'}
+                  </span>
+                </div>
+                
+                <p className="text-[11px] text-slate-400 line-clamp-2 h-8 leading-normal font-sans">
+                  {ag.description || 'Lightweight Docker containerized orchestrator agent node.'}
+                </p>
+              </div>
+
+              <div className="pt-2 border-t border-slate-900 flex items-center justify-between text-[10px] text-slate-500 font-mono">
+                <span>Port: {ag.defaultPort}</span>
+                <span>{ag.version.startsWith('v') ? ag.version : `v${ag.version}`}</span>
+              </div>
+
+              <div className="flex gap-2 pt-1">
+                {onSelectAgent && (
+                  <button
+                    onClick={() => onSelectAgent(ag.id)}
+                    className={`flex-1 py-1 px-2 rounded text-[10px] font-semibold text-center transition-all cursor-pointer ${
+                      isSelected 
+                        ? 'bg-indigo-500/15 text-indigo-300 border border-indigo-500/20'
+                        : 'bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white border border-slate-700/50'
+                    }`}
+                  >
+                    Focus
+                  </button>
+                )}
+                
+                <button
+                  onClick={() => onRestartAgent?.(ag.id)}
+                  disabled={isRestarting}
+                  className="flex-1 py-1 px-2 rounded text-[10px] font-bold text-center bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50 transition-all flex items-center justify-center gap-1 cursor-pointer"
+                  title="Quick restart docker container instance without leaving the dashboard"
+                >
+                  <RefreshCw className={`w-2.5 h-2.5 ${isRestarting ? 'animate-spin' : ''}`} />
+                  <span>Restart</span>
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
 export const DashboardTab: React.FC<DashboardTabProps> = ({
   agent,
   config,
@@ -1061,7 +1207,9 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
   onInstallAgent,
   onDetectAgent,
   onOpenDiscovery,
-  allAgents = []
+  allAgents = [],
+  onRestartAgent,
+  onSelectAgent
 }) => {
   // Polling mechanism to fetch agent status updates every 5 seconds
   React.useEffect(() => {
@@ -1311,6 +1459,14 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
         </div>
       </div>
 
+      {/* Agent Swarm Orchestration Control Hub (All agent cards with Quick Restart action) */}
+      <AgentControlHub 
+        agents={allAgents} 
+        onRestartAgent={onRestartAgent}
+        selectedAgentId={agent.id}
+        onSelectAgent={onSelectAgent}
+      />
+
       {/* Real-time CPU & Memory Telemetry Visualization */}
       <AgentResourceTrendChart 
         agentId={agent?.id} 
@@ -1423,10 +1579,16 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
       />
 
       {/* Agent Health Monitor Widget */}
-      <AgentHealthWidget runningAgents={allAgents.filter(a => a.status === 'running')} />
+      <AgentHealthWidget 
+        runningAgents={allAgents.filter(a => a.status === 'running')} 
+        onRestartAgent={onRestartAgent}
+      />
       
       {/* Agent Resource Monitor Widget */}
-      <ResourceMonitorWidget runningAgents={allAgents.filter(a => a.status === 'running')} />
+      <ResourceMonitorWidget 
+        runningAgents={allAgents.filter(a => a.status === 'running')} 
+        onRestartAgent={onRestartAgent}
+      />
 
       {/* Operational Telemetry: Uptime & Latency Sparklines */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

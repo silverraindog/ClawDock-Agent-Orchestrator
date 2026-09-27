@@ -16,8 +16,64 @@ import {
   ArrowUpCircle,
   Activity
 } from 'lucide-react';
-import { AgentId, AgentInfo, DockerSystemInfo } from '../types';
+import { AgentId, AgentInfo, DockerSystemInfo, SystemUpdateItem } from '../types';
 import { ApiHealthIndicator } from './ApiHealthIndicator';
+import { INITIAL_UPDATES } from '../data/updatesData';
+
+interface ContainerMetadataBadgeProps {
+  agentId: string;
+}
+
+export const ContainerMetadataBadge: React.FC<ContainerMetadataBadgeProps> = ({ agentId }) => {
+  const [version, setVersion] = useState<string>('');
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+
+  useEffect(() => {
+    let active = true;
+    const fetchMetadata = async () => {
+      setIsLoading(true);
+      try {
+        const res = await fetch(`/api/agents/${agentId}/metadata`);
+        if (res.ok) {
+          const data = await res.json();
+          if (active && data.success && data.version) {
+            setVersion(data.version);
+          }
+        }
+      } catch (err) {
+        console.error('Failed to fetch container metadata:', err);
+      } finally {
+        if (active) setIsLoading(false);
+      }
+    };
+
+    fetchMetadata();
+    return () => {
+      active = false;
+    };
+  }, [agentId]);
+
+  if (isLoading) {
+    return (
+      <span className="hidden xl:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[9px] font-mono font-bold bg-slate-800 text-slate-500 border border-slate-700 animate-pulse">
+        Metadata Loading...
+      </span>
+    );
+  }
+
+  if (!version) return null;
+
+  return (
+    <div className="hidden xl:flex items-center gap-2 px-2.5 py-1 rounded-lg bg-indigo-500/10 border border-indigo-500/20" title="Live Container Metadata Version tag fetched from backend">
+      <div className="flex flex-col items-end leading-none gap-0.5">
+        <span className="text-[7px] uppercase font-bold text-slate-500 tracking-tighter">Container Tag</span>
+        <span className="text-[10px] font-mono font-bold text-indigo-400">
+          {version.startsWith('v') ? version : `v${version}`}
+        </span>
+      </div>
+    </div>
+  );
+};
 
 interface NavbarProps {
   agents: AgentInfo[];
@@ -32,6 +88,7 @@ interface NavbarProps {
   onOpenDiscovery: () => void;
   updatesCount?: number;
   onOpenUpdates?: () => void;
+  updates?: SystemUpdateItem[];
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -46,7 +103,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenExport,
   onOpenDiscovery,
   updatesCount,
-  onOpenUpdates
+  onOpenUpdates,
+  updates
 }) => {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -58,6 +116,53 @@ export const Navbar: React.FC<NavbarProps> = ({
     framework: 'Agent Framework',
     defaultPort: 8080
   };
+
+  const currentUpdate = React.useMemo(() => {
+    const list = updates && updates.length > 0 ? updates : INITIAL_UPDATES;
+    return list.find(u => u.targetId === selectedAgentId);
+  }, [selectedAgentId, updates]);
+
+  const latestVersion = currentUpdate?.latestVersion;
+  const currentVersion = currentAgent?.version;
+
+  const isNewerVersionAvailable = React.useMemo(() => {
+    if (!latestVersion || !currentVersion) return false;
+    const cleanCur = currentVersion.replace(/^v/, '').split('-')[0];
+    const cleanLat = latestVersion.replace(/^v/, '').split('-')[0];
+    return cleanCur !== cleanLat;
+  }, [latestVersion, currentVersion]);
+
+  const [appVersion, setAppVersion] = useState<string>('V.0.0.1');
+
+  useEffect(() => {
+    let active = true;
+    const fetchAppVersion = async () => {
+      try {
+        const res = await fetch('/api/app/version');
+        if (res.ok) {
+          const data = await res.json();
+          if (active && data.success && data.version) {
+            let v = data.version;
+            // standardise to V.x.y.z
+            if (v.toLowerCase().startsWith('v.')) {
+              v = 'V.' + v.slice(2);
+            } else if (v.toLowerCase().startsWith('v')) {
+              v = 'V.' + v.slice(1);
+            } else if (!v.toUpperCase().startsWith('V.')) {
+              v = 'V.' + v;
+            }
+            setAppVersion(v);
+          }
+        }
+      } catch (err) {
+        console.error('Failed to fetch app version:', err);
+      }
+    };
+    fetchAppVersion();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -316,12 +421,28 @@ export const Navbar: React.FC<NavbarProps> = ({
           </div>
         </div>
 
+        {/* Live Container Metadata Tag (New component requested) */}
+        <ContainerMetadataBadge agentId={selectedAgentId} />
+
+        {/* Update Available Warning (Orange warning indicator comparing current and latest) */}
+        {isNewerVersionAvailable && (
+          <div 
+            onClick={onOpenUpdates}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-500 hover:bg-amber-500/20 transition-all font-semibold text-[10px] animate-pulse cursor-pointer shrink-0"
+            title={`A newer version (${latestVersion}) is available. Click to view updates.`}
+          >
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-ping mr-0.5" />
+            <span>Update Available: {latestVersion}</span>
+          </div>
+        )}
+
         {/* Global App Version Tag */}
-        <div className="flex items-center gap-2 px-2.5 py-1 rounded-lg bg-slate-800 border border-slate-700">
-          <div className="flex flex-col items-end leading-none gap-0.5">
-            <span className="text-[7px] uppercase font-bold text-slate-500 tracking-tighter">App Build</span>
-            <span className="text-[10px] font-mono font-bold text-slate-200">
-              v0.0.1
+        <div className="flex items-center gap-2 px-2.5 py-1 rounded-lg bg-slate-800/80 border border-slate-700/80" title="Application version from Git tag or package.json">
+          <div className="flex items-center gap-1.5 leading-none">
+            <span className="text-[10px] font-semibold text-slate-300 tracking-tight">ClawDock</span>
+            <span className="w-1 h-1 rounded-full bg-indigo-500" />
+            <span className="text-[10px] font-mono font-bold text-indigo-400">
+              {appVersion}
             </span>
           </div>
         </div>

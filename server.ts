@@ -1266,51 +1266,68 @@ async function reconcileWithDocker(): Promise<boolean> {
         const isUp = (c.State === 'running') || (typeof c.Status === 'string' && c.Status.toLowerCase().startsWith('up'));
         const status = isUp ? 'running' : 'stopped';
 
+        let targetId: string | null = null;
+        let defaultLogs: string[] = [];
+
         if (cNames.some(n => n.includes('openclaw')) || cImage.includes('openclaw')) {
-          agentStates['openclaw'] = {
-            status,
-            containerId: cId,
-            logs: agentStates['openclaw']?.logs || [
-              `[Docker Engine] Connected to live host container ${cId} for OpenClaw`,
-              `[OpenClaw Hub] Gateway daemon active and synced with docker ps.`
-            ]
-          };
-          hasUpdates = true;
+          targetId = 'openclaw';
+          defaultLogs = [
+            `[Docker Engine] Connected to live host container ${cId} for OpenClaw`,
+            `[OpenClaw Hub] Gateway daemon active and synced with docker ps.`
+          ];
+        } else if (cNames.some(n => n.includes('picoclaw')) || cImage.includes('picoclaw')) {
+          targetId = 'picoclaw';
+          defaultLogs = [
+            `[Docker Engine] Connected to live host container ${cId} for PicoClaw`,
+            `[PicoClaw Edge] Sipeed Go engine active on port 8083.`
+          ];
+        } else if (cNames.some(n => n.includes('zeroclaw')) || cImage.includes('zeroclaw')) {
+          targetId = 'zeroclaw';
+          defaultLogs = [
+            `[Docker Engine] Connected to live host container ${cId} for ZeroClaw`,
+            `[ZeroClaw Daemon] Rust tokio runtime linked.`
+          ];
+        } else if (cNames.some(n => n.includes('hermes')) || cImage.includes('hermes') || cImage.includes('nous')) {
+          targetId = 'hermes-agent';
+          defaultLogs = [
+            `[Docker Engine] Connected to live host container ${cId} for Hermes Agent`,
+            `[Hermes Core] Nous Hermes runtime active.`
+          ];
         }
 
-        if (cNames.some(n => n.includes('picoclaw')) || cImage.includes('picoclaw')) {
-          agentStates['picoclaw'] = {
-            status,
-            containerId: cId,
-            logs: agentStates['picoclaw']?.logs || [
-              `[Docker Engine] Connected to live host container ${cId} for PicoClaw`,
-              `[PicoClaw Edge] Sipeed Go engine active on port 8083.`
-            ]
-          };
-          hasUpdates = true;
-        }
+        if (targetId) {
+          const image = c.Image || '';
+          let version = agentStates[targetId]?.version || 'v1.0.0';
+          if (image.includes(':')) {
+            const tag = image.split(':').pop();
+            if (tag) {
+              version = tag.startsWith('v') || tag.includes('.') ? (tag.startsWith('v') ? tag : `v${tag}`) : version;
+            }
+          }
 
-        if (cNames.some(n => n.includes('zeroclaw')) || cImage.includes('zeroclaw')) {
-          agentStates['zeroclaw'] = {
+          const existing: any = agentStates[targetId] || {};
+          agentStates[targetId] = {
             status,
             containerId: cId,
-            logs: agentStates['zeroclaw']?.logs || [
-              `[Docker Engine] Connected to live host container ${cId} for ZeroClaw`,
-              `[ZeroClaw Daemon] Rust tokio runtime linked.`
-            ]
+            dockerImage: image || existing.dockerImage || `clawdock/${targetId}:${version}`,
+            version: version,
+            logs: existing.logs && existing.logs.length > 0 ? existing.logs : defaultLogs,
+            uptimeHistory: existing.uptimeHistory || Array(20).fill(status === 'running' ? 1 : 0),
+            latencyHistory: existing.latencyHistory || Array(20).fill(0),
+            uptimePct: existing.uptimePct !== undefined ? existing.uptimePct : (status === 'running' ? 100 : 0),
+            avgLatencyMs: existing.avgLatencyMs !== undefined ? existing.avgLatencyMs : 0
           };
-          hasUpdates = true;
-        }
 
-        if (cNames.some(n => n.includes('hermes')) || cImage.includes('hermes') || cImage.includes('nous')) {
-          agentStates['hermes-agent'] = {
-            status,
-            containerId: cId,
-            logs: agentStates['hermes-agent']?.logs || [
-              `[Docker Engine] Connected to live host container ${cId} for Hermes Agent`,
-              `[Hermes Core] Nous Hermes runtime active.`
-            ]
-          };
+          // Also sync with systemUpdatesStore
+          const matchingUpdate = systemUpdatesStore.find(u => u.targetId === targetId);
+          if (matchingUpdate) {
+            matchingUpdate.currentVersion = version;
+            if (matchingUpdate.latestVersion && matchingUpdate.latestVersion !== version) {
+              matchingUpdate.status = 'update_available';
+            } else {
+              matchingUpdate.status = 'up_to_date';
+            }
+          }
           hasUpdates = true;
         }
       }
@@ -3920,6 +3937,81 @@ app.get('/api/agents/:id/detect', (req, res) => {
   });
 });
 
+// Fetch container metadata including docker image tag / version
+app.get('/api/agents/:id/metadata', async (req, res) => {
+  const agentId = req.params.id;
+  const current: any = agentStates[agentId] || {};
+  let version = current.version || 'v1.0.0';
+  let image = current.dockerImage || '';
+  let containerId = current.containerId || '';
+  let status = current.status || 'stopped';
+
+  const hasDockerSocket = fs.existsSync('/var/run/docker.sock');
+  if (hasDockerSocket) {
+    const candidateContainers = AGENT_CONTAINER_MAPPING[agentId] || [agentId];
+    for (const cName of candidateContainers) {
+      try {
+        const inspectOut = execSync(`docker inspect -f "{{.Config.Image}},{{.Id}},{{.State.Running}}" ${cName}`, {
+          encoding: 'utf8',
+          timeout: 1000,
+          stdio: ['ignore', 'pipe', 'ignore']
+        }).trim();
+        if (inspectOut) {
+          const [img, id, running] = inspectOut.split(',');
+          image = img;
+          containerId = id.slice(0, 12);
+          status = running === 'true' ? 'running' : 'stopped';
+          if (img.includes(':')) {
+            const tag = img.split(':').pop();
+            if (tag) {
+              version = tag.startsWith('v') || tag.includes('.') ? (tag.startsWith('v') ? tag : `v${tag}`) : 'v1.0.0';
+            }
+          }
+          break;
+        }
+      } catch {}
+    }
+  }
+
+  // Update in-memory state
+  if (agentStates[agentId]) {
+    agentStates[agentId].version = version;
+    if (image) agentStates[agentId].dockerImage = image;
+    if (containerId) agentStates[agentId].containerId = containerId;
+    agentStates[agentId].status = status;
+  } else {
+    agentStates[agentId] = {
+      status,
+      containerId,
+      dockerImage: image || `clawdock/${agentId}:${version}`,
+      version,
+      logs: [`[Discovery] Created metadata state for ${agentId}`]
+    };
+  }
+
+  // Also sync with systemUpdatesStore
+  const matchingUpdate = systemUpdatesStore.find(u => u.targetId === agentId);
+  if (matchingUpdate) {
+    matchingUpdate.currentVersion = version;
+    if (matchingUpdate.latestVersion && matchingUpdate.latestVersion !== version) {
+      matchingUpdate.status = 'update_available';
+    } else {
+      matchingUpdate.status = 'up_to_date';
+    }
+    savePersistentState();
+  }
+
+  res.json({
+    success: true,
+    agentId,
+    version,
+    image,
+    containerId,
+    status,
+    timestamp: new Date().toISOString()
+  });
+});
+
 // Execute CLI command inside agent Docker container
 app.all('/api/agents/:id/exec', (req, res) => {
   const agentId = req.params.id;
@@ -5402,17 +5494,6 @@ setInterval(() => {
   }
 }, 30000);
 
-app.get('/api/resources', (req, res) => {
-  const resources: Record<string, any> = {};
-  ['hermes-agent', 'zeroclaw', 'openclaw', 'picoclaw'].forEach(id => {
-    resources[id] = {
-      cpuUsagePct: Math.random() * 20 + 5,
-      memoryUsageMb: 100 + Math.random() * 200
-    };
-  });
-  res.json({ success: true, resources, timestamp: new Date().toISOString() });
-});
-
 app.post('/api/agents/:id/rollback', (req, res) => {
   const { id } = req.params;
   const { tag, version } = req.body;
@@ -5434,6 +5515,36 @@ app.post('/api/agents/:id/rollback', (req, res) => {
   }, 2000);
 
   res.json({ success: true, message: `Rollback to ${version} initiated` });
+});
+
+// App Version Endpoint (fetching git tag or package version)
+app.get('/api/app/version', (req, res) => {
+  let gitTag = '';
+  try {
+    gitTag = execSync('git describe --tags --abbrev=0', { encoding: 'utf8', timeout: 1000 }).trim();
+  } catch (err) {
+    try {
+      gitTag = execSync('git describe --tags --always', { encoding: 'utf8', timeout: 1000 }).trim();
+    } catch (e) {}
+  }
+
+  let packageVersion = '0.0.1';
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf8'));
+    if (pkg && pkg.version) {
+      packageVersion = pkg.version;
+    }
+  } catch (err) {}
+
+  // Ensure fallback tag matches standard layout
+  const finalTag = gitTag && !gitTag.includes('fatal') && gitTag.length < 25 ? gitTag : `v${packageVersion}`;
+
+  res.json({
+    success: true,
+    version: finalTag,
+    rawGitTag: gitTag,
+    packageVersion
+  });
 });
 
 async function startServer() {
