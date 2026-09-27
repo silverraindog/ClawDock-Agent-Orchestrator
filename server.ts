@@ -5561,6 +5561,9 @@ app.post('/api/agents/:id/rollback', (req, res) => {
 // App Version Endpoint (fetching git tag or package version)
 app.get('/api/app/version', (req, res) => {
   let gitTag = '';
+  let buildHash = '';
+  let buildTimestamp = '';
+  
   try {
     gitTag = execSync('git describe --tags --abbrev=0', { encoding: 'utf8', timeout: 1000 }).trim();
   } catch (err) {
@@ -5569,7 +5572,12 @@ app.get('/api/app/version', (req, res) => {
     } catch (e) {}
   }
 
-  let packageVersion = '0.0.1';
+  try {
+    buildHash = execSync('git rev-parse HEAD', { encoding: 'utf8', timeout: 1000 }).trim();
+    buildTimestamp = execSync('git log -1 --format=%ct', { encoding: 'utf8', timeout: 1000 }).trim();
+  } catch (e) {}
+
+  let packageVersion = '0.1.0';
   try {
     const pkg = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf8'));
     if (pkg && pkg.version) {
@@ -5584,7 +5592,9 @@ app.get('/api/app/version', (req, res) => {
     success: true,
     version: finalTag,
     rawGitTag: gitTag,
-    packageVersion
+    packageVersion,
+    buildHash,
+    buildTimestamp: buildTimestamp ? new Date(parseInt(buildTimestamp) * 1000).toISOString() : 'Unknown'
   });
 });
 

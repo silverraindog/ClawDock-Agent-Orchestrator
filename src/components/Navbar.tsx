@@ -132,7 +132,8 @@ export const Navbar: React.FC<NavbarProps> = ({
     return cleanCur !== cleanLat;
   }, [latestVersion, currentVersion]);
 
-  const [appVersion, setAppVersion] = useState<string>('V.0.0.1');
+  const [appVersion, setAppVersion] = useState<string>('V.0.1.0');
+  const [appMetadata, setAppMetadata] = useState<{buildHash?: string, buildTimestamp?: string}>({});
 
   useEffect(() => {
     let active = true;
@@ -152,6 +153,10 @@ export const Navbar: React.FC<NavbarProps> = ({
               v = 'V.' + v;
             }
             setAppVersion(v);
+            setAppMetadata({
+              buildHash: data.buildHash,
+              buildTimestamp: data.buildTimestamp
+            });
           }
         }
       } catch (err) {
@@ -437,7 +442,8 @@ export const Navbar: React.FC<NavbarProps> = ({
         )}
 
         {/* Global App Version Tag */}
-        <div className="flex items-center gap-2 px-2.5 py-1 rounded-lg bg-slate-800/80 border border-slate-700/80" title="Application version from Git tag or package.json">
+        <div className="flex items-center gap-2 px-2.5 py-1 rounded-lg bg-slate-800/80 border border-slate-700/80" 
+             title={appMetadata.buildHash ? `Last synced: ${appMetadata.buildTimestamp} | Build: ${appMetadata.buildHash.substring(0, 7)}` : "Application version from Git tag or package.json"}>
           <div className="flex items-center gap-1.5 leading-none">
             <span className="text-[10px] font-semibold text-slate-300 tracking-tight">ClawDock</span>
             <span className="w-1 h-1 rounded-full bg-indigo-500" />

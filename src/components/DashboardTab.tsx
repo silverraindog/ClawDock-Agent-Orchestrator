@@ -251,21 +251,22 @@ export const ResourceMonitorWidget: React.FC<{
     });
     setResourceData(initialData);
 
-    const fetchResources = async () => {
+    const fetchResources = async (retryCount = 0) => {
       const endpoint = '/api/resources';
-      console.log(`[DashboardTab] [ResourceMonitorWidget] [${new Date().toLocaleTimeString()}] Fetching resources from ${endpoint}...`);
       try {
         const res = await fetch(endpoint);
-        console.log(`[DashboardTab] [ResourceMonitorWidget] GET ${endpoint} complete. Full response object:`, res);
         
         if (!res.ok) {
-          console.error(`[DashboardTab] [ResourceMonitorWidget] ${endpoint} returned error status: ${res.status} (${res.statusText})`);
-          return;
+          if (res.status === 500 && retryCount < 3) {
+            const backoffDelay = Math.pow(2, retryCount) * 1000;
+            console.warn(`[ResourceMonitorWidget] 500 Error, retrying in ${backoffDelay}ms (attempt ${retryCount + 1})...`);
+            setTimeout(() => fetchResources(retryCount + 1), backoffDelay);
+            return;
+          }
+          throw new Error(`Status ${res.status}`);
         }
 
         const data = await res.json();
-        console.log(`[DashboardTab] [ResourceMonitorWidget] Received payload from ${endpoint}:`, data);
-
         if (data && data.resources) {
           setResourceData(prev => {
             const next = { ...prev };
@@ -287,8 +288,7 @@ export const ResourceMonitorWidget: React.FC<{
           });
         }
       } catch (err: any) {
-        // Handle transient network errors during server/container restarts gracefully without breaking the dashboard
-        console.warn(`[DashboardTab] [ResourceMonitorWidget] Transient connection/polling warning during GET ${endpoint} (Server may be restarting):`, err.message || err);
+        console.warn(`[ResourceMonitorWidget] Polling warning during GET ${endpoint}:`, err.message || err);
       }
     };
 
@@ -335,12 +335,12 @@ export const ResourceMonitorWidget: React.FC<{
                 <div className="flex-1 space-y-1">
                   <div className="flex justify-between text-[10px] text-slate-400 uppercase">
                     <span>CPU</span>
-                    <span className="font-mono text-indigo-400">{latest.cpu.toFixed(1)}%</span>
+                    <span className={`font-mono ${latest.cpu > 85 ? 'text-rose-400' : 'text-indigo-400'}`}>{latest.cpu.toFixed(1)}%</span>
                   </div>
                   <div className="h-12">
                     <ResponsiveContainer width="100%" height="100%">
                       <AreaChart data={data}>
-                        <Area type="monotone" dataKey="cpu" stroke="#6366f1" fill="#6366f1" fillOpacity={0.2} isAnimationActive={false} />
+                        <Area type="monotone" dataKey="cpu" stroke={latest.cpu > 85 ? '#f43f5e' : '#6366f1'} fill={latest.cpu > 85 ? '#f43f5e' : '#6366f1'} fillOpacity={0.2} isAnimationActive={false} />
                         <YAxis hide domain={[0, 100]} />
                       </AreaChart>
                     </ResponsiveContainer>
@@ -349,12 +349,12 @@ export const ResourceMonitorWidget: React.FC<{
                 <div className="flex-1 space-y-1">
                   <div className="flex justify-between text-[10px] text-slate-400 uppercase">
                     <span>Mem</span>
-                    <span className="font-mono text-emerald-400">{latest.mem.toFixed(0)}MB</span>
+                    <span className={`font-mono ${latest.mem > 850 ? 'text-rose-400' : 'text-emerald-400'}`}>{latest.mem.toFixed(0)}MB</span>
                   </div>
                   <div className="h-12">
                     <ResponsiveContainer width="100%" height="100%">
                       <AreaChart data={data}>
-                        <Area type="monotone" dataKey="mem" stroke="#10b981" fill="#10b981" fillOpacity={0.2} isAnimationActive={false} />
+                        <Area type="monotone" dataKey="mem" stroke={latest.mem > 850 ? '#f43f5e' : '#10b981'} fill={latest.mem > 850 ? '#f43f5e' : '#10b981'} fillOpacity={0.2} isAnimationActive={false} />
                         <YAxis hide domain={[0, 'auto']} />
                       </AreaChart>
                     </ResponsiveContainer>

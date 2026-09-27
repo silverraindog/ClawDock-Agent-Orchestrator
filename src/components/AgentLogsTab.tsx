@@ -164,14 +164,14 @@ export const AgentLogsTab: React.FC<AgentLogsTabProps> = ({
         <div className="flex items-center gap-2 flex-wrap w-full md:w-auto">
           <div className="text-xs font-semibold text-slate-400">Select Agent:</div>
           <div className="flex items-center gap-1.5 flex-wrap">
-            {['hermes-agent', 'zeroclaw', 'openclaw', 'picoclaw'].map((id) => {
-              const isSelected = activeAgentId === id;
+            {agents.map((agent) => {
+              const isSelected = activeAgentId === agent.id;
               return (
                 <button
-                  key={id}
+                  key={agent.id}
                   onClick={() => {
-                    setActiveAgentId(id);
-                    onSelectAgent(id);
+                    setActiveAgentId(agent.id);
+                    onSelectAgent(agent.id);
                   }}
                   className={`px-3 py-1.5 rounded-lg text-xs font-mono font-medium transition-all ${
                     isSelected
@@ -179,7 +179,7 @@ export const AgentLogsTab: React.FC<AgentLogsTabProps> = ({
                       : 'bg-slate-950 text-slate-400 hover:text-white border border-slate-800'
                   }`}
                 >
-                  {id}
+                  {agent.name}
                 </button>
               );
             })}
