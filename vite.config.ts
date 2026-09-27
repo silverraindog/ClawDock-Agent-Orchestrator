@@ -1959,19 +1959,50 @@ fallback:
           pattern: /^\/api\/resources(\/)?$/i,
           methods: ['GET', 'OPTIONS'],
           handler: async () => {
-            res.setHeader('Content-Type', 'application/json');
-            if (method === 'OPTIONS') {
-              res.statusCode = 200;
-              return res.end();
+            try {
+              console.log(`[Mock Server] [${new Date().toISOString()}] Incoming request: ${method} ${req.url} to /api/resources`);
+              res.setHeader('Content-Type', 'application/json');
+              if (method === 'OPTIONS') {
+                res.statusCode = 200;
+                return res.end();
+              }
+              const resources: Record<string, any> = {};
+              ['hermes-agent', 'zeroclaw', 'openclaw', 'picoclaw'].forEach(id => {
+                resources[id] = {
+                  cpuUsagePct: Math.random() * 20 + 5,
+                  memoryUsageMb: 100 + Math.random() * 200
+                };
+              });
+
+              const payload = { success: true, resources, timestamp: new Date().toISOString() };
+
+              // Robust serialization that handles undefined/circular references gracefully
+              const cache = new Set();
+              const serializedPayload = JSON.stringify(payload, (key, value) => {
+                if (typeof value === 'object' && value !== null) {
+                  if (cache.has(value)) {
+                    return '[Circular]';
+                  }
+                  cache.add(value);
+                }
+                if (value === undefined) {
+                  return null;
+                }
+                return value;
+              }, 2); // 2-space indented to allow clear payload structure visual inspection in logs
+
+              console.log(`[Mock Server] [${new Date().toISOString()}] Outputting generated resources JSON payload for verification:\n`, serializedPayload);
+              return res.end(serializedPayload);
+            } catch (err: any) {
+              console.error(`[Mock Server] [${new Date().toISOString()}] Exception handling GET /api/resources:`, err);
+              res.setHeader('Content-Type', 'application/json');
+              res.statusCode = 500;
+              return res.end(JSON.stringify({
+                success: false,
+                error: err?.message || 'Internal Server Error',
+                timestamp: new Date().toISOString()
+              }));
             }
-            const resources: Record<string, any> = {};
-            ['hermes-agent', 'zeroclaw', 'openclaw', 'picoclaw'].forEach(id => {
-              resources[id] = {
-                cpuUsagePct: Math.random() * 20 + 5,
-                memoryUsageMb: 100 + Math.random() * 200
-              };
-            });
-            return res.end(JSON.stringify({ success: true, resources, timestamp: new Date().toISOString() }));
           }
         },
         {

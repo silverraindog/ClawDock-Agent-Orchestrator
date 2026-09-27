@@ -4387,77 +4387,92 @@ function generateAgentPoint(agentId: string, status: string, customTime?: string
 
 // Agent real-time CPU & Memory stats endpoint
 app.get('/api/agents/:id/stats', (req, res) => {
-  const agentId = req.params.id;
-  const current = agentStates[agentId] || { status: 'stopped', containerId: '' };
-  const status = current.status || 'stopped';
+  try {
+    const agentId = req.params.id;
+    const current = agentStates[agentId] || { status: 'stopped', containerId: '' };
+    const status = current.status || 'stopped';
 
-  if (!agentStatsHistory[agentId] || agentStatsHistory[agentId].length === 0) {
-    const points: { time: string; cpu: number; memoryMb: number; memoryPct: number }[] = [];
-    const now = Date.now();
-    for (let i = 11; i >= 0; i--) {
-      const t = new Date(now - i * 5000).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
-      points.push(generateAgentPoint(agentId, status, t));
+    if (!agentStatsHistory[agentId] || agentStatsHistory[agentId].length === 0) {
+      const points: { time: string; cpu: number; memoryMb: number; memoryPct: number }[] = [];
+      const now = Date.now();
+      for (let i = 11; i >= 0; i--) {
+        const t = new Date(now - i * 5000).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        points.push(generateAgentPoint(agentId, status, t));
+      }
+      agentStatsHistory[agentId] = points;
+    } else {
+      const newPoint = generateAgentPoint(agentId, status);
+      agentStatsHistory[agentId].push(newPoint);
+      if (agentStatsHistory[agentId].length > 20) {
+        agentStatsHistory[agentId].shift();
+      }
     }
-    agentStatsHistory[agentId] = points;
-  } else {
-    const newPoint = generateAgentPoint(agentId, status);
-    agentStatsHistory[agentId].push(newPoint);
-    if (agentStatsHistory[agentId].length > 20) {
-      agentStatsHistory[agentId].shift();
-    }
+
+    const history = agentStatsHistory[agentId];
+    const latest = history[history.length - 1] || generateAgentPoint(agentId, status);
+
+    res.json({
+      success: true,
+      agentId,
+      status,
+      containerId: current.containerId || '',
+      cpuUsagePct: latest?.cpu ?? 0,
+      memoryUsageMb: latest?.memoryMb ?? 0,
+      memoryUsagePct: latest?.memoryPct ?? 0,
+      timestamp: latest?.time ?? new Date().toLocaleTimeString(),
+      history: history || []
+    });
+  } catch (err: any) {
+    console.error(`[Server Error] Exception in GET /api/agents/:id/stats:`, err);
+    res.status(500).json({ success: false, error: err.message || 'Internal Server Error' });
   }
-
-  const history = agentStatsHistory[agentId];
-  const latest = history[history.length - 1] || generateAgentPoint(agentId, status);
-
-  res.json({
-    success: true,
-    agentId,
-    status,
-    containerId: current.containerId || '',
-    cpuUsagePct: latest.cpu,
-    memoryUsageMb: latest.memoryMb,
-    memoryUsagePct: latest.memoryPct,
-    timestamp: latest.time,
-    history
-  });
 });
 
 // Alias resources endpoints to stats for container telemetry
 app.get(['/api/agents/:id/resources', '/api/agents/:id/metrics'], (req, res) => {
-  const agentId = req.params.id;
-  const current = agentStates[agentId] || { status: 'stopped', containerId: '' };
-  const status = current.status || 'stopped';
-  const history = agentStatsHistory[agentId] || [];
-  const latest = history[history.length - 1] || generateAgentPoint(agentId, status);
-  res.json({
-    success: true,
-    agentId,
-    status,
-    containerId: current.containerId || '',
-    cpuUsagePct: latest.cpu,
-    memoryUsageMb: latest.memoryMb,
-    memoryUsagePct: latest.memoryPct,
-    timestamp: latest.time,
-    history
-  });
+  try {
+    const agentId = req.params.id;
+    const current = agentStates[agentId] || { status: 'stopped', containerId: '' };
+    const status = current.status || 'stopped';
+    const history = agentStatsHistory[agentId] || [];
+    const latest = history[history.length - 1] || generateAgentPoint(agentId, status);
+    res.json({
+      success: true,
+      agentId,
+      status,
+      containerId: current.containerId || '',
+      cpuUsagePct: latest?.cpu ?? 0,
+      memoryUsageMb: latest?.memoryMb ?? 0,
+      memoryUsagePct: latest?.memoryPct ?? 0,
+      timestamp: latest?.time ?? new Date().toLocaleTimeString(),
+      history: history || []
+    });
+  } catch (err: any) {
+    console.error(`[Server Error] Exception in GET /api/agents/:id/resources:`, err);
+    res.status(500).json({ success: false, error: err.message || 'Internal Server Error' });
+  }
 });
 
 app.get(['/api/resources', '/api/docker/resources', '/api/agents/resources'], (_req, res) => {
-  const resources: Record<string, any> = {};
-  for (const id of ['hermes-agent', 'zeroclaw', 'openclaw', 'picoclaw']) {
-    const st = agentStates[id] || { status: 'stopped' };
-    const history = agentStatsHistory[id] || [];
-    const latest = history[history.length - 1] || generateAgentPoint(id, st.status);
-    resources[id] = {
-      agentId: id,
-      status: st.status,
-      cpuUsagePct: latest.cpu,
-      memoryUsageMb: latest.memoryMb,
-      memoryUsagePct: latest.memoryPct
-    };
+  try {
+    const resources: Record<string, any> = {};
+    for (const id of ['hermes-agent', 'zeroclaw', 'openclaw', 'picoclaw']) {
+      const st = agentStates[id] || { status: 'stopped' };
+      const history = agentStatsHistory[id] || [];
+      const latest = history[history.length - 1] || generateAgentPoint(id, st.status);
+      resources[id] = {
+        agentId: id,
+        status: st.status,
+        cpuUsagePct: latest?.cpu ?? 0,
+        memoryUsageMb: latest?.memoryMb ?? 0,
+        memoryUsagePct: latest?.memoryPct ?? 0
+      };
+    }
+    res.json({ success: true, resources, timestamp: new Date().toISOString() });
+  } catch (err: any) {
+    console.error(`[Server Error] Exception in GET /api/resources:`, err);
+    res.status(500).json({ success: false, error: err.message || 'Internal Server Error' });
   }
-  res.json({ success: true, resources, timestamp: new Date().toISOString() });
 });
 
 // Agent chat simulation / execution

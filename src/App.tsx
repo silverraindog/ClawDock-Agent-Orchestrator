@@ -2162,6 +2162,9 @@ export default function App() {
               allAgents={agents}
               onRestartAgent={handleRestartAgent}
               onSelectAgent={setSelectedAgentId}
+              presets={presets}
+              onApplyPresetToAgent={handleApplyPresetToAgent}
+              onAddToast={addToast}
             />
           )}
 

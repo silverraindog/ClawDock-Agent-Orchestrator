@@ -44,7 +44,7 @@ import {
   CartesianGrid,
   Legend
 } from 'recharts';
-import { AgentFullConfig, AgentInfo, DockerSystemInfo, SkillItem, MCPServerConfig, LLMHealthReport } from '../types';
+import { AgentFullConfig, AgentInfo, DockerSystemInfo, SkillItem, MCPServerConfig, LLMHealthReport, ModelPresetSnapshot } from '../types';
 import { fetchLLMHealth } from '../utils/apiBridge';
 import { MoAConsensusMonitor } from './MoAConsensusMonitor';
 
@@ -61,6 +61,9 @@ interface DashboardTabProps {
   allAgents?: AgentInfo[];
   onRestartAgent?: (agentId: string) => void;
   onSelectAgent?: (agentId: string) => void;
+  presets?: ModelPresetSnapshot[];
+  onApplyPresetToAgent?: (preset: ModelPresetSnapshot, targetAgentId: any) => void;
+  onAddToast?: (type: 'success' | 'error' | 'info', title: string, description?: string) => void;
 }
 
 // Sub-component for Agent Health real-time latency ping chart
@@ -1098,7 +1101,10 @@ export const AgentControlHub: React.FC<{
   onRestartAgent?: (agentId: string) => void;
   selectedAgentId: string;
   onSelectAgent?: (agentId: string) => void;
-}> = ({ agents, onRestartAgent, selectedAgentId, onSelectAgent }) => {
+  presets?: ModelPresetSnapshot[];
+  onApplyPresetToAgent?: (preset: ModelPresetSnapshot, targetAgentId: any) => void;
+  onAddToast?: (type: 'success' | 'error' | 'info', title: string, description?: string) => void;
+}> = ({ agents, onRestartAgent, selectedAgentId, onSelectAgent, presets, onApplyPresetToAgent, onAddToast }) => {
   return (
     <div className="p-5 rounded-2xl border border-slate-800 bg-slate-900/90 space-y-4">
       <div className="flex items-center justify-between">
@@ -1165,6 +1171,43 @@ export const AgentControlHub: React.FC<{
                 <span>{ag.version.startsWith('v') ? ag.version : `v${ag.version}`}</span>
               </div>
 
+              {/* Quick Apply Preset Dropdown */}
+              {presets && presets.length > 0 && onApplyPresetToAgent && (
+                <div className="pt-2 border-t border-slate-900/60 space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[9px] text-slate-500 font-bold uppercase tracking-tight flex items-center gap-1">
+                      <Sparkles className="w-2.5 h-2.5 text-indigo-400" />
+                      Quick Apply Preset
+                    </span>
+                  </div>
+                  <select
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val) {
+                        const selectedPreset = presets.find(p => p.id === val);
+                        if (selectedPreset) {
+                          onApplyPresetToAgent(selectedPreset, ag.id);
+                          onAddToast?.('success', 'Preset Snapshot Applied', `Successfully applied "${selectedPreset.name}" to ${ag.name} configuration.`);
+                          e.target.value = '';
+                        }
+                      }
+                    }}
+                    defaultValue=""
+                    className="w-full bg-slate-900 hover:bg-slate-850 border border-slate-800 text-[10px] text-slate-300 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-500/50 font-medium cursor-pointer transition-colors"
+                  >
+                    <option value="" disabled>-- Select Preset --</option>
+                    {presets
+                      .filter(p => p.targetAgentId === 'all' || p.targetAgentId === ag.id)
+                      .map(p => (
+                        <option key={p.id} value={p.id}>
+                          {p.name} ({p.model.model})
+                        </option>
+                      ))
+                    }
+                  </select>
+                </div>
+              )}
+
               <div className="flex gap-2 pt-1">
                 {onSelectAgent && (
                   <button
@@ -1209,7 +1252,10 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
   onOpenDiscovery,
   allAgents = [],
   onRestartAgent,
-  onSelectAgent
+  onSelectAgent,
+  presets = [],
+  onApplyPresetToAgent,
+  onAddToast
 }) => {
   // Polling mechanism to fetch agent status updates every 5 seconds
   React.useEffect(() => {
@@ -1465,6 +1511,9 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
         onRestartAgent={onRestartAgent}
         selectedAgentId={agent.id}
         onSelectAgent={onSelectAgent}
+        presets={presets}
+        onApplyPresetToAgent={onApplyPresetToAgent}
+        onAddToast={onAddToast}
       />
 
       {/* Real-time CPU & Memory Telemetry Visualization */}
