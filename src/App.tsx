@@ -1226,6 +1226,16 @@ export default function App() {
       saveLocalPersistence('configs', updatedConfigs);
       setConfigs(updatedConfigs);
 
+      // ALSO save the nativeContent string in localStorage nativeFiles to keep them completely synchronized
+      try {
+        const current = getLocalPersistence();
+        if (!current.nativeFiles) current.nativeFiles = {};
+        current.nativeFiles[selectedAgentId] = nativeContent;
+        localStorage.setItem('clawdock_persistence_v2', JSON.stringify(current));
+      } catch (e) {
+        console.warn('[handleSaveConfig] Failed to sync local storage nativeFiles:', e);
+      }
+
       // Sync explicitly with backend persistence.json, replacing any instances of 'moa://local'
       try {
         let persistencePayload = JSON.stringify({ configs: updatedConfigs });

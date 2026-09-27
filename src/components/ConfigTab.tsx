@@ -449,6 +449,15 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
     fetchLiveConfig(false);
   }, [agentId]);
 
+  // Sync live config after save completes
+  const prevSavingRef = React.useRef(isSaving);
+  React.useEffect(() => {
+    if (prevSavingRef.current && !isSaving) {
+      fetchLiveConfig(false);
+    }
+    prevSavingRef.current = isSaving;
+  }, [isSaving]);
+
   // Sync raw text when config or mode changes
   React.useEffect(() => {
     if (rawMode === 'schema') {

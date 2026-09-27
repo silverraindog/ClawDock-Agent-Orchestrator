@@ -416,7 +416,9 @@ vector_db_url = "http://everos:8080"
     const fbKey = fb.apiKey || '';
     const fbBase = fb.baseUrl || '';
 
-    if (format === 'toml') {
+    if (format === 'json') {
+      return JSON.stringify(cfg, null, 2);
+    } else if (format === 'toml') {
       return `version = "1.0.0"
 agent_id = "${agentId}"
 agent_name = "${cfg?.agentName || agentId}"
@@ -1976,20 +1978,40 @@ fallback:
 
               const payload = { success: true, resources, timestamp: new Date().toISOString() };
 
-              // Robust serialization that handles undefined/circular references gracefully
-              const cache = new Set();
-              const serializedPayload = JSON.stringify(payload, (key, value) => {
-                if (typeof value === 'object' && value !== null) {
-                  if (cache.has(value)) {
-                    return '[Circular]';
-                  }
-                  cache.add(value);
-                }
-                if (value === undefined) {
+              // Pre-stringify serialization that explicitly prevents circular references and undefined values before JSON.stringify
+              const sanitizeObject = (obj: any, seen = new Set<any>()): any => {
+                if (obj === null || obj === undefined) {
                   return null;
                 }
-                return value;
-              }, 2); // 2-space indented to allow clear payload structure visual inspection in logs
+                if (typeof obj !== 'object') {
+                  return obj;
+                }
+                if (seen.has(obj)) {
+                  return '[Circular]';
+                }
+                seen.add(obj);
+
+                if (Array.isArray(obj)) {
+                  const result = obj.map(item => sanitizeObject(item, seen));
+                  seen.delete(obj);
+                  return result;
+                }
+
+                const result: Record<string, any> = {};
+                for (const key of Object.keys(obj)) {
+                  const val = obj[key];
+                  if (val === undefined) {
+                    result[key] = null;
+                  } else {
+                    result[key] = sanitizeObject(val, seen);
+                  }
+                }
+                seen.delete(obj);
+                return result;
+              };
+
+              const sanitizedPayload = sanitizeObject(payload);
+              const serializedPayload = JSON.stringify(sanitizedPayload, null, 2);
 
               console.log(`[Mock Server] [${new Date().toISOString()}] Outputting generated resources JSON payload for verification:\n`, serializedPayload);
               return res.end(serializedPayload);

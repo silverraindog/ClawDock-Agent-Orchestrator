@@ -3580,13 +3580,39 @@ app.put('/api/agents/:id/config', (req, res) => {
   const relPath = path.join(process.cwd(), 'data', 'clawdock', nativeFileName);
 
   let nativeContent = rawNativeContent;
-  if (agentId === 'hermes-agent' && config) {
-    nativeContent = generateHermesYaml(config);
-  } else if (def.format === 'yaml' && nativeContent && nativeContent.trim().startsWith('{')) {
+  if (config) {
+    if (def.format === 'yaml') {
+      if (agentId === 'hermes-agent') {
+        nativeContent = generateHermesYaml(config);
+      } else {
+        try {
+          nativeContent = YAML.stringify(config);
+        } catch {
+          nativeContent = JSON.stringify(config, null, 2);
+        }
+      }
+    } else if (def.format === 'toml') {
+      try {
+        nativeContent = TOML.stringify(config);
+      } catch {
+        nativeContent = JSON.stringify(config, null, 2);
+      }
+    } else if (def.format === 'json') {
+      nativeContent = JSON.stringify(config, null, 2);
+    }
+  } else if (nativeContent && nativeContent.trim().startsWith('{')) {
     try {
       const parsed = JSON.parse(nativeContent);
-      if (agentId === 'hermes-agent') {
-        nativeContent = generateHermesYaml(parsed);
+      if (def.format === 'yaml') {
+        if (agentId === 'hermes-agent') {
+          nativeContent = generateHermesYaml(parsed);
+        } else {
+          nativeContent = YAML.stringify(parsed);
+        }
+      } else if (def.format === 'toml') {
+        nativeContent = TOML.stringify(parsed);
+      } else if (def.format === 'json') {
+        nativeContent = JSON.stringify(parsed, null, 2);
       }
     } catch {}
   }
