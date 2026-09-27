@@ -27,7 +27,8 @@ import {
   ChatMessage, 
   DiscoveredContainer,
   SystemUpdateItem,
-  ModelPresetSnapshot
+  ModelPresetSnapshot,
+  LastKnownGoodConfigSnapshot
 } from './types';
 import { 
   INITIAL_AGENTS, 
@@ -60,7 +61,13 @@ import {
   getLocalPresets,
   saveLocalPresets,
   fetchPresets,
-  persistPresetsToBackend
+  persistPresetsToBackend,
+  getLocalLastKnownGoodConfigs,
+  saveLocalLastKnownGoodConfig,
+  fetchLastKnownGoodConfigs,
+  getLocalCheckpointHistory,
+  deleteLocalCheckpointSnapshot,
+  fetchCheckpointHistory
 } from './utils/apiBridge';
 import { validateModelAgainstCatalog } from './utils/modelValidation';
 
@@ -133,6 +140,12 @@ export default function App() {
   const [mcpServers, setMcpServers] = useState<MCPServerConfig[]>(INITIAL_MCP_SERVERS);
   const [presets, setPresets] = useState<ModelPresetSnapshot[]>(() => {
     return getLocalPresets();
+  });
+  const [lastKnownGoodConfigs, setLastKnownGoodConfigs] = useState<Record<AgentId, LastKnownGoodConfigSnapshot>>(() => {
+    return getLocalLastKnownGoodConfigs();
+  });
+  const [checkpointHistoryMap, setCheckpointHistoryMap] = useState<Record<AgentId, LastKnownGoodConfigSnapshot[]>>(() => {
+    return getLocalCheckpointHistory() as Record<AgentId, LastKnownGoodConfigSnapshot[]>;
   });
   const [updates, setUpdates] = useState<SystemUpdateItem[]>(() => {
     try {
@@ -359,6 +372,19 @@ export default function App() {
     }).catch(err => {
       console.warn('[Clawdock Updates] Initial updates sync warning:', err);
     });
+
+    // 4b. Synchronize checkpoint history and last known good configs
+    fetchCheckpointHistory().then(historyMap => {
+      if (historyMap && Object.keys(historyMap).length > 0) {
+        setCheckpointHistoryMap(historyMap as Record<AgentId, LastKnownGoodConfigSnapshot[]>);
+      }
+    }).catch(() => {});
+
+    fetchLastKnownGoodConfigs().then(lkgcMap => {
+      if (lkgcMap && Object.keys(lkgcMap).length > 0) {
+        setLastKnownGoodConfigs(lkgcMap as Record<AgentId, LastKnownGoodConfigSnapshot>);
+      }
+    }).catch(() => {});
 
     // 5. Background polling interval (syncs live with docker ps on host)
     const pollInterval = setInterval(() => {
@@ -1119,8 +1145,8 @@ moa:
     };
     
     // Sanitize config in place
-    selectedAgentConfig.model.baseUrl = sanitize(selectedAgentConfig.model.baseUrl);
-    selectedAgentConfig.fallback.baseUrl = sanitize(selectedAgentConfig.fallback.baseUrl);
+    currentConfig.model.baseUrl = sanitize(currentConfig.model.baseUrl);
+    currentConfig.fallback.baseUrl = sanitize(currentConfig.fallback.baseUrl);
 
     try {
       // Client-side validation: Ensure model is selected and exists in catalog or is valid custom model string
@@ -1442,11 +1468,221 @@ moa:
           }
         }));
       }
+
+      // Automatically capture this verified state as the Last Known Good Configuration (LKGC)
+      const lkgcSnapshot: LastKnownGoodConfigSnapshot = {
+        id: `ckpt-${selectedAgentId}-${Date.now()}`,
+        agentId: selectedAgentId,
+        timestamp: new Date().toISOString(),
+        displayTime: new Date().toLocaleTimeString(),
+        model: normalizedConfig.model?.model || 'unknown',
+        provider: normalizedConfig.model?.provider || 'unknown',
+        config: JSON.parse(JSON.stringify(normalizedConfig)),
+        nativeContent,
+        format: DEFAULT_NATIVE_FILES[selectedAgentId]?.format || 'yaml',
+        note: restartContainer ? 'Verified and saved to active container' : 'Saved to configuration file on disk'
+      };
+
+      setLastKnownGoodConfigs(prev => {
+        const next = { ...prev, [selectedAgentId]: lkgcSnapshot };
+        saveLocalLastKnownGoodConfig(lkgcSnapshot);
+        return next;
+      });
+
+      setCheckpointHistoryMap(prev => {
+        const currentList = prev[selectedAgentId] || [];
+        const nextList = [lkgcSnapshot, ...currentList.filter(s => s.id !== lkgcSnapshot.id)].slice(0, 25);
+        const nextMap = { ...prev, [selectedAgentId]: nextList };
+        try {
+          const persistData = getLocalPersistence();
+          persistData.checkpointHistory = nextMap;
+          persistData.lastKnownGoodConfigs = { ...(persistData.lastKnownGoodConfigs || {}), [selectedAgentId]: lkgcSnapshot };
+          localStorage.setItem('clawdock_persistence_v2', JSON.stringify(persistData));
+          fetch('/api/persistence', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ key: 'checkpointHistory', value: nextMap })
+          }).catch(() => {});
+        } catch {}
+        return nextMap;
+      });
+
     } catch {
       addToast('success', 'Configuration Saved', `Local schema updated for ${currentAgent.name}`);
     } finally {
       setIsSavingConfig(false);
     }
+  };
+
+  // Restore Last Known Good Configuration (LKGC) for an agent
+  const handleRestoreLastKnownGoodConfig = async (agentId: AgentId = selectedAgentId) => {
+    const snapshot = lastKnownGoodConfigs[agentId];
+    if (!snapshot || !snapshot.config) {
+      addToast(
+        'error',
+        'No Last Known Good Config Found',
+        `No saved checkpoint found for ${currentAgent.name}. Save a working configuration first to establish a checkpoint.`
+      );
+      return;
+    }
+
+    try {
+      // 1. Restore the configuration into state
+      const restoredConfig = JSON.parse(JSON.stringify(snapshot.config));
+      const nextConfigs = { ...configs, [agentId]: restoredConfig };
+      setConfigs(nextConfigs);
+      saveLocalPersistence('configs', nextConfigs);
+
+      // 2. Restore native file if available
+      if (snapshot.nativeContent) {
+        try {
+          const current = getLocalPersistence();
+          if (!current.nativeFiles) current.nativeFiles = {};
+          current.nativeFiles[agentId] = snapshot.nativeContent;
+          localStorage.setItem('clawdock_persistence_v2', JSON.stringify(current));
+        } catch (e) {
+          console.warn('[handleRestoreLKGC] Local native file sync warning:', e);
+        }
+      }
+
+      // 3. Clear any active injection error alert
+      setInjectionAlert(agentId, null);
+
+      addToast(
+        'success',
+        'Restored Last Known Good Config',
+        `Reverted ${currentAgent.name} to configuration checkpoint from ${snapshot.displayTime} (${snapshot.model}). Click 'Save' to apply to container if desired.`
+      );
+    } catch (err: any) {
+      addToast(
+        'error',
+        'Restore Failed',
+        err?.message || 'Failed to restore configuration from snapshot.'
+      );
+    }
+  };
+
+  // Restore a specific checkpoint from the list
+  const handleRestoreSpecificCheckpoint = async (snapshot: LastKnownGoodConfigSnapshot) => {
+    if (!snapshot || !snapshot.config) {
+      addToast('error', 'Invalid Checkpoint', 'Snapshot contains no configuration payload.');
+      return;
+    }
+
+    const agentId = snapshot.agentId;
+    const targetAgent = agents.find(a => a.id === agentId) || currentAgent;
+
+    try {
+      // 1. Restore the configuration into state
+      const restoredConfig = JSON.parse(JSON.stringify(snapshot.config));
+      const nextConfigs = { ...configs, [agentId]: restoredConfig };
+      setConfigs(nextConfigs);
+      saveLocalPersistence('configs', nextConfigs);
+
+      // 2. Restore native file if available
+      if (snapshot.nativeContent) {
+        try {
+          const current = getLocalPersistence();
+          if (!current.nativeFiles) current.nativeFiles = {};
+          current.nativeFiles[agentId] = snapshot.nativeContent;
+          localStorage.setItem('clawdock_persistence_v2', JSON.stringify(current));
+        } catch (e) {
+          console.warn('[handleRestoreCheckpoint] Local native file sync warning:', e);
+        }
+      }
+
+      // 3. Clear any active injection error alert
+      setInjectionAlert(agentId, null);
+
+      addToast(
+        'success',
+        'Checkpoint Restored',
+        `Restored ${targetAgent.name} configuration to checkpoint from ${snapshot.displayTime} (${snapshot.model}). Click 'Save' to apply to container.`
+      );
+    } catch (err: any) {
+      addToast(
+        'error',
+        'Restore Failed',
+        err?.message || 'Failed to restore configuration from checkpoint.'
+      );
+    }
+  };
+
+  // Delete specific checkpoint snapshot
+  const handleDeleteCheckpoint = (agentId: AgentId, checkpointId: string) => {
+    deleteLocalCheckpointSnapshot(agentId, checkpointId);
+    setCheckpointHistoryMap(prev => {
+      const nextList = (prev[agentId] || []).filter(s => s.id !== checkpointId);
+      const nextMap = { ...prev, [agentId]: nextList };
+      try {
+        fetch('/api/persistence', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key: 'checkpointHistory', value: nextMap })
+        }).catch(() => {});
+      } catch {}
+      return nextMap;
+    });
+    setLastKnownGoodConfigs(prev => {
+      const list = (checkpointHistoryMap[agentId] || []).filter(s => s.id !== checkpointId);
+      return { ...prev, [agentId]: list[0] || null };
+    });
+    addToast('info', 'Checkpoint Removed', 'Selected snapshot removed from history.');
+  };
+
+  // Manually pin the current configuration as the Last Known Good checkpoint
+  const handleSaveLastKnownGoodCheckpoint = (agentId: AgentId = selectedAgentId, note: string = 'Manually pinned checkpoint') => {
+    const activeCfg = configs[agentId] || currentConfig;
+    const nativeInfo = DEFAULT_NATIVE_FILES[agentId] || DEFAULT_NATIVE_FILES['hermes-agent'];
+    let nativeText = '';
+    try {
+      const current = getLocalPersistence();
+      nativeText = current.nativeFiles?.[agentId] || '';
+    } catch {}
+
+    const lkgcSnapshot: LastKnownGoodConfigSnapshot = {
+      id: `ckpt-${agentId}-${Date.now()}`,
+      agentId: agentId,
+      timestamp: new Date().toISOString(),
+      displayTime: new Date().toLocaleTimeString(),
+      model: activeCfg.model?.model || 'unknown',
+      provider: activeCfg.model?.provider || 'unknown',
+      config: JSON.parse(JSON.stringify(activeCfg)),
+      nativeContent: nativeText,
+      format: nativeInfo.format,
+      note
+    };
+
+    saveLocalLastKnownGoodConfig(lkgcSnapshot);
+
+    setLastKnownGoodConfigs(prev => ({
+      ...prev,
+      [agentId]: lkgcSnapshot
+    }));
+
+    setCheckpointHistoryMap(prev => {
+      const currentList = prev[agentId] || [];
+      const nextList = [lkgcSnapshot, ...currentList.filter(s => s.id !== lkgcSnapshot.id)].slice(0, 25);
+      const nextMap = { ...prev, [agentId]: nextList };
+      try {
+        const persistData = getLocalPersistence();
+        persistData.checkpointHistory = nextMap;
+        persistData.lastKnownGoodConfigs = { ...(persistData.lastKnownGoodConfigs || {}), [agentId]: lkgcSnapshot };
+        localStorage.setItem('clawdock_persistence_v2', JSON.stringify(persistData));
+        fetch('/api/persistence', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key: 'checkpointHistory', value: nextMap })
+        }).catch(() => {});
+      } catch {}
+      return nextMap;
+    });
+
+    addToast(
+      'success',
+      'Checkpoint Saved',
+      `Pinned current ${currentAgent.name} configuration (${activeCfg.model?.model || 'default'}) as a Last Known Good baseline.`
+    );
   };
 
   // Helper to execute specific CLI command inside container
@@ -2263,6 +2499,8 @@ moa:
               currentAgentId={selectedAgentId}
               onDismiss={() => setInjectionAlert(selectedAgentId, null)}
               onRetry={fetchAndInjectConfig}
+              onRestoreLastKnownGood={handleRestoreLastKnownGoodConfig}
+              hasLastKnownGood={Boolean(lastKnownGoodConfigs[selectedAgentId])}
             />
           )}
 
@@ -2314,6 +2552,12 @@ moa:
                   return next;
                 });
               }}
+              lastKnownGoodSnapshot={lastKnownGoodConfigs[selectedAgentId] || null}
+              onRestoreLastKnownGood={handleRestoreLastKnownGoodConfig}
+              onSaveLastKnownGoodCheckpoint={handleSaveLastKnownGoodCheckpoint}
+              checkpointHistory={checkpointHistoryMap[selectedAgentId] || []}
+              onRestoreSpecificCheckpoint={handleRestoreSpecificCheckpoint}
+              onDeleteCheckpoint={(checkpointId) => handleDeleteCheckpoint(selectedAgentId, checkpointId)}
             />
           )}
 

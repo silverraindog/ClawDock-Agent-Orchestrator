@@ -43,7 +43,10 @@ import {
   ShieldAlert,
   Eye,
   EyeOff,
-  Key
+  Key,
+  ShieldCheck,
+  BookmarkCheck,
+  History
 } from 'lucide-react';
 import { 
   AgentFullConfig, 
@@ -52,7 +55,8 @@ import {
   ReasoningEffort, 
   SandboxMode, 
   MemoryBackend,
-  AgentInfo
+  AgentInfo,
+  LastKnownGoodConfigSnapshot
 } from '../types';
 import { MODEL_OPTIONS, DEFAULT_CONFIGS, DEFAULT_NATIVE_FILES, INITIAL_AGENTS } from '../data/defaults';
 import { AgentFallbackSettings } from './AgentFallbackSettings';
@@ -181,9 +185,15 @@ interface ConfigTabProps {
   allAgents?: AgentInfo[];
   onUpdateAgentConfig?: (id: AgentId, newCfg: AgentFullConfig) => void;
   onExecuteCommand?: (command: string) => Promise<void>;
+  lastKnownGoodSnapshot?: LastKnownGoodConfigSnapshot | null;
+  onRestoreLastKnownGood?: (agentId: AgentId) => void;
+  onSaveLastKnownGoodCheckpoint?: (agentId: AgentId) => void;
+  checkpointHistory?: LastKnownGoodConfigSnapshot[];
+  onRestoreSpecificCheckpoint?: (snapshot: LastKnownGoodConfigSnapshot) => void;
+  onDeleteCheckpoint?: (checkpointId: string) => void;
 }
 
-type ConfigSection = 'model' | 'moa' | 'channels' | 'system' | 'security' | 'storage' | 'fallback' | 'raw';
+type ConfigSection = 'model' | 'moa' | 'channels' | 'system' | 'security' | 'storage' | 'fallback' | 'raw' | 'checkpoints';
 
 export interface MoASynergyRecommendation {
   id: string;
@@ -269,7 +279,13 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
   allConfigs,
   allAgents,
   onUpdateAgentConfig,
-  onExecuteCommand
+  onExecuteCommand,
+  lastKnownGoodSnapshot,
+  onRestoreLastKnownGood,
+  onSaveLastKnownGoodCheckpoint,
+  checkpointHistory = [],
+  onRestoreSpecificCheckpoint,
+  onDeleteCheckpoint
 }) => {
   const [rawYaml, setRawYaml] = useState(() => YAML.dump(config));
   const [yamlError, setYamlError] = useState<string | null>(null);
@@ -433,6 +449,10 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
   
   const [restartContainer, setRestartContainer] = useState(true);
   const [isRestartModalOpen, setIsRestartModalOpen] = useState(false);
+  const [isSaveToAgentConfirmOpen, setIsSaveToAgentConfirmOpen] = useState(false);
+  const [isSaveCheckpointModalOpen, setIsSaveCheckpointModalOpen] = useState(false);
+  const [manualCheckpointNote, setManualCheckpointNote] = useState('');
+  const [diffExpandedId, setDiffExpandedId] = useState<string | null>(null);
 
   // Sync external verbose logs (e.g. from container exec injection in App.tsx)
   React.useEffect(() => {
@@ -914,12 +934,21 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
     }
   };
 
-  const handleInterceptSave = async (restartContainer: boolean) => {
+  const handleInterceptSave = async (restart: boolean) => {
     setShowSaveValidationWarning(false);
     setPendingRestartParam(null);
 
-    // Always persist configuration and API keys immediately so user inputs are never lost
-    onSaveConfig(restartContainer, rawMode === 'native' ? rawText : undefined);
+    if (restart) {
+      setIsSaveToAgentConfirmOpen(true);
+    } else {
+      // Save directly to file without exec commands / restart
+      onSaveConfig(false, rawMode === 'native' ? rawText : undefined);
+    }
+  };
+
+  const handleConfirmSaveToAgent = () => {
+    setIsSaveToAgentConfirmOpen(false);
+    onSaveConfig(true, rawMode === 'native' ? rawText : undefined);
   };
 
   useEffect(() => {
@@ -1175,6 +1204,34 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
           >
             <Download className="w-3.5 h-3.5" />
             Export config.json
+          </button>
+
+          {/* Last Known Good Configuration Checkpoint & Rollback */}
+          {lastKnownGoodSnapshot && (
+            <button
+              id="restore-last-known-good-btn"
+              type="button"
+              onClick={() => onRestoreLastKnownGood?.(agentId)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-emerald-300 hover:text-white bg-emerald-950/60 hover:bg-emerald-900/60 border border-emerald-500/40 shadow-sm transition-all cursor-pointer"
+              title={`Restore verified working configuration from ${lastKnownGoodSnapshot.displayTime} (${lastKnownGoodSnapshot.model || 'model'})`}
+            >
+              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Restore Last Known Good</span>
+              <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-emerald-900/90 text-emerald-200 border border-emerald-500/30">
+                {lastKnownGoodSnapshot.displayTime}
+              </span>
+            </button>
+          )}
+
+          <button
+            id="save-checkpoint-btn"
+            type="button"
+            onClick={() => onSaveLastKnownGoodCheckpoint?.(agentId)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-indigo-300 hover:text-white bg-indigo-950/60 hover:bg-indigo-900/60 border border-indigo-500/30 transition-colors"
+            title="Pin current configuration as the verified Last Known Good Configuration baseline checkpoint"
+          >
+            <BookmarkCheck className="w-3.5 h-3.5 text-indigo-400" />
+            <span>Save Checkpoint</span>
           </button>
 
           <div className="flex items-center gap-2 px-2 bg-slate-950/60 py-1.5 rounded-lg border border-slate-800">
@@ -1479,6 +1536,8 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
         currentAgentId={agentId}
         onDismiss={onDismissInjectionStatus || (() => {})} 
         onRetry={onInjectConfig} 
+        onRestoreLastKnownGood={onRestoreLastKnownGood}
+        hasLastKnownGood={Boolean(lastKnownGoodSnapshot)}
       />
 
       {/* Verbose Log & JSON Inspector Drawer */}
@@ -1642,10 +1701,11 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
           { id: 'storage', label: 'Storage & Memory', icon: Database, sectionKey: 'storage' },
           { id: 'fallback', label: 'Fallback & Redundancy', icon: RefreshCw, sectionKey: 'fallback' },
           { id: 'raw', label: 'Raw Editor & Validator', icon: FileCode, sectionKey: 'raw' },
+          { id: 'checkpoints', label: 'Checkpoint History', icon: History, sectionKey: 'checkpoints' },
         ].map((tab) => {
           const Icon = tab.icon;
           const isActive = activeSection === tab.id;
-          const sectionIssues = deepValidation.issues.filter(i => 
+          const sectionIssues = tab.sectionKey === 'checkpoints' ? [] : deepValidation.issues.filter(i => 
             tab.sectionKey === 'raw' ? true : i.path.startsWith(tab.sectionKey)
           );
           const hasErrors = sectionIssues.some(i => i.severity === 'error');
@@ -1664,6 +1724,11 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
             >
               <Icon className="w-3.5 h-3.5" />
               <span>{tab.label}</span>
+              {tab.id === 'checkpoints' && checkpointHistory.length > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold bg-indigo-500/20 text-indigo-400 border border-indigo-500/40">
+                  {checkpointHistory.length}
+                </span>
+              )}
               {sectionIssues.length > 0 && (
                 <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold ${
                   hasErrors ? 'bg-rose-500/20 text-rose-400 border border-rose-500/40' : 'bg-amber-500/20 text-amber-400 border border-amber-500/40'
@@ -4946,7 +5011,267 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
               onAutoFixSyntax={handleAutoFixSyntax}
               onSyncNativeToSchema={handleSyncNativeToSchema}
               rawError={rawError}
+              lastKnownGoodSnapshot={lastKnownGoodSnapshot}
+              onRestoreLastKnownGood={() => onRestoreLastKnownGood?.(agentId)}
             />
+          </div>
+        )}
+
+        {/* Checkpoint History Section */}
+        {activeSection === 'checkpoints' && (
+          <div className="space-y-6 animate-in fade-in duration-300">
+            {/* Header Card */}
+            <div className="p-5 rounded-2xl border border-slate-800 bg-slate-900/60 flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="space-y-1">
+                <h3 className="text-base font-bold text-white flex items-center gap-2">
+                  <History className="w-5 h-5 text-indigo-400" />
+                  Configuration Checkpoint History &amp; Rollback
+                </h3>
+                <p className="text-xs text-slate-400">
+                  Historical snapshots of Last Known Good Configurations for <strong className="text-white">{currentAgent?.name || agentId}</strong>. Easily rollback if recent changes cause configuration or runtime errors.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2.5 self-start md:self-center flex-wrap">
+                <button
+                  type="button"
+                  id="save-new-checkpoint-btn"
+                  onClick={() => {
+                    setManualCheckpointNote('');
+                    setIsSaveCheckpointModalOpen(true);
+                  }}
+                  className="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-lg shadow-indigo-600/20 flex items-center gap-2 transition-all cursor-pointer"
+                >
+                  <BookmarkCheck className="w-4 h-4 text-white" />
+                  <span>Save New Checkpoint</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Checkpoints List */}
+            {checkpointHistory.length === 0 ? (
+              <div className="flex flex-col items-center justify-center p-12 rounded-2xl border border-dashed border-slate-800 bg-slate-950/40 text-center">
+                <div className="p-4 rounded-full bg-slate-900/80 border border-slate-800 text-slate-500 mb-4 shadow-inner">
+                  <BookmarkCheck className="w-10 h-10" />
+                </div>
+                <h4 className="text-sm font-semibold text-slate-300">No Checkpoints Recorded Yet</h4>
+                <p className="text-xs text-slate-500 mt-1 max-w-sm">
+                  Save your configuration to the container or click the "Save New Checkpoint" button above to record your first baseline checkpoint.
+                </p>
+              </div>
+            ) : (
+              <div className="grid gap-4">
+                {checkpointHistory.map((snapshot, index) => {
+                  const isLatest = index === 0;
+                  const isExpanded = diffExpandedId === (snapshot.id || String(index));
+                  const timestampStr = snapshot.timestamp ? new Date(snapshot.timestamp).toLocaleString() : snapshot.displayTime;
+
+                  // Compute diffs against current active config state
+                  const diffs: string[] = [];
+                  if (snapshot.config.model?.model !== config.model?.model) {
+                    diffs.push(`Model: "${snapshot.config.model?.model}" (snapshot) vs "${config.model?.model}" (current)`);
+                  }
+                  if (snapshot.config.model?.provider !== config.model?.provider) {
+                    diffs.push(`Provider: "${snapshot.config.model?.provider}" (snapshot) vs "${config.model?.provider}" (current)`);
+                  }
+                  if (snapshot.config.model?.temperature !== config.model?.temperature) {
+                    diffs.push(`Temperature: ${snapshot.config.model?.temperature} vs ${config.model?.temperature}`);
+                  }
+                  if (snapshot.config.moa?.enabled !== config.moa?.enabled) {
+                    diffs.push(`MoA: ${snapshot.config.moa?.enabled ? 'Enabled' : 'Disabled'} vs ${config.moa?.enabled ? 'Enabled' : 'Disabled'}`);
+                  }
+                  if (snapshot.config.system?.systemPrompt !== config.system?.systemPrompt) {
+                    diffs.push('System persona / prompt differs from current editor state');
+                  }
+
+                  return (
+                    <div 
+                      key={snapshot.id || index}
+                      className={`rounded-2xl border transition-all ${
+                        isLatest 
+                          ? 'border-emerald-500/30 bg-emerald-950/10 hover:border-emerald-500/40' 
+                          : 'border-slate-800 bg-slate-900/40 hover:border-slate-700'
+                      }`}
+                    >
+                      <div className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                        <div className="flex items-start gap-3">
+                          <div className={`p-2.5 rounded-xl shrink-0 ${isLatest ? 'bg-emerald-500/10 text-emerald-400' : 'bg-slate-800 text-slate-400'}`}>
+                            <BookmarkCheck className="w-4 h-4" />
+                          </div>
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-sm font-bold text-white">
+                                {snapshot.note || (isLatest ? 'Automatic Save Backup' : 'Manual Baseline Checkpoint')}
+                              </span>
+                              {isLatest && (
+                                <span className="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-[10px] font-semibold font-mono tracking-wider uppercase">
+                                  Latest Checkpoint
+                                </span>
+                              )}
+                              <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700 text-[10px] font-mono">
+                                {snapshot.format?.toUpperCase() || 'YAML'}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2 text-xs text-slate-400 flex-wrap">
+                              <span className="font-mono text-slate-300">{timestampStr}</span>
+                              <span>•</span>
+                              <span>Model: <strong className="text-indigo-300 font-mono">{snapshot.model}</strong></span>
+                              <span>•</span>
+                              <span className="capitalize">Provider: <strong className="text-slate-300">{snapshot.provider}</strong></span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 self-end sm:self-center">
+                          <button
+                            type="button"
+                            onClick={() => setDiffExpandedId(isExpanded ? null : (snapshot.id || String(index)))}
+                            className="px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-400 hover:text-slate-200 hover:bg-slate-800 border border-slate-800 transition-all flex items-center gap-1"
+                            title="Toggle parameter details and comparison with current live config"
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                            <span>{isExpanded ? 'Hide Details' : 'View Spec Diff'}</span>
+                          </button>
+
+                          {onDeleteCheckpoint && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (confirm('Are you sure you want to delete this historical checkpoint?')) {
+                                  onDeleteCheckpoint(snapshot.id || String(index));
+                                }
+                              }}
+                              className="p-1.5 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition-colors"
+                              title="Permanently remove snapshot"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+
+                          <button
+                            type="button"
+                            id={`restore-checkpoint-${snapshot.id || index}`}
+                            onClick={() => onRestoreSpecificCheckpoint ? onRestoreSpecificCheckpoint(snapshot) : onRestoreLastKnownGood?.(agentId)}
+                            className="px-3.5 py-1.5 rounded-lg text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 shadow-sm shadow-emerald-950/40 transition-all flex items-center gap-1.5 cursor-pointer"
+                          >
+                            <ShieldCheck className="w-3.5 h-3.5" />
+                            <span>Restore Checkpoint</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Expanded Details / Diff Card */}
+                      {isExpanded && (
+                        <div className="px-4 pb-4 border-t border-slate-800/80 pt-4 bg-slate-950/40 rounded-b-2xl space-y-4 animate-in slide-in-from-top-2 duration-200">
+                          {/* Live Config Comparison / Parameter Differences */}
+                          <div className="space-y-2">
+                            <h4 className="text-[11px] font-bold text-slate-400 tracking-wider uppercase flex items-center gap-1">
+                              <History className="w-3 h-3" />
+                              Active State Discrepancies
+                            </h4>
+                            {diffs.length === 0 ? (
+                              <p className="text-xs text-emerald-400 flex items-center gap-1.5 bg-emerald-950/20 border border-emerald-500/20 p-2 rounded-lg">
+                                <CheckCircle2 className="w-3.5 h-3.5" />
+                                This checkpoint configuration is identical to your current active session editor state.
+                              </p>
+                            ) : (
+                              <div className="p-3 rounded-lg bg-amber-500/5 border border-amber-500/15 text-xs text-amber-300 space-y-1">
+                                <p className="font-semibold text-slate-300 mb-1">Differences detected vs current editor state:</p>
+                                <ul className="list-disc pl-4 space-y-0.5">
+                                  {diffs.map((d, i) => <li key={i}>{d}</li>)}
+                                </ul>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Code Block Specifications */}
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div className="space-y-1.5">
+                              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Model Parameters</span>
+                              <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-3 text-xs space-y-1.5 font-mono">
+                                <div className="flex justify-between border-b border-slate-800/60 pb-1">
+                                  <span className="text-slate-400">Temperature</span>
+                                  <span className="text-white">{snapshot.config.model?.temperature ?? 'default'}</span>
+                                </div>
+                                <div className="flex justify-between border-b border-slate-800/60 pb-1">
+                                  <span className="text-slate-400">Max Tokens</span>
+                                  <span className="text-white">{snapshot.config.model?.maxTokens ?? 'default'}</span>
+                                </div>
+                                <div className="flex justify-between border-b border-slate-800/60 pb-1">
+                                  <span className="text-slate-400">Context Size</span>
+                                  <span className="text-white">{snapshot.config.model?.contextSize ?? 'default'}</span>
+                                </div>
+                                <div className="flex justify-between">
+                                  <span className="text-slate-400">Stream Responses</span>
+                                  <span className="text-white">{snapshot.config.model?.stream ? 'True' : 'False'}</span>
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="space-y-1.5">
+                              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Mixture-of-Agents Consensus</span>
+                              <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-3 text-xs space-y-1.5 font-mono">
+                                <div className="flex justify-between border-b border-slate-800/60 pb-1">
+                                  <span className="text-slate-400">MoA Enabled</span>
+                                  <span className={snapshot.config.moa?.enabled ? 'text-emerald-400 font-bold' : 'text-slate-400'}>
+                                    {snapshot.config.moa?.enabled ? 'YES' : 'NO'}
+                                  </span>
+                                </div>
+                                <div className="flex justify-between border-b border-slate-800/60 pb-1">
+                                  <span className="text-slate-400">Proposer Count</span>
+                                  <span className="text-white">{snapshot.config.moa?.proposers?.length ?? 0}</span>
+                                </div>
+                                <div className="flex justify-between border-b border-slate-800/60 pb-1">
+                                  <span className="text-slate-400">Consensus Rounds</span>
+                                  <span className="text-white">{snapshot.config.moa?.rounds ?? 1}</span>
+                                </div>
+                                <div className="flex justify-between">
+                                  <span className="text-slate-400">Aggregator</span>
+                                  <span className="text-indigo-300 font-bold">{snapshot.config.moa?.aggregator || 'none'}</span>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Fallback Redundancy Details */}
+                          <div className="space-y-1.5">
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Fallback &amp; Redundancy Settings</span>
+                            <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-3 text-xs font-mono grid grid-cols-2 md:grid-cols-4 gap-4">
+                              <div>
+                                <span className="text-[10px] text-slate-400 block mb-0.5">Enabled</span>
+                                <span className={snapshot.config.fallback?.enabled ? 'text-emerald-400 font-bold' : 'text-slate-500'}>
+                                  {snapshot.config.fallback?.enabled ? 'YES' : 'NO'}
+                                </span>
+                              </div>
+                              <div>
+                                <span className="text-[10px] text-slate-400 block mb-0.5">Fallback Provider</span>
+                                <span className="text-white font-semibold">{snapshot.config.fallback?.fallbackProvider || snapshot.config.fallback?.provider || 'none'}</span>
+                              </div>
+                              <div>
+                                <span className="text-[10px] text-slate-400 block mb-0.5">Fallback Model</span>
+                                <span className="text-indigo-300 font-bold">{snapshot.config.fallback?.fallbackModel || snapshot.config.fallback?.model || 'none'}</span>
+                              </div>
+                              <div>
+                                <span className="text-[10px] text-slate-400 block mb-0.5">Target Latency</span>
+                                <span className="text-white">{snapshot.config.fallback?.fallbackLatencyThreshold || 'default'}s</span>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* System Prompt View */}
+                          <div className="space-y-1.5">
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">System Persona / Prompt</span>
+                            <pre className="bg-slate-900/90 border border-slate-800 rounded-xl p-3 text-[11px] text-slate-300 whitespace-pre-wrap max-h-40 overflow-y-auto font-mono">
+                              {snapshot.config.system?.systemPrompt || 'No system prompt specified.'}
+                            </pre>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -5075,6 +5400,165 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
                 Close Comparison
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Save to Agent Modal Confirmation Dialog */}
+      {isSaveToAgentConfirmOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
+            {/* Modal Header */}
+            <div className="p-4 sm:p-5 border-b border-slate-800 flex items-center justify-between bg-slate-900/90">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-indigo-500/10 border border-indigo-500/20">
+                  <Terminal className="w-5 h-5 text-indigo-400" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white">Confirm Container Configuration Injection</h3>
+                  <p className="text-[11px] text-slate-400">Explicit verification required before terminal execution</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setIsSaveToAgentConfirmOpen(false)}
+                className="text-slate-400 hover:text-white p-1 hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-5 space-y-4">
+              <p className="text-xs text-slate-300 leading-relaxed">
+                You are about to deploy this configuration schema to the running agent container. Please verify the target parameters below before container-side shell commands are executed:
+              </p>
+
+              {/* Highlights Card */}
+              <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-3">
+                <div className="flex items-center justify-between text-xs pb-2 border-b border-slate-800/60">
+                  <span className="text-slate-400 font-medium">Target Agent:</span>
+                  <span className="px-3 py-1 rounded-lg bg-indigo-500/20 text-indigo-300 font-bold border border-indigo-500/40 text-xs shadow-sm">
+                    {currentAgent?.name || agentId}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between text-xs pb-2 border-b border-slate-800/60">
+                  <span className="text-slate-400 font-medium">Native Config File:</span>
+                  <code className="px-3 py-1 rounded-lg bg-amber-500/15 text-amber-300 font-mono font-bold border border-amber-500/30 text-xs shadow-sm">
+                    {nativeConfigInfo?.fileName || DEFAULT_NATIVE_FILES[agentId]?.fileName || 'config.yaml'}
+                  </code>
+                </div>
+
+                <div className="flex items-center justify-between text-xs pb-2 border-b border-slate-800/60">
+                  <span className="text-slate-400 font-medium">Routing Model:</span>
+                  <span className="font-mono text-slate-200 font-semibold">{config.model.model} <span className="text-slate-500">({config.model.provider})</span></span>
+                </div>
+
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-slate-400 font-medium">Container Restart:</span>
+                  <span className={restartContainer ? 'text-indigo-400 font-bold' : 'text-slate-500'}>
+                    {restartContainer ? 'YES (Graceful Docker restart)' : 'NO (Skip restart)'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Terminal command execution notice */}
+              <div className="p-3 rounded-lg bg-indigo-950/40 border border-indigo-500/20 text-[11px] text-indigo-200 flex items-start gap-2">
+                <Terminal className="w-4 h-4 text-indigo-400 shrink-0 mt-0.5" />
+                <p className="leading-relaxed">
+                  Triggers <code className="text-indigo-300 bg-indigo-950/80 px-1 py-0.5 rounded border border-indigo-500/30 font-mono text-[10px]">docker exec</code> configuration CLI commands on the host daemon and archives a verified <strong className="text-emerald-400">Last Known Good Configuration checkpoint</strong>.
+                </p>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 border-t border-slate-800 bg-slate-950/60 flex items-center justify-end gap-2.5">
+              <button
+                type="button"
+                onClick={() => setIsSaveToAgentConfirmOpen(false)}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-300 bg-slate-800 hover:bg-slate-700 border border-slate-700 cursor-pointer transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                id="confirm-save-to-agent-btn"
+                onClick={handleConfirmSaveToAgent}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 shadow-lg shadow-indigo-600/30 flex items-center gap-1.5 cursor-pointer transition-all"
+              >
+                <Save className="w-3.5 h-3.5" />
+                <span>Confirm &amp; Save to Agent</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Manual Checkpoint Note Modal */}
+      {isSaveCheckpointModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
+            {/* Modal Header */}
+            <div className="p-4 sm:p-5 border-b border-slate-800 flex items-center justify-between bg-slate-900/90">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-indigo-500/10 border border-indigo-500/20">
+                  <BookmarkCheck className="w-5 h-5 text-indigo-400" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white">Create Configuration Checkpoint</h3>
+                  <p className="text-[11px] text-slate-400">Pin current editor settings as a recovery checkpoint</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setIsSaveCheckpointModalOpen(false)}
+                className="text-slate-400 hover:text-white p-1 hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <form onSubmit={(e) => {
+              e.preventDefault();
+              setIsSaveCheckpointModalOpen(false);
+              onSaveLastKnownGoodCheckpoint?.(agentId, manualCheckpointNote.trim() || 'Manual Baseline Checkpoint');
+            }} className="p-5 space-y-4">
+              <div className="space-y-1.5">
+                <label htmlFor="checkpoint-note" className="text-xs font-semibold text-slate-300">
+                  Checkpoint Name / Note
+                </label>
+                <input
+                  id="checkpoint-note"
+                  type="text"
+                  placeholder="e.g. Production baseline before tuning MoA"
+                  value={manualCheckpointNote}
+                  onChange={(e) => setManualCheckpointNote(e.target.value)}
+                  className="w-full px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 transition-all"
+                  autoFocus
+                />
+                <p className="text-[10px] text-slate-500">
+                  Tag this snapshot so you can quickly identify and restore it later.
+                </p>
+              </div>
+
+              {/* Modal Footer */}
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsSaveCheckpointModalOpen(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-300 bg-slate-800 hover:bg-slate-700 border border-slate-700 cursor-pointer transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 shadow-lg shadow-indigo-600/30 flex items-center gap-1.5 cursor-pointer transition-all"
+                >
+                  <BookmarkCheck className="w-3.5 h-3.5" />
+                  <span>Pin Checkpoint</span>
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

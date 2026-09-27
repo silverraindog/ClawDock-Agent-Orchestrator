@@ -448,5 +448,23 @@ export interface LLMHealthReport {
   fallbackAgents?: AgentFallbackHealth[];
 }
 
+export interface SparklineData {
+  value: number;
+  timestamp: number;
+}
+
+export interface LastKnownGoodConfigSnapshot {
+  id?: string;
+  agentId: AgentId;
+  timestamp: string;
+  displayTime: string;
+  model: string;
+  provider: string;
+  config: AgentFullConfig;
+  nativeContent?: string;
+  format?: string;
+  note?: string;
+}
+
 
 

@@ -10,6 +10,7 @@ import {
   ChevronDown, 
   ChevronUp, 
   ShieldAlert,
+  ShieldCheck,
   Terminal
 } from 'lucide-react';
 import { AgentId } from '../types';
@@ -46,13 +47,17 @@ interface ConfigInjectionAlertProps {
   currentAgentId?: AgentId;
   onDismiss: () => void;
   onRetry?: (agentId: AgentId) => void;
+  onRestoreLastKnownGood?: (agentId: AgentId) => void;
+  hasLastKnownGood?: boolean;
 }
 
 export const ConfigInjectionAlert: React.FC<ConfigInjectionAlertProps> = ({
   info,
   currentAgentId,
   onDismiss,
-  onRetry
+  onRetry,
+  onRestoreLastKnownGood,
+  hasLastKnownGood
 }) => {
   const [expanded, setExpanded] = useState(false);
 
@@ -234,6 +239,19 @@ export const ConfigInjectionAlert: React.FC<ConfigInjectionAlertProps> = ({
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
+          {onRestoreLastKnownGood && hasLastKnownGood && (isNetworkError || isSchemaError || isStoppedWarning) && (
+            <button
+              type="button"
+              id="rollback-last-known-good-btn"
+              onClick={() => onRestoreLastKnownGood(info.agentId)}
+              className="flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white shadow-md shadow-emerald-950/40 transition-all cursor-pointer"
+              title="Quickly rollback configuration to the Last Known Good Configuration checkpoint"
+            >
+              <ShieldCheck className="w-3.5 h-3.5" />
+              <span>Restore Last Known Good</span>
+            </button>
+          )}
+
           {onRetry && (isNetworkError || isSchemaError) && (
             <button
               type="button"

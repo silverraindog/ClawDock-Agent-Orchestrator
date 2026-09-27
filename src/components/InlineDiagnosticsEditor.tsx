@@ -17,10 +17,11 @@ import {
   Zap,
   Info,
   Layers,
-  ArrowRight
+  ArrowRight,
+  ShieldCheck
 } from 'lucide-react';
 import { DeepSchemaIssue, SyntaxValidationDetail } from '../utils/configValidator';
-import { AgentFullConfig } from '../types';
+import { AgentFullConfig, LastKnownGoodConfigSnapshot } from '../types';
 
 interface InlineDiagnosticsEditorProps {
   content: string;
@@ -36,6 +37,8 @@ interface InlineDiagnosticsEditorProps {
   onAutoFixSyntax: () => void;
   onSyncNativeToSchema: () => void;
   rawError: string | null;
+  lastKnownGoodSnapshot?: LastKnownGoodConfigSnapshot | null;
+  onRestoreLastKnownGood?: () => void;
 }
 
 export const InlineDiagnosticsEditor: React.FC<InlineDiagnosticsEditorProps> = ({
@@ -51,7 +54,9 @@ export const InlineDiagnosticsEditor: React.FC<InlineDiagnosticsEditorProps> = (
   onApplyFix,
   onAutoFixSyntax,
   onSyncNativeToSchema,
-  rawError
+  rawError,
+  lastKnownGoodSnapshot,
+  onRestoreLastKnownGood
 }) => {
   const [viewMode, setViewMode] = useState<'annotated' | 'editor' | 'diff'>('annotated');
   const [copied, setCopied] = useState(false);
@@ -124,6 +129,16 @@ export const InlineDiagnosticsEditor: React.FC<InlineDiagnosticsEditorProps> = (
                   className="px-2.5 py-1 rounded-lg text-xs font-mono font-medium bg-rose-900/60 hover:bg-rose-800 text-rose-200 border border-rose-500/40 transition-colors"
                 >
                   Jump to Line {syntaxDetail.primaryLine}
+                </button>
+              )}
+              {onRestoreLastKnownGood && lastKnownGoodSnapshot && (
+                <button
+                  onClick={onRestoreLastKnownGood}
+                  className="flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white shadow-sm transition-all"
+                  title={`Restore verified working file from ${lastKnownGoodSnapshot.displayTime}`}
+                >
+                  <ShieldCheck className="w-3.5 h-3.5" />
+                  <span>Restore Working File</span>
                 </button>
               )}
               <button
@@ -238,6 +253,17 @@ export const InlineDiagnosticsEditor: React.FC<InlineDiagnosticsEditorProps> = (
               <span>Schema Diff</span>
             </button>
           </div>
+
+          {onRestoreLastKnownGood && lastKnownGoodSnapshot && (
+            <button
+              onClick={onRestoreLastKnownGood}
+              className="flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs bg-emerald-950/60 hover:bg-emerald-900/60 text-emerald-300 hover:text-white transition-colors border border-emerald-500/30 shadow-sm"
+              title={`Revert editor content to Last Known Good Configuration checkpoint from ${lastKnownGoodSnapshot.displayTime}`}
+            >
+              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Restore Last Known Good</span>
+            </button>
+          )}
 
           <button
             onClick={handleCopy}

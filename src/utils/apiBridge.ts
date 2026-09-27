@@ -1,4 +1,4 @@
-import { AgentFullConfig, AgentId, AgentInfo, DockerSystemInfo, SystemUpdateItem, LLMHealthReport, ModelPresetSnapshot } from '../types';
+import { AgentFullConfig, AgentId, AgentInfo, DockerSystemInfo, SystemUpdateItem, LLMHealthReport, ModelPresetSnapshot, LastKnownGoodConfigSnapshot } from '../types';
 import { DEFAULT_CONFIGS, DEFAULT_NATIVE_FILES, INITIAL_AGENTS } from '../data/defaults';
 import * as YAML from 'js-yaml';
 import * as toml from 'smol-toml';
@@ -1019,6 +1019,105 @@ export async function persistPresetsToBackend(presets: ModelPresetSnapshot[]): P
     console.warn('[API Bridge] Failed to persist presets to backend:', err);
     return false;
   }
+}
+
+export function getLocalLastKnownGoodConfigs(): Record<string, LastKnownGoodConfigSnapshot> {
+  try {
+    const persist = getLocalPersistence();
+    if (persist && persist.lastKnownGoodConfigs && typeof persist.lastKnownGoodConfigs === 'object') {
+      return persist.lastKnownGoodConfigs;
+    }
+  } catch {}
+  return {};
+}
+
+export function getLocalCheckpointHistory(): Record<string, LastKnownGoodConfigSnapshot[]> {
+  try {
+    const persist = getLocalPersistence();
+    if (persist && persist.checkpointHistory && typeof persist.checkpointHistory === 'object') {
+      return persist.checkpointHistory;
+    }
+    // Fallback: seed from lastKnownGoodConfigs if history is empty
+    if (persist && persist.lastKnownGoodConfigs) {
+      const seeded: Record<string, LastKnownGoodConfigSnapshot[]> = {};
+      Object.keys(persist.lastKnownGoodConfigs).forEach(aid => {
+        const item = persist.lastKnownGoodConfigs[aid];
+        if (item) seeded[aid] = [item];
+      });
+      return seeded;
+    }
+  } catch {}
+  return {};
+}
+
+export function saveLocalLastKnownGoodConfig(snapshot: LastKnownGoodConfigSnapshot): void {
+  try {
+    const current = getLocalPersistence();
+    if (!current.lastKnownGoodConfigs) current.lastKnownGoodConfigs = {};
+    if (!current.checkpointHistory) current.checkpointHistory = {};
+
+    const aid = snapshot.agentId;
+    current.lastKnownGoodConfigs[aid] = snapshot;
+
+    const existingList = current.checkpointHistory[aid] || [];
+    // Ensure snapshot has id
+    const snapWithId = {
+      ...snapshot,
+      id: snapshot.id || `ckpt-${aid}-${Date.now()}`
+    };
+
+    // Prepend to history and limit to 25 entries
+    const filtered = existingList.filter(s => s.id !== snapWithId.id && s.timestamp !== snapWithId.timestamp);
+    current.checkpointHistory[aid] = [snapWithId, ...filtered].slice(0, 25);
+
+    localStorage.setItem(LOCAL_PERSISTENCE_KEY, JSON.stringify(current));
+  } catch {}
+}
+
+export function deleteLocalCheckpointSnapshot(agentId: string, checkpointId: string): void {
+  try {
+    const current = getLocalPersistence();
+    if (current && current.checkpointHistory && current.checkpointHistory[agentId]) {
+      current.checkpointHistory[agentId] = current.checkpointHistory[agentId].filter(
+        s => s.id !== checkpointId
+      );
+      // If deleted snapshot was the top lastKnownGoodConfig, point to the new top
+      if (current.lastKnownGoodConfigs && current.lastKnownGoodConfigs[agentId]?.id === checkpointId) {
+        current.lastKnownGoodConfigs[agentId] = current.checkpointHistory[agentId][0] || null;
+      }
+      localStorage.setItem(LOCAL_PERSISTENCE_KEY, JSON.stringify(current));
+    }
+  } catch {}
+}
+
+export async function fetchLastKnownGoodConfigs(): Promise<Record<string, LastKnownGoodConfigSnapshot>> {
+  try {
+    const res = await fetch('/api/persistence');
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.data && data.data.lastKnownGoodConfigs) {
+        return data.data.lastKnownGoodConfigs;
+      }
+    }
+  } catch (err) {
+    console.warn('[API Bridge] Failed to fetch remote lastKnownGoodConfigs:', err);
+  }
+  return getLocalLastKnownGoodConfigs();
+}
+
+export async function fetchCheckpointHistory(): Promise<Record<string, LastKnownGoodConfigSnapshot[]>> {
+  try {
+    const res = await fetch('/api/persistence');
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.data && data.data.checkpointHistory) {
+        return data.data.checkpointHistory;
+      }
+    }
+  } catch (err) {
+    console.warn('[API Bridge] Failed to fetch remote checkpointHistory:', err);
+  }
+  return getLocalCheckpointHistory();
 }
 
 const AGENT_STATES_LOCAL_KEY = 'clawdock_agent_runtime_states';

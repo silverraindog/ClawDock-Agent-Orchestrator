@@ -1,4 +1,5 @@
 import React from 'react';
+import * as d3 from 'd3';
 import { 
   Activity, 
   Container, 
@@ -232,6 +233,37 @@ export const AgentHealthWidget: React.FC<{
 };
 
 // Sub-component for Agent Resource Usage (CPU/Memory)
+const D3Sparkline = ({ data, color, domain }: { data: number[], color: string, domain: [number, number] }) => {
+  const ref = React.useRef<SVGSVGElement>(null);
+
+  React.useEffect(() => {
+    if (!ref.current || data.length < 2) return;
+    
+    const svg = d3.select(ref.current);
+    svg.selectAll('*').remove();
+
+    const width = 100;
+    const height = 30;
+    
+    const x = d3.scaleLinear().domain([0, 14]).range([0, width]);
+    const y = d3.scaleLinear().domain(domain).range([height, 0]);
+
+    const line = d3.line<number>()
+      .x((d, i) => x(i))
+      .y(d => y(d))
+      .curve(d3.curveBasis);
+
+    svg.append('path')
+      .datum(data)
+      .attr('fill', 'none')
+      .attr('stroke', color)
+      .attr('stroke-width', 2)
+      .attr('d', line as any);
+  }, [data, color, domain]);
+
+  return <svg ref={ref} width="100%" height="30" viewBox="0 0 100 30" preserveAspectRatio="none" />;
+};
+
 export const ResourceMonitorWidget: React.FC<{ 
   runningAgents: AgentInfo[];
   onRestartAgent?: (agentId: string) => void;
@@ -337,13 +369,8 @@ export const ResourceMonitorWidget: React.FC<{
                     <span>CPU</span>
                     <span className={`font-mono ${latest.cpu > 85 ? 'text-rose-400' : 'text-indigo-400'}`}>{latest.cpu.toFixed(1)}%</span>
                   </div>
-                  <div className="h-12">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart data={data}>
-                        <Area type="monotone" dataKey="cpu" stroke={latest.cpu > 85 ? '#f43f5e' : '#6366f1'} fill={latest.cpu > 85 ? '#f43f5e' : '#6366f1'} fillOpacity={0.2} isAnimationActive={false} />
-                        <YAxis hide domain={[0, 100]} />
-                      </AreaChart>
-                    </ResponsiveContainer>
+                  <div className="h-8">
+                    <D3Sparkline data={data.map(d => d.cpu)} color={latest.cpu > 85 ? '#f43f5e' : '#6366f1'} domain={[0, 100]} />
                   </div>
                 </div>
                 <div className="flex-1 space-y-1">
@@ -351,13 +378,8 @@ export const ResourceMonitorWidget: React.FC<{
                     <span>Mem</span>
                     <span className={`font-mono ${latest.mem > 850 ? 'text-rose-400' : 'text-emerald-400'}`}>{latest.mem.toFixed(0)}MB</span>
                   </div>
-                  <div className="h-12">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart data={data}>
-                        <Area type="monotone" dataKey="mem" stroke={latest.mem > 850 ? '#f43f5e' : '#10b981'} fill={latest.mem > 850 ? '#f43f5e' : '#10b981'} fillOpacity={0.2} isAnimationActive={false} />
-                        <YAxis hide domain={[0, 'auto']} />
-                      </AreaChart>
-                    </ResponsiveContainer>
+                  <div className="h-8">
+                    <D3Sparkline data={data.map(d => d.mem)} color={latest.mem > 850 ? '#f43f5e' : '#10b981'} domain={[0, 1000]} />
                   </div>
                 </div>
               </div>

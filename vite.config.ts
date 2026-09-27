@@ -3086,7 +3086,7 @@ fallback:
           }
 
           // Agent Lifecycle Actions: /api/agents/:id/:action
-          const agentActionMatch = pathname.match(/^\/api\/agents\/([^/]+)\/(start|stop|restart|install|detect|logs|docker-exec-config|doctor-fix|stats|resources|metrics)$/);
+          const agentActionMatch = pathname.match(/^\/api\/agents\/([^/]+)\/(start|stop|restart|install|detect|logs|docker-exec-config|doctor-fix|stats|resources|metrics|version)$/);
           if (agentActionMatch) {
             const agentId = agentActionMatch[1];
             const action = agentActionMatch[2];
@@ -3094,6 +3094,10 @@ fallback:
 
             res.setHeader('Content-Type', 'application/json');
             console.log(`[Vite API Server] [${timestamp}] 200 OK: ${method} /api/agents/${agentId}/${action}`);
+
+            if (action === 'version') {
+              return res.end(JSON.stringify({ success: true, version: '0.1.0' }));
+            }
 
             if (action === 'stats' || action === 'resources' || action === 'metrics') {
               const current = agentStates[agentId] || { status: 'stopped', containerId: '' };
