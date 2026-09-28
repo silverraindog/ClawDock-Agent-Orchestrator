@@ -1156,6 +1156,81 @@ fallback:
     return { agentId, provider, baseUrl };
   }
 
+  /**
+   * Builds consistent agent stats payload matching DashboardTab expectations
+   */
+  function buildAgentStatsPayload(targetAgentId: string = 'hermes-agent') {
+    const rawId = (targetAgentId || '').trim().toLowerCase();
+    const agentId = (rawId && rawId !== 'all' && rawId !== 'undefined' && rawId !== 'null' && rawId !== 'stats' && rawId !== 'resources' && rawId !== 'metrics')
+      ? rawId
+      : 'hermes-agent';
+
+    const current = agentStates[agentId] || {
+      status: agentId === 'zeroclaw' ? 'stopped' : 'running',
+      containerId: 'c_' + agentId,
+      containerName: `${agentId}-core`,
+      version: 'v1.0.0'
+    };
+    const status = current.status || (agentId === 'zeroclaw' ? 'stopped' : 'running');
+    const now = Date.now();
+    const timeStr = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+    const baseCpu = agentId === 'zeroclaw' ? 5.2 : agentId === 'picoclaw' ? 2.1 : agentId === 'openclaw' ? 18.5 : 14.0;
+    const baseMem = agentId === 'zeroclaw' ? 14.8 : agentId === 'picoclaw' ? 42.0 : agentId === 'openclaw' ? 235.0 : 182.5;
+    const maxMem = agentId === 'zeroclaw' ? 100 : agentId === 'picoclaw' ? 150 : 512;
+
+    const points = [];
+    for (let i = 14; i >= 0; i--) {
+      const t = new Date(now - i * 3000).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      const cpu = status === 'running' ? Math.max(0.2, +((baseCpu + (Math.sin((now / 1000) - i) * 3) + (Math.random() - 0.5) * 2).toFixed(1))) : 0;
+      const memoryMb = status === 'running' ? Math.max(1.0, +((baseMem + (Math.cos((now / 1000) - i) * 5) + (Math.random() - 0.5) * 3).toFixed(1))) : 0;
+      const memoryPct = status === 'running' ? +(((memoryMb / maxMem) * 100).toFixed(1)) : 0;
+      points.push({ time: t, cpu, memoryMb, memoryPct });
+    }
+
+    const latest = points[points.length - 1];
+
+    if (agentStates[agentId]) {
+      agentStates[agentId].cpuUsagePct = latest.cpu;
+      agentStates[agentId].memoryUsageMb = latest.memoryMb;
+    }
+
+    const allResources: Record<string, { cpuUsagePct: number; memoryUsageMb: number; memoryPct: number; memoryUsagePct: number }> = {};
+    const knownAgentIds = ['hermes-agent', 'zeroclaw', 'openclaw', 'picoclaw'];
+    for (const id of knownAgentIds) {
+      const idStatus = agentStates[id]?.status || (id === 'zeroclaw' ? 'stopped' : 'running');
+      const bCpu = id === 'zeroclaw' ? 5.2 : id === 'picoclaw' ? 2.1 : id === 'openclaw' ? 18.5 : 14.0;
+      const bMem = id === 'zeroclaw' ? 14.8 : id === 'picoclaw' ? 42.0 : id === 'openclaw' ? 235.0 : 182.5;
+      const mMem = id === 'zeroclaw' ? 100 : id === 'picoclaw' ? 150 : 512;
+      const c = idStatus === 'running' ? Math.max(0.2, +((bCpu + (Math.random() - 0.5) * 3).toFixed(1))) : 0;
+      const m = idStatus === 'running' ? Math.max(1.0, +((bMem + (Math.random() - 0.5) * 4).toFixed(1))) : 0;
+      allResources[id] = {
+        cpuUsagePct: id === agentId ? latest.cpu : c,
+        memoryUsageMb: id === agentId ? latest.memoryMb : m,
+        memoryPct: id === agentId ? latest.memoryPct : +(((m / mMem) * 100).toFixed(1)),
+        memoryUsagePct: id === agentId ? latest.memoryPct : +(((m / mMem) * 100).toFixed(1))
+      };
+    }
+
+    return {
+      success: true,
+      agentId,
+      agentName: current.containerName || agentId,
+      status,
+      containerId: current.containerId || 'c_' + agentId,
+      containerName: current.containerName || `${agentId}-core`,
+      version: current.version || 'v1.0.0',
+      cpuUsagePct: latest.cpu,
+      memoryUsageMb: latest.memoryMb,
+      memoryUsagePct: latest.memoryPct,
+      maxMemoryMb: maxMem,
+      uptimeSeconds: current.uptimeSeconds || (status === 'running' ? 14200 : 0),
+      timestamp: timeStr,
+      history: points,
+      resources: allResources
+    };
+  }
+
   function createApiHandler() {
     return async (req: any, res: any, next: any) => {
       if (!req.url || !req.url.startsWith('/api/')) {
@@ -1959,12 +2034,39 @@ fallback:
             }
           }
         },
-        // Resource monitoring endpoints in dynamicRouteMappings
+        // Resource monitoring stats endpoint for agents: /api/agents/:id/stats (and aliases resources/metrics)
         {
-          pattern: /^\/api\/agents\/([^/]+)\/(start|stop|restart|install|detect|logs|docker-exec-config|doctor-fix|metrics)(\/)?$/i,
+          pattern: /^\/api\/(?:agents?|agent)(?:\/([^/]+))?\/(stats|resources|metrics)(\/)?$|^\/api\/(stats|metrics)(\/)?$/i,
+          methods: ['GET', 'POST', 'PUT', 'OPTIONS', 'HEAD'],
+          handler: async () => {
+            res.setHeader('Content-Type', 'application/json');
+            res.setHeader('Access-Control-Allow-Origin', '*');
+            res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS, HEAD');
+            res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept');
+
+            if (method === 'OPTIONS') {
+              res.statusCode = 200;
+              return res.end(JSON.stringify({ success: true }));
+            }
+
+            const match = pathname.match(/^\/api\/(?:agents?|agent)(?:\/([^/]+))?\/(stats|resources|metrics)(\/)?$/i) ||
+                          pathname.match(/^\/api\/agents\/([^/]+)\/(stats|resources|metrics)(\/)?$/i) ||
+                          pathname.match(/^\/api\/(stats|metrics)(\/)?$/i);
+            const rawId = match && match[1] ? match[1] : '';
+            const agentId = (rawId && rawId !== 'stats' && rawId !== 'resources' && rawId !== 'metrics')
+              ? rawId
+              : (parsedUrl.searchParams.get('agentId') || parsedUrl.searchParams.get('agent') || 'hermes-agent');
+
+            const payload = buildAgentStatsPayload(agentId);
+            return res.end(JSON.stringify(payload, null, 2));
+          }
+        },
+        // Agent lifecycle actions in dynamicRouteMappings
+        {
+          pattern: /^\/api\/agents\/([^/]+)\/(start|stop|restart|install|detect|logs|docker-exec-config|doctor-fix)(\/)?$/i,
           methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
           handler: async () => {
-            const match = pathname.match(/^\/api\/agents\/([^/]+)\/(start|stop|restart|install|detect|logs|docker-exec-config|doctor-fix|metrics)(\/)?$/i);
+            const match = pathname.match(/^\/api\/agents\/([^/]+)\/(start|stop|restart|install|detect|logs|docker-exec-config|doctor-fix)(\/)?$/i);
             
             if (!match) {
               res.statusCode = 404;
@@ -1974,14 +2076,95 @@ fallback:
             const agentId = match[1];
             const action = match[2];
 
-            console.log(`[API Bridge] Path: ${pathname}, Match: ${!!match}, AgentId: ${agentId}, Action: ${action}`);
-            
+            res.setHeader('Content-Type', 'application/json');
+            res.setHeader('Access-Control-Allow-Origin', '*');
+
             if (action === 'logs') {
-              res.setHeader('Content-Type', 'application/json');
               return res.end(JSON.stringify({ success: true, logs: agentStates[agentId]?.logs || [] }));
             }
+
+            if (action === 'start') {
+              if (agentStates[agentId]) {
+                agentStates[agentId].status = 'running';
+                agentStates[agentId].logs.push(`[${new Date().toLocaleTimeString()}] Container started.`);
+              }
+              return res.end(JSON.stringify({ success: true, status: 'running', action: 'started' }));
+            }
+
+            if (action === 'stop') {
+              if (agentStates[agentId]) {
+                agentStates[agentId].status = 'stopped';
+                agentStates[agentId].logs.push(`[${new Date().toLocaleTimeString()}] Container stopped.`);
+              }
+              return res.end(JSON.stringify({ success: true, status: 'stopped' }));
+            }
+
+            if (action === 'restart') {
+              let wasStopped = false;
+              if (agentStates[agentId]) {
+                wasStopped = agentStates[agentId].status === 'stopped';
+                agentStates[agentId].status = 'restarting';
+                agentStates[agentId].logs.push(
+                  wasStopped
+                    ? `[${new Date().toLocaleTimeString()}] [Docker Engine] Starting container ${agentId}...`
+                    : `[${new Date().toLocaleTimeString()}] [Docker Engine] Executing docker restart for container ${agentId}...`
+                );
+                setTimeout(() => {
+                  if (agentStates[agentId]) {
+                    agentStates[agentId].status = 'running';
+                    agentStates[agentId].logs.push(`[${new Date().toLocaleTimeString()}] [Docker Engine] Container restarted and healthy.`);
+                  }
+                }, 600);
+              }
+              return res.end(JSON.stringify({ 
+                success: true, 
+                status: 'running', 
+                action: wasStopped ? 'started' : 'restarted',
+                message: wasStopped ? `Started container for ${agentId}` : `Restarted container for ${agentId}` 
+              }));
+            }
+
+            if (action === 'install') {
+              return res.end(JSON.stringify({ success: true, status: 'installed' }));
+            }
+
+            if (action === 'detect') {
+              return res.end(JSON.stringify({ success: true, detected: true, agentId, status: agentStates[agentId]?.status || 'running' }));
+            }
+
+            if (action === 'doctor-fix') {
+              if (agentStates[agentId]) {
+                agentStates[agentId].status = 'running';
+                agentStates[agentId].logs.push(`[${new Date().toLocaleTimeString()}] [${agentId}-gateway] Executing openclaw doctor --fix...`);
+                agentStates[agentId].logs.push(`[${new Date().toLocaleTimeString()}] [state/db] State database schema migrated successfully (audit-events-v2) at /home/openclaw/state/openclaw.sqlite`);
+                agentStates[agentId].logs.push(`[${new Date().toLocaleTimeString()}] [lifecycle] Workspace setup state migration completed for /home/openclaw/workspace`);
+                agentStates[agentId].logs.push(`[${new Date().toLocaleTimeString()}] [gateway] Gateway started successfully. Status: RUNNING on port 8082.`);
+              }
+              return res.end(JSON.stringify({
+                success: true,
+                status: 'running',
+                action: 'doctor-fix',
+                message: `OpenClaw doctor --fix completed successfully for ${agentId}. Database migrated to audit-events-v2 and gateway restarted.`
+              }));
+            }
+
+            if (action === 'docker-exec-config') {
+              const cfg = getAgentConfig(agentId);
+              return res.end(JSON.stringify({
+                success: true,
+                agentId,
+                nativeFileName: cfg.nativeFileName,
+                nativeFormat: cfg.nativeFormat,
+                nativeContent: cfg.nativeContent,
+                filePath: `data/clawdock/${cfg.nativeFileName}`,
+                configSchema: cfg.configSchema,
+                config: cfg.configSchema,
+                source: 'vite_api_docker_exec'
+              }));
+            }
+
             res.statusCode = 404;
-            return res.end('Not Found');
+            return res.end(JSON.stringify({ error: 'Not Found', action, agentId }));
           }
         },
         {
@@ -2170,6 +2353,18 @@ fallback:
           }
           res.statusCode = 405;
           return res.end(JSON.stringify({ success: false, error: 'Method not allowed. Use GET, POST, or PUT.' }));
+        }
+
+        // Resource monitoring stats direct router endpoints
+        case '/api/stats':
+        case '/api/stats/':
+        case '/api/agents/stats':
+        case '/api/agents/stats/':
+        case '/api/agent/stats':
+        case '/api/agent/stats/': {
+          res.setHeader('Content-Type', 'application/json');
+          const qId = parsedUrl.searchParams.get('agentId') || parsedUrl.searchParams.get('agent') || 'hermes-agent';
+          return res.end(JSON.stringify(buildAgentStatsPayload(qId), null, 2));
         }
 
         // 3. Diagnostics Request Logs (Real-time HTTP requests ring buffer)
@@ -3086,7 +3281,7 @@ fallback:
           }
 
           // Agent Lifecycle Actions: /api/agents/:id/:action
-          const agentActionMatch = pathname.match(/^\/api\/agents\/([^/]+)\/(start|stop|restart|install|detect|logs|docker-exec-config|doctor-fix|stats|resources|metrics|version)$/);
+          const agentActionMatch = pathname.match(/^\/api\/(?:agents?|agent)\/([^/]+)\/(start|stop|restart|install|detect|logs|docker-exec-config|doctor-fix|stats|resources|metrics|version)(\/)?$/i);
           if (agentActionMatch) {
             const agentId = agentActionMatch[1];
             const action = agentActionMatch[2];
@@ -3100,35 +3295,8 @@ fallback:
             }
 
             if (action === 'stats' || action === 'resources' || action === 'metrics') {
-              const current = agentStates[agentId] || { status: 'stopped', containerId: '' };
-              const status = current.status || 'stopped';
-              const now = Date.now();
-              const timeStr = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
-              const baseCpu = agentId === 'zeroclaw' ? 5.2 : agentId === 'picoclaw' ? 2.1 : agentId === 'openclaw' ? 18.5 : 14.0;
-              const baseMem = agentId === 'zeroclaw' ? 14.8 : agentId === 'picoclaw' ? 42.0 : agentId === 'openclaw' ? 235.0 : 182.5;
-              const maxMem = agentId === 'zeroclaw' || agentId === 'picoclaw' ? 200 : 512;
-
-              const points = [];
-              for (let i = 11; i >= 0; i--) {
-                const t = new Date(now - i * 5000).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
-                const cpu = status === 'running' ? Math.max(0.2, +((baseCpu + (Math.random() - 0.5) * 4).toFixed(1))) : 0;
-                const memoryMb = status === 'running' ? Math.max(1.0, +((baseMem + (Math.random() - 0.5) * 8).toFixed(1))) : 0;
-                const memoryPct = status === 'running' ? +(((memoryMb / maxMem) * 100).toFixed(1)) : 0;
-                points.push({ time: t, cpu, memoryMb, memoryPct });
-              }
-
-              const latest = points[points.length - 1];
-              return res.end(JSON.stringify({
-                success: true,
-                agentId,
-                status,
-                containerId: current.containerId || '',
-                cpuUsagePct: latest.cpu,
-                memoryUsageMb: latest.memoryMb,
-                memoryUsagePct: latest.memoryPct,
-                timestamp: timeStr,
-                history: points
-              }));
+              const payload = buildAgentStatsPayload(agentId);
+              return res.end(JSON.stringify(payload, null, 2));
             }
 
             if (action === 'doctor-fix') {

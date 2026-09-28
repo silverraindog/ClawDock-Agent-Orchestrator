@@ -15,7 +15,9 @@ import {
   Brain,
   BookmarkCheck,
   PanelBottom,
-  PanelTop
+  PanelTop,
+  Menu,
+  X
 } from 'lucide-react';
 import { 
   AgentId, 
@@ -182,6 +184,7 @@ export default function App() {
   const [isSavingConfig, setIsSavingConfig] = useState(false);
   const [isThinking, setIsThinking] = useState(false);
   const [isDiscoveryOpen, setIsDiscoveryOpen] = useState(false);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   const [dockerInfo, setDockerInfo] = useState<DockerSystemInfo>({
     dockerAvailable: true,
@@ -2303,6 +2306,151 @@ moa:
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-200 flex font-sans selection:bg-indigo-600 selection:text-white">
+      {/* Mobile Slide-out Drawer */}
+      {isMobileMenuOpen && (
+        <div className="fixed inset-0 z-50 flex md:hidden">
+          {/* Backdrop */}
+          <div 
+            className="fixed inset-0 bg-black/70 backdrop-blur-sm transition-opacity"
+            onClick={() => setIsMobileMenuOpen(false)}
+          />
+          {/* Drawer Content */}
+          <div className="relative w-72 max-w-[85vw] bg-slate-900 border-r border-slate-800 shadow-2xl flex flex-col h-full z-10 animate-in slide-in-from-left duration-200">
+            {/* Drawer Header */}
+            <div className="p-4 border-b border-slate-800 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center text-white shadow-md shadow-indigo-500/20">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-white">
+                    <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"></path>
+                  </svg>
+                </div>
+                <div>
+                  <h2 className="text-sm font-bold text-white">ClawDock Manager</h2>
+                  <p className="text-[10px] text-slate-400 font-mono">Mobile Navigation</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsMobileMenuOpen(false)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Selected Agent Quick Status */}
+            <div className="p-3 m-3 rounded-xl bg-slate-800/60 border border-slate-700/60 flex items-center gap-3">
+              <div className="w-8 h-8 rounded-lg bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 font-bold text-xs">
+                {currentAgent?.name?.slice(0, 2).toUpperCase() || 'AG'}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="text-xs font-bold text-white truncate">{currentAgent?.name || selectedAgentId}</div>
+                <div className="text-[10px] text-slate-400 flex items-center gap-1.5 mt-0.5">
+                  <span className={`w-1.5 h-1.5 rounded-full ${currentAgent?.status === 'running' ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'}`} />
+                  <span className="capitalize">{currentAgent?.status || 'stopped'}</span>
+                  <span>•</span>
+                  <span>Port {currentAgent?.defaultPort || 8080}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Scrollable Navigation Sections */}
+            <div className="flex-1 overflow-y-auto px-3 py-2 flex flex-col gap-6">
+              {/* Workspace & Intelligence */}
+              <div>
+                <div className="px-2 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                  Workspace & Intelligence
+                </div>
+                <div className="flex flex-col gap-1">
+                  {topNavItems.map(item => {
+                    const Icon = item.icon;
+                    const isActive = currentTab === item.id;
+                    return (
+                      <button
+                        key={item.id}
+                        onClick={() => {
+                          setCurrentTab(item.id as MainTab);
+                          setIsMobileMenuOpen(false);
+                        }}
+                        className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-medium transition-all ${
+                          isActive
+                            ? 'bg-indigo-600 text-white shadow-md shadow-indigo-500/20'
+                            : 'text-slate-300 hover:text-white hover:bg-slate-800/80'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <Icon className="w-4 h-4" />
+                          <span>{item.label}</span>
+                        </div>
+                        {item.badge !== undefined && item.badge > 0 && (
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-mono font-bold ${
+                            isActive ? 'bg-white/20 text-white' : 'bg-indigo-500/20 text-indigo-300'
+                          }`}>
+                            {item.badge}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* System Engine & Diagnostics */}
+              <div>
+                <div className="px-2 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                  System Engine & Diagnostics
+                </div>
+                <div className="flex flex-col gap-1">
+                  {bottomNavItems.map(item => {
+                    const Icon = item.icon;
+                    const isActive = currentTab === item.id;
+                    return (
+                      <button
+                        key={item.id}
+                        onClick={() => {
+                          setCurrentTab(item.id as MainTab);
+                          setIsMobileMenuOpen(false);
+                        }}
+                        className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-medium transition-all ${
+                          isActive
+                            ? 'bg-indigo-600 text-white shadow-md shadow-indigo-500/20'
+                            : 'text-slate-300 hover:text-white hover:bg-slate-800/80'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <Icon className="w-4 h-4" />
+                          <span>{item.label}</span>
+                        </div>
+                        {item.badge !== undefined && item.badge > 0 && (
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-mono font-bold ${
+                            isActive ? 'bg-white/20 text-white' : 'bg-indigo-500/20 text-indigo-300'
+                          }`}>
+                            {item.badge}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            {/* Drawer Footer */}
+            <div className="p-3 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400 bg-slate-900/80">
+              <span className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                Docker Active
+              </span>
+              <button
+                onClick={handleToggleMenuLayout}
+                className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-750 text-slate-300 text-[11px] font-medium"
+              >
+                {menuLayout === 'stacked' ? 'Dock Footer' : 'Stack Top'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Sleek Left Sidebar Rail */}
       <aside className="w-16 border-r border-slate-800 flex flex-col items-center py-5 gap-6 bg-slate-950 shrink-0 hidden md:flex">
         {/* Glowing Indigo Logo Icon */}
@@ -2378,6 +2526,7 @@ moa:
           updatesCount={updates.filter(u => u.status === 'update_available').length}
           onOpenUpdates={() => setCurrentTab('updates')}
           updates={updates}
+          onOpenMobileMenu={() => setIsMobileMenuOpen(true)}
         />
 
         {/* Navigation Bar: Top Menu & Bottom Menu (Zero Horizontal Scrolling) */}

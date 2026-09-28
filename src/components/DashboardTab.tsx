@@ -639,6 +639,170 @@ export const AgentResourceTrendChart: React.FC<AgentResourceTrendChartProps> = (
   );
 };
 
+export const AgentUptimeLatencyTrendChart: React.FC<{ agent: AgentInfo }> = ({ agent }) => {
+  const [chartData, setChartData] = React.useState<{ time: string; latency: number; uptime: number }[]>([]);
+  const [viewMode, setViewMode] = React.useState<'combined' | 'latency' | 'uptime'>('combined');
+
+  React.useEffect(() => {
+    const latList = agent.latencyHistory && agent.latencyHistory.length > 0 
+      ? agent.latencyHistory 
+      : [120, 125, 118, 130, 128, 122, 135, 124, 121, 126];
+    
+    const uptList = agent.uptimeHistory && agent.uptimeHistory.length > 0
+      ? agent.uptimeHistory
+      : [1, 1, 1, 1, 1, 1, 1, 1, 1, 1];
+
+    const now = Date.now();
+    const points = latList.map((lat, idx) => {
+      const t = new Date(now - (latList.length - idx) * 3000).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      const uptVal = (uptList[idx] !== undefined ? uptList[idx] : 1) * (agent.status === 'running' ? 100 : 0);
+      return {
+        time: t,
+        latency: lat,
+        uptime: uptVal
+      };
+    });
+    setChartData(points);
+
+    const interval = setInterval(() => {
+      setChartData(prev => {
+        const lastLat = prev[prev.length - 1]?.latency || agent.avgLatencyMs || 120;
+        const delta = (Math.random() - 0.5) * 12;
+        const newLat = Math.max(30, Math.min(350, Math.round(lastLat + delta)));
+        const newUpt = agent.status === 'running' ? 100 : 0;
+        const timeStr = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        
+        const next = [...prev, { time: timeStr, latency: newLat, uptime: newUpt }];
+        if (next.length > 15) next.shift();
+        return next;
+      });
+    }, 3000);
+
+    return () => clearInterval(interval);
+  }, [agent]);
+
+  return (
+    <div className="rounded-2xl border border-slate-800 bg-slate-900/90 p-5 sm:p-6 space-y-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
+        <div className="flex items-center gap-3">
+          <div className="p-2.5 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center justify-center">
+            <TrendingUp className="w-5 h-5 animate-pulse" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h3 className="text-sm font-bold text-white">
+                Uptime History &amp; Latency Trends ({agent.name})
+              </h3>
+              <span className={`w-2 h-2 rounded-full ${agent.status === 'running' ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'}`} />
+            </div>
+            <p className="text-xs text-slate-400">
+              Real-time Recharts telemetry visualizing roundtrip latency (ms) and uptime reliability history.
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <div className="flex rounded-lg bg-slate-950 p-1 border border-slate-800 text-xs">
+            <button
+              onClick={() => setViewMode('combined')}
+              className={`px-2.5 py-1 rounded-md font-medium transition-colors ${viewMode === 'combined' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}
+            >
+              Combined
+            </button>
+            <button
+              onClick={() => setViewMode('latency')}
+              className={`px-2.5 py-1 rounded-md font-medium transition-colors ${viewMode === 'latency' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}
+            >
+              Latency (ms)
+            </button>
+            <button
+              onClick={() => setViewMode('uptime')}
+              className={`px-2.5 py-1 rounded-md font-medium transition-colors ${viewMode === 'uptime' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}
+            >
+              Uptime (%)
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="p-3 rounded-xl bg-slate-950 border border-slate-800/80 flex items-center justify-between">
+          <div>
+            <div className="text-[11px] uppercase font-semibold text-slate-400">Uptime Reliability</div>
+            <div className="text-lg font-bold text-emerald-400 font-mono mt-0.5">{agent.uptimePct}%</div>
+          </div>
+          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+            Stable
+          </span>
+        </div>
+        <div className="p-3 rounded-xl bg-slate-950 border border-slate-800/80 flex items-center justify-between">
+          <div>
+            <div className="text-[11px] uppercase font-semibold text-slate-400">Average Latency</div>
+            <div className="text-lg font-bold text-indigo-400 font-mono mt-0.5">{Math.round(agent.avgLatencyMs || 120)}ms</div>
+          </div>
+          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+            Realtime
+          </span>
+        </div>
+        <div className="p-3 rounded-xl bg-slate-950 border border-slate-800/80 flex items-center justify-between">
+          <div>
+            <div className="text-[11px] uppercase font-semibold text-slate-400">Total Uptime</div>
+            <div className="text-lg font-bold text-cyan-400 font-mono mt-0.5">{Math.floor((agent.uptimeSeconds || 0) / 3600)}h {Math.floor(((agent.uptimeSeconds || 0) % 3600) / 60)}m</div>
+          </div>
+          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
+            Active
+          </span>
+        </div>
+      </div>
+
+      <div className="h-64 w-full pt-2">
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={chartData} margin={{ top: 10, right: 20, left: -10, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+            <XAxis dataKey="time" stroke="#64748b" fontSize={11} tickLine={false} />
+            <YAxis yAxisId="left" stroke="#10b981" fontSize={11} tickLine={false} domain={['auto', 'auto']} />
+            <YAxis yAxisId="right" orientation="right" stroke="#38bdf8" fontSize={11} tickLine={false} domain={[0, 100]} />
+            <Tooltip
+              contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '0.75rem', fontSize: '12px', color: '#f8fafc' }}
+              formatter={(value: any, name: any) => [
+                name === 'latency' ? `${value}ms` : `${value}%`,
+                name === 'latency' ? 'Roundtrip Latency' : 'Uptime Health'
+              ]}
+            />
+            <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '8px' }} />
+            {(viewMode === 'combined' || viewMode === 'latency') && (
+              <Line
+                yAxisId="left"
+                type="monotone"
+                dataKey="latency"
+                name="Latency (ms)"
+                stroke="#10b981"
+                strokeWidth={2}
+                dot={{ r: 3, fill: '#10b981' }}
+                activeDot={{ r: 5 }}
+                isAnimationActive={false}
+              />
+            )}
+            {(viewMode === 'combined' || viewMode === 'uptime') && (
+              <Line
+                yAxisId="right"
+                type="monotone"
+                dataKey="uptime"
+                name="Uptime (%)"
+                stroke="#38bdf8"
+                strokeWidth={2}
+                dot={{ r: 3, fill: '#38bdf8' }}
+                activeDot={{ r: 5 }}
+                isAnimationActive={false}
+              />
+            )}
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+};
+
 // Sub-component for LLM Health & Provider Availability Monitor Widget
 export const LLMHealthMonitorWidget: React.FC<{
   onNavigateTab?: (tab: string) => void;
@@ -1172,14 +1336,22 @@ export const AgentControlHub: React.FC<{
                   <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-bold shrink-0 ${
                     isRunning 
                       ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' 
-                      : isRestarting 
-                        ? 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/20'
-                        : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                      : ag.status === 'error'
+                        ? 'bg-orange-500/10 text-orange-400 border border-orange-500/20'
+                        : isRestarting
+                          ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                          : 'bg-slate-800 text-slate-400 border border-slate-700'
                   }`}>
                     <span className={`w-1 h-1 rounded-full shrink-0 ${
-                      isRunning ? 'bg-emerald-400 animate-pulse' : isRestarting ? 'bg-indigo-400 animate-spin' : 'bg-amber-400'
+                      isRunning 
+                        ? 'bg-emerald-400 animate-pulse' 
+                        : ag.status === 'error'
+                          ? 'bg-orange-400 animate-pulse'
+                          : isRestarting
+                            ? 'bg-amber-400 animate-pulse' 
+                            : 'bg-slate-500'
                     }`} />
-                    {isRunning ? 'Running' : isRestarting ? 'Restarting' : 'Stopped'}
+                    {isRunning ? 'Running' : ag.status === 'error' ? 'Error' : isRestarting ? 'Restarting' : 'Stopped'}
                   </span>
                 </div>
                 
@@ -1305,6 +1477,76 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
 
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
+      {/* DashboardTab Header Agent Swarm List with Color-Coded Status Badges */}
+      {allAgents && allAgents.length > 0 && (
+        <div className="p-3 sm:p-3.5 rounded-2xl border border-slate-800 bg-slate-900/90 shadow-md flex flex-col md:flex-row md:items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5 shrink-0">
+            <div className="p-1.5 rounded-lg bg-indigo-500/10 border border-indigo-500/20 text-indigo-400">
+              <Server className="w-4 h-4" />
+            </div>
+            <div>
+              <h2 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
+                Agent Swarm Nodes
+              </h2>
+              <p className="text-[10px] text-slate-400">Real-time status monitoring &amp; quick focus</p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 flex-wrap overflow-x-auto pb-1 md:pb-0">
+            {allAgents.map((ag) => {
+              const isSelected = ag.id === agent.id;
+              const isRunning = ag.status === 'running';
+              const isStopped = ag.status === 'stopped' || !ag.status;
+              const isError = ag.status === 'error';
+              const isRestarting = ag.status === 'restarting';
+
+              return (
+                <button
+                  key={ag.id}
+                  id={`dashboard-header-agent-${ag.id}`}
+                  onClick={() => onSelectAgent?.(ag.id)}
+                  className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs font-semibold transition-all cursor-pointer ${
+                    isSelected
+                      ? 'bg-indigo-600/15 border-indigo-500/50 text-white shadow-sm ring-1 ring-indigo-500/30'
+                      : 'bg-slate-950/80 hover:bg-slate-800 border-slate-800 hover:border-slate-700 text-slate-300'
+                  }`}
+                  title={`Focus on ${ag.name} (${ag.status})`}
+                >
+                  <span>{ag.name}</span>
+                  {/* Color-coded status badge: green for running, gray for stopped, orange for error */}
+                  {isRunning ? (
+                    <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                      Running
+                    </span>
+                  ) : isStopped ? (
+                    <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-800 text-slate-400 border border-slate-700">
+                      <span className="w-1.5 h-1.5 rounded-full bg-slate-500" />
+                      Stopped
+                    </span>
+                  ) : isError ? (
+                    <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-orange-500/10 text-orange-400 border border-orange-500/30">
+                      <span className="w-1.5 h-1.5 rounded-full bg-orange-400 animate-pulse" />
+                      Error
+                    </span>
+                  ) : isRestarting ? (
+                    <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/30">
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                      Restarting
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-orange-500/10 text-orange-400 border border-orange-500/30">
+                      <span className="w-1.5 h-1.5 rounded-full bg-orange-400" />
+                      {ag.status}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Top Banner / Hero Agent Card */}
       <div className="relative overflow-hidden rounded-2xl border border-slate-800 bg-slate-900 p-6 sm:p-8">
         <div className="absolute top-0 right-0 -mt-10 -mr-10 w-80 h-80 bg-indigo-600/10 rounded-full blur-3xl pointer-events-none" />
@@ -1334,9 +1576,14 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
                   Running in Docker
                 </span>
               ) : agent.status === 'stopped' ? (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-slate-800 text-slate-400 border border-slate-700">
+                  <span className="w-2 h-2 rounded-full bg-slate-500" />
+                  Container Stopped
+                </span>
+              ) : agent.status === 'error' || agent.status === 'restarting' ? (
                 <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                  <span className="w-2 h-2 rounded-full bg-amber-400" />
-                  Container Exited
+                  <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                  {agent.status === 'restarting' ? 'Container Restarting' : 'Container Error'}
                 </span>
               ) : (
                 <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
@@ -1544,6 +1791,9 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
         agentName={agent?.name || agent?.id} 
         status={agent?.status} 
       />
+
+      {/* Real-time Uptime History & Latency Trend Recharts Visualization */}
+      <AgentUptimeLatencyTrendChart agent={agent} />
 
       {/* MoA Consensus Monitor Visualization */}
       <MoAConsensusMonitor

@@ -14,7 +14,8 @@ import {
   Sparkles, 
   Search,
   ArrowUpCircle,
-  Activity
+  Activity,
+  Menu
 } from 'lucide-react';
 import { AgentId, AgentInfo, DockerSystemInfo, SystemUpdateItem } from '../types';
 import { ApiHealthIndicator } from './ApiHealthIndicator';
@@ -89,6 +90,7 @@ interface NavbarProps {
   updatesCount?: number;
   onOpenUpdates?: () => void;
   updates?: SystemUpdateItem[];
+  onOpenMobileMenu?: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -104,7 +106,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenDiscovery,
   updatesCount,
   onOpenUpdates,
-  updates
+  updates,
+  onOpenMobileMenu
 }) => {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -190,15 +193,22 @@ export const Navbar: React.FC<NavbarProps> = ({
         );
       case 'restarting':
         return (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
-            <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse" />
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/30">
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-spin" />
             Restarting
+          </span>
+        );
+      case 'error':
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/30">
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+            Error
           </span>
         );
       case 'stopped':
         return (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
-            <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-800 text-slate-400 border border-slate-700">
+            <span className="w-1.5 h-1.5 rounded-full bg-slate-500" />
             Stopped
           </span>
         );
@@ -212,6 +222,7 @@ export const Navbar: React.FC<NavbarProps> = ({
       default:
         return (
           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-800 text-slate-400 border border-slate-700">
+            <span className="w-1.5 h-1.5 rounded-full bg-slate-500" />
             Not Installed
           </span>
         );
@@ -222,6 +233,13 @@ export const Navbar: React.FC<NavbarProps> = ({
     <header className="h-16 border-b border-slate-800 flex items-center justify-between px-4 sm:px-8 bg-slate-900/30 backdrop-blur-md sticky top-0 z-40">
       {/* Left title & version badge */}
       <div className="flex items-center gap-3 sm:gap-4">
+        <button
+          onClick={onOpenMobileMenu}
+          className="p-2 rounded-xl bg-slate-800 hover:bg-slate-750 text-slate-300 hover:text-white border border-slate-700 md:hidden flex items-center justify-center transition-colors"
+          title="Open Navigation Drawer"
+        >
+          <Menu className="w-5 h-5 text-indigo-400" />
+        </button>
         <div className="flex items-center gap-2.5">
           <div className="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center text-white shadow-md shadow-indigo-500/20 md:hidden">
             <Bot className="w-4 h-4" />
@@ -261,7 +279,9 @@ export const Navbar: React.FC<NavbarProps> = ({
           >
             <span className={`w-2 h-2 rounded-full ${
               currentAgent?.status === 'running' ? 'bg-emerald-400 animate-pulse' :
-              currentAgent?.status === 'stopped' ? 'bg-amber-400' : 'bg-cyan-400'
+              currentAgent?.status === 'stopped' ? 'bg-slate-500' :
+              currentAgent?.status === 'error' || currentAgent?.status === 'restarting' ? 'bg-amber-400 animate-pulse' :
+              'bg-cyan-400'
             }`} />
             <div className="flex flex-col items-start leading-none gap-0.5">
               <span className="font-bold text-xs sm:text-sm">
