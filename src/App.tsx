@@ -186,6 +186,7 @@ export default function App() {
   const [isBulkUpdateSummaryOpen, setIsBulkUpdateSummaryOpen] = useState(false);
   const [lastBulkUpdate, setLastBulkUpdate] = useState<SystemUpdateItem[]>([]);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [isDiscoveryOpen, setIsDiscoveryOpen] = useState(false);
 
   const [dockerInfo, setDockerInfo] = useState<DockerSystemInfo>({
     dockerAvailable: true,
