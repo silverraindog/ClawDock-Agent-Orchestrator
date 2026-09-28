@@ -1595,7 +1595,8 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
   onSelectAgent,
   presets = [],
   onApplyPresetToAgent,
-  onAddToast
+  onAddToast,
+  onAddLog
 }) => {
   // Polling mechanism to fetch agent status updates every 5 seconds
   React.useEffect(() => {

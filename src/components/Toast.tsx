@@ -13,7 +13,7 @@ interface ToastProps {
   onDismiss: (id: string) => void;
 }
 
-export const ToastContainer: React.FC<ToastProps> = ({ toasts, onDismiss }) => {
+const ToastContainer: React.FC<ToastProps> = ({ toasts, onDismiss }) => {
   if (toasts.length === 0) return null;
 
   return (
@@ -51,3 +51,5 @@ export const ToastContainer: React.FC<ToastProps> = ({ toasts, onDismiss }) => {
     </div>
   );
 };
+
+export default ToastContainer;

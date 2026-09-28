@@ -87,6 +87,7 @@ import { EverOSTab } from './components/EverOSTab';
 import { DiagnosticsTab } from './components/DiagnosticsTab';
 import { AgentLogsTab } from './components/AgentLogsTab';
 import { BulkUpdateSummaryModal } from './components/BulkUpdateSummaryModal';
+import ToastContainer, { ToastMessage } from './components/Toast';
 import { ContainerDiscoveryModal } from './components/ContainerDiscoveryModal';
 import { ConfigInjectionAlert, InjectionStatusInfo } from './components/ConfigInjectionAlert';
 import { VerboseLogData } from './components/VerboseLogInspector';
