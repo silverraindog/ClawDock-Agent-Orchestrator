@@ -23,6 +23,7 @@ import { SkillModal } from './SkillModal';
 interface SkillsTabProps {
   skills: SkillItem[];
   onToggleSkill: (skillId: string) => void;
+  onBatchToggleSkills?: (skillIds: string[], install: boolean) => void;
   onAddCustomSkill: (skill: SkillItem) => void;
   onSyncOpenClawRemote?: () => Promise<void>;
   isSyncingRemote?: boolean;
@@ -31,6 +32,7 @@ interface SkillsTabProps {
 export const SkillsTab: React.FC<SkillsTabProps> = ({
   skills,
   onToggleSkill,
+  onBatchToggleSkills,
   onAddCustomSkill,
   onSyncOpenClawRemote,
   isSyncingRemote = false
@@ -39,6 +41,7 @@ export const SkillsTab: React.FC<SkillsTabProps> = ({
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [activeModalSkill, setActiveModalSkill] = useState<SkillItem | null>(null);
   const [isAddingSkill, setIsAddingSkill] = useState(false);
+  const [selectedSkillIds, setSelectedSkillIds] = useState<string[]>([]);
 
   // New Skill form state
   const [newSkillName, setNewSkillName] = useState('');
@@ -293,72 +296,150 @@ export const SkillsTab: React.FC<SkillsTabProps> = ({
           </div>
         )}
 
+        {/* Bulk Actions Toolbar */}
+        {selectedSkillIds.length > 0 && (
+          <div className="p-4 rounded-xl bg-indigo-950/40 border border-indigo-500/30 flex flex-col sm:flex-row items-center justify-between gap-3 animate-in fade-in duration-200">
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-indigo-400 animate-pulse" />
+              <span className="text-xs font-bold text-white font-mono">
+                {selectedSkillIds.length} skills selected for batch operation
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                id="batch-install-skills-btn"
+                onClick={() => {
+                  if (onBatchToggleSkills) onBatchToggleSkills(selectedSkillIds, true);
+                  setSelectedSkillIds([]);
+                }}
+                className="px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white transition-colors shadow-sm"
+              >
+                Install Selected ({selectedSkillIds.length})
+              </button>
+              <button
+                id="batch-uninstall-skills-btn"
+                onClick={() => {
+                  if (onBatchToggleSkills) onBatchToggleSkills(selectedSkillIds, false);
+                  setSelectedSkillIds([]);
+                }}
+                className="px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors"
+              >
+                Uninstall Selected ({selectedSkillIds.length})
+              </button>
+              <button
+                onClick={() => setSelectedSkillIds([])}
+                className="px-2.5 py-1.5 text-xs text-slate-400 hover:text-white"
+              >
+                Clear
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Select All Bar */}
+        {filteredSkills.length > 0 && (
+          <div className="flex items-center justify-between px-1 text-xs text-slate-400">
+            <label className="flex items-center gap-2 cursor-pointer hover:text-white transition-colors">
+              <input
+                type="checkbox"
+                checked={selectedSkillIds.length === filteredSkills.length && filteredSkills.length > 0}
+                onChange={() => {
+                  if (selectedSkillIds.length === filteredSkills.length) {
+                    setSelectedSkillIds([]);
+                  } else {
+                    setSelectedSkillIds(filteredSkills.map(s => s.id));
+                  }
+                }}
+                className="rounded border-slate-700 bg-slate-950 text-indigo-600 focus:ring-indigo-500 w-4 h-4"
+              />
+              <span className="font-medium">Select All Filtered Skills ({filteredSkills.length})</span>
+            </label>
+            <span>{selectedSkillIds.length} selected</span>
+          </div>
+        )}
+
         {/* Skills Marketplace Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
-          {filteredSkills.map((skill) => (
-            <div
-              key={skill.id}
-              className={`bg-slate-950 border border-slate-800 rounded-xl p-4 flex items-start gap-3.5 transition-all ${
-                skill.installed ? 'border-l-2 border-l-indigo-500' : 'opacity-85 hover:opacity-100'
-              }`}
-            >
-              {/* Icon Container matching Sleek Interface */}
-              <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${
-                skill.installed 
-                  ? 'bg-indigo-500/20 text-indigo-400' 
-                  : 'bg-slate-800 text-slate-500'
-              }`}>
-                <Boxes className="w-5 h-5" />
+          {filteredSkills.map((skill) => {
+            const isSelected = selectedSkillIds.includes(skill.id);
+            return (
+              <div
+                key={skill.id}
+                className={`bg-slate-950 border rounded-xl p-4 flex items-start gap-3.5 transition-all ${
+                  isSelected ? 'border-indigo-500/80 bg-indigo-950/10' : 'border-slate-800'
+                } ${skill.installed ? 'border-l-2 border-l-indigo-500' : 'opacity-85 hover:opacity-100'}`}
+              >
+                {/* Checkbox for batch select */}
+                <input
+                  type="checkbox"
+                  checked={isSelected}
+                  onChange={() => {
+                    setSelectedSkillIds(prev =>
+                      prev.includes(skill.id) ? prev.filter(i => i !== skill.id) : [...prev, skill.id]
+                    );
+                  }}
+                  className="rounded border-slate-700 bg-slate-950 text-indigo-600 focus:ring-indigo-500 w-4 h-4 mt-1 shrink-0 cursor-pointer"
+                  title="Select for batch operation"
+                />
+
+                {/* Icon Container matching Sleek Interface */}
+                <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${
+                  skill.installed 
+                    ? 'bg-indigo-500/20 text-indigo-400' 
+                    : 'bg-slate-800 text-slate-500'
+                }`}>
+                  <Boxes className="w-5 h-5" />
+                </div>
+
+                {/* Body */}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-xs font-bold text-white truncate">
+                      {skill.name}
+                    </h3>
+                    <span className="text-[10px] uppercase font-mono px-1.5 py-0.2 rounded bg-slate-900 text-slate-400 border border-slate-800">
+                      {skill.category}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 line-clamp-2 mt-1 mb-2 leading-relaxed">
+                    {skill.description}
+                  </p>
+
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => setActiveModalSkill(skill)}
+                      className="text-[11px] font-bold text-indigo-400 hover:text-indigo-300 transition-colors"
+                    >
+                      Configure
+                    </button>
+
+                    <span className="text-slate-700">•</span>
+
+                    <button
+                      id={`toggle-skill-${skill.id}`}
+                      onClick={() => onToggleSkill(skill.id)}
+                      className={`text-[11px] font-bold transition-colors ${
+                        skill.installed
+                          ? 'text-slate-400 hover:text-rose-400'
+                          : 'text-indigo-400 hover:text-indigo-300'
+                      }`}
+                    >
+                      {skill.installed ? 'Uninstall' : 'Install Skill'}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Installed Checkmark Icon matching Sleek Interface */}
+                {skill.installed && (
+                  <div className="text-emerald-500 shrink-0 mt-0.5" title="Installed">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+                      <path d="M20 6L9 17l-5-5"></path>
+                    </svg>
+                  </div>
+                )}
               </div>
-
-              {/* Body */}
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <h3 className="text-xs font-bold text-white truncate">
-                    {skill.name}
-                  </h3>
-                  <span className="text-[10px] uppercase font-mono px-1.5 py-0.2 rounded bg-slate-900 text-slate-400 border border-slate-800">
-                    {skill.category}
-                  </span>
-                </div>
-                <p className="text-[11px] text-slate-400 line-clamp-2 mt-1 mb-2 leading-relaxed">
-                  {skill.description}
-                </p>
-
-                <div className="flex items-center gap-3">
-                  <button
-                    onClick={() => setActiveModalSkill(skill)}
-                    className="text-[11px] font-bold text-indigo-400 hover:text-indigo-300 transition-colors"
-                  >
-                    Configure
-                  </button>
-
-                  <span className="text-slate-700">•</span>
-
-                  <button
-                    id={`toggle-skill-${skill.id}`}
-                    onClick={() => onToggleSkill(skill.id)}
-                    className={`text-[11px] font-bold transition-colors ${
-                      skill.installed
-                        ? 'text-slate-400 hover:text-rose-400'
-                        : 'text-indigo-400 hover:text-indigo-300'
-                    }`}
-                  >
-                    {skill.installed ? 'Uninstall' : 'Install Skill'}
-                  </button>
-                </div>
-              </div>
-
-              {/* Installed Checkmark Icon matching Sleek Interface */}
-              {skill.installed && (
-                <div className="text-emerald-500 shrink-0 mt-0.5" title="Installed">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
-                    <path d="M20 6L9 17l-5-5"></path>
-                  </svg>
-                </div>
-              )}
-            </div>
-          ))}
+            );
+          })}
         </div>
 
         {filteredSkills.length === 0 && (

@@ -86,7 +86,7 @@ import { UpdatesTab } from './components/UpdatesTab';
 import { EverOSTab } from './components/EverOSTab';
 import { DiagnosticsTab } from './components/DiagnosticsTab';
 import { AgentLogsTab } from './components/AgentLogsTab';
-import { ToastContainer, ToastMessage } from './components/Toast';
+import { BulkUpdateSummaryModal } from './components/BulkUpdateSummaryModal';
 import { ContainerDiscoveryModal } from './components/ContainerDiscoveryModal';
 import { ConfigInjectionAlert, InjectionStatusInfo } from './components/ConfigInjectionAlert';
 import { VerboseLogData } from './components/VerboseLogInspector';
@@ -183,7 +183,8 @@ export default function App() {
   const [isDetecting, setIsDetecting] = useState(false);
   const [isSavingConfig, setIsSavingConfig] = useState(false);
   const [isThinking, setIsThinking] = useState(false);
-  const [isDiscoveryOpen, setIsDiscoveryOpen] = useState(false);
+  const [isBulkUpdateSummaryOpen, setIsBulkUpdateSummaryOpen] = useState(false);
+  const [lastBulkUpdate, setLastBulkUpdate] = useState<SystemUpdateItem[]>([]);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   const [dockerInfo, setDockerInfo] = useState<DockerSystemInfo>({
@@ -1142,7 +1143,7 @@ moa:
     // Sanitize baseUrl to prevent '11434host:11434' style corruption
     const sanitize = (url: string) => {
       if (!url) return 'http://192.168.1.49:11434';
-      let clean = url.replace(/11434host:11434/g, '192.168.1.49:11434');
+      let clean = url.replace(/11434host:11434/g, '11434');
       if (!clean.startsWith('http')) clean = 'http://' + clean;
       return clean;
     };
@@ -1767,6 +1768,21 @@ moa:
     }));
   };
 
+  // Batch toggle skills installation
+  const handleBatchToggleSkills = (skillIds: string[], install: boolean) => {
+    setSkills(prev => prev.map(s => {
+      if (skillIds.includes(s.id)) {
+        return { ...s, installed: install };
+      }
+      return s;
+    }));
+    addToast(
+      install ? 'success' : 'info',
+      install ? 'Batch Skills Installed' : 'Batch Skills Uninstalled',
+      `${skillIds.length} skills successfully ${install ? 'installed' : 'removed'} in batch operation.`
+    );
+  };
+
   // Add custom skill
   const handleAddCustomSkill = (newSkill: SkillItem) => {
     setSkills(prev => [newSkill, ...prev]);
@@ -2114,8 +2130,9 @@ moa:
       });
       setUpdates(updatedList);
       saveLocalUpdates(updatedList);
+      setLastBulkUpdate(updatedList.filter(u => u.status === 'up_to_date'));
+      setIsBulkUpdateSummaryOpen(true);
 
-      // 2. Update agent versions and recreate containers in state & localStorage
       const updatedAgents = agents.map(a => {
         const matching = pending.find(p => p.targetId === a.id);
         if (matching) {
@@ -2670,6 +2687,7 @@ moa:
               presets={presets}
               onApplyPresetToAgent={handleApplyPresetToAgent}
               onAddToast={addToast}
+              onAddLog={(log) => setContainerLogs(prev => [...prev, log])}
             />
           )}
 
@@ -2738,6 +2756,7 @@ moa:
             <SkillsTab
               skills={skills}
               onToggleSkill={handleToggleSkill}
+              onBatchToggleSkills={handleBatchToggleSkills}
               onAddCustomSkill={handleAddCustomSkill}
               onSyncOpenClawRemote={handleSyncOpenClawRemote}
               isSyncingRemote={isSyncingRemote}
@@ -2877,6 +2896,7 @@ moa:
         onStartAgent={handleStartAgent}
       />
 
+      {isBulkUpdateSummaryOpen && <BulkUpdateSummaryModal isOpen={isBulkUpdateSummaryOpen} onClose={() => setIsBulkUpdateSummaryOpen(false)} updates={lastBulkUpdate} />}
       {/* Toast Notification Container */}
       <ToastContainer toasts={toasts} onDismiss={removeToast} />
     </div>
