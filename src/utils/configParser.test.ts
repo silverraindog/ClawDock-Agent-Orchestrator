@@ -148,7 +148,9 @@ temperature = 0.5
 
     it('normalizes standalone corrupted string to 11434', () => {
       expect(sanitizeConfigString('11434host:11434')).toBe('11434');
+      expect(sanitizeConfigString('host:11434')).toBe('11434');
       expect(sanitizeConfigString('http://localhost:11434host:11434')).toBe('http://localhost:11434');
+      expect(sanitizeConfigString('http://localhost:11434')).toBe('http://localhost:11434');
     });
 
     it('normalizes serialized config JSON string containing 11434host:11434', () => {

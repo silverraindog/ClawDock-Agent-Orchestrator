@@ -1200,15 +1200,15 @@ export function migrateOpenClawV1ToV2(
 
 /**
  * Sanitizes a configuration string or object by normalizing corrupted port/host
- * patterns such as '11434host:11434' to '11434' without altering valid configuration structures.
+ * patterns such as '11434host:11434' or 'host:11434' to '11434' without altering valid configuration structures.
  */
 export function sanitizeConfigString(input: string): string;
 export function sanitizeConfigString<T>(input: T): T;
 export function sanitizeConfigString(input: any): any {
   if (typeof input === 'string') {
     return input
-      .replace(/11434host:\d+/g, '11434')
-      .replace(/11434host:11434/g, '11434');
+      .replace(/11434host:11434/g, '11434')
+      .replace(/(?<!local)host:11434/g, '11434');
   }
   if (input !== null && typeof input === 'object') {
     if (Array.isArray(input)) {

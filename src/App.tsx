@@ -96,7 +96,7 @@ import {
   SchemaValidationError, 
   NetworkTransportError 
 } from './utils/configValidator';
-import { enhanceConfigWithNative, detectOpenClawConfigFormat } from './utils/configParser';
+import { enhanceConfigWithNative, detectOpenClawConfigFormat, sanitizeConfigString } from './utils/configParser';
 
 type MainTab = 'dashboard' | 'config' | 'presets' | 'everos' | 'skills' | 'mcp' | 'docker' | 'console' | 'export' | 'updates' | 'diagnostics' | 'agent-logs';
 
@@ -1155,19 +1155,13 @@ moa:
     // Sanitize baseUrl to prevent '11434host:11434' style corruption
     const sanitize = (url: string) => {
       if (!url) return STATIC_OLLAMA_ENDPOINT;
-      let clean = url
-        .replace(/11434host:11434/g, '11434')
-        .replace(/:11434host:\d+/g, ':11434')
-        .replace(/host:11434/g, '11434');
+      let clean = sanitizeConfigString(url);
       if (!clean.startsWith('http')) clean = 'http://' + clean;
       return clean;
     };
 
     const sanitizeJsonEndpoints = (raw: string): string => {
-      let result = raw;
-      result = result.replace(/11434host:11434/g, '11434');
-      result = result.replace(/:11434host:\d+/g, ':11434');
-      result = result.replace(/host:11434/g, '11434');
+      let result = sanitizeConfigString(raw);
       result = result.replace(/moa:\/\/local(?::\d+)?(?=\/|"|\s|$)/g, STATIC_OLLAMA_ENDPOINT);
       result = result.replace(/http:\/\/local(?::\d+)?(?=\/|"|\s|$)/g, STATIC_OLLAMA_ENDPOINT);
       return result;
