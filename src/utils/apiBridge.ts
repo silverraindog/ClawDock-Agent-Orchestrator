@@ -387,8 +387,12 @@ export async function fetchProxyModels(
   provider: string = 'ollama'
 ): Promise<{ success: boolean; models: ModelOptionItem[]; rawModelNames: string[]; source: string }> {
   try {
+    const cleanBaseUrl = (baseUrl || '')
+      .replace(/11434host:11434/g, '11434')
+      .replace(/:11434host:\d+/g, ':11434')
+      .replace(/host:11434/g, '11434');
     const params = new URLSearchParams({
-      baseUrl: baseUrl || '',
+      baseUrl: cleanBaseUrl,
       provider: provider || 'ollama',
       t: String(Date.now())
     });
@@ -423,12 +427,16 @@ export async function testLLMConnection(
   baseUrl?: string
 ): Promise<{ success: boolean; message: string; errorType?: string }> {
   try {
+    const cleanBaseUrl = (baseUrl || '')
+      .replace(/11434host:11434/g, '11434')
+      .replace(/:11434host:\d+/g, ':11434')
+      .replace(/host:11434/g, '11434');
     const response = await fetch('/api/test-conn-v2', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({ provider, apiKey, baseUrl })
+      body: JSON.stringify({ provider, apiKey, baseUrl: cleanBaseUrl })
     });
     
     if (!response.ok) {
@@ -440,16 +448,24 @@ export async function testLLMConnection(
     }
 
     const data = await response.json();
+    const cleanMsg = (data.message || 'Verification complete.')
+      .replace(/11434host:11434/g, '11434')
+      .replace(/:11434host:\d+/g, ':11434')
+      .replace(/host:11434/g, '11434');
     return {
       success: data.success,
-      message: data.message || 'Verification complete.',
+      message: cleanMsg,
       errorType: data.errorType
     };
   } catch (err: any) {
     console.error('[API Bridge] Connection test failed:', err);
+    const cleanErr = (err.message || 'Unknown network error')
+      .replace(/11434host:11434/g, '11434')
+      .replace(/:11434host:\d+/g, ':11434')
+      .replace(/host:11434/g, '11434');
     return {
       success: false,
-      message: `Failed to invoke backend connection tester: ${err.message || 'Unknown network error'}`
+      message: `Failed to invoke backend connection tester: ${cleanErr}`
     };
   }
 }
@@ -1364,7 +1380,8 @@ export async function fetchAgentLiveConfig(agentId: AgentId, requestedFormatVers
   if (fetchedData) {
     const rawSchema = fetchedData.configSchema || fetchedData.config || (fetchedData.model ? fetchedData : null);
     const content = fetchedData.nativeContent || fallback.content;
-    const fileName = fetchedData.nativeFileName || fallback.fileName;
+    const rawFileName = fetchedData.nativeFileName || fallback.fileName;
+    const fileName = agentId === 'hermes-agent' ? 'config.yaml' : rawFileName;
     const format = fetchedData.nativeFormat || fallback.format;
     let schema = rawSchema ? mergeWithDefaultConfig(agentId, rawSchema) : fallbackConfig;
     if (content) {

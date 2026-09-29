@@ -8,7 +8,13 @@ describe('Config State Persistence and handleSaveConfig Unit Tests', () => {
 
   beforeEach(() => {
     mockConfigs = {
-      'hermes-agent': JSON.parse(JSON.stringify(DEFAULT_CONFIGS['hermes-agent'])),
+      'hermes-agent': {
+        ...JSON.parse(JSON.stringify(DEFAULT_CONFIGS['hermes-agent'])),
+        model: {
+          ...DEFAULT_CONFIGS['hermes-agent'].model,
+          model: 'claude-3-7-sonnet'
+        }
+      },
       'zeroclaw': JSON.parse(JSON.stringify(DEFAULT_CONFIGS['zeroclaw'])),
       'openclaw': JSON.parse(JSON.stringify(DEFAULT_CONFIGS['openclaw'])),
       'picoclaw': JSON.parse(JSON.stringify(DEFAULT_CONFIGS['picoclaw'])),

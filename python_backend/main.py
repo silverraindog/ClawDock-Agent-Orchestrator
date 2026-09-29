@@ -500,7 +500,7 @@ def docker_exec_config(agent_id: str):
         raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found. Valid agents: {valid_agents}")
 
     file_map = {
-        "hermes-agent": ("hermes.yaml", "yaml"),
+        "hermes-agent": ("config.yaml", "yaml"),
         "zeroclaw": ("zeroclaw.toml", "toml"),
         "openclaw": ("openclaw.json", "json"),
         "picoclaw": ("picoclaw.json", "json"),
@@ -618,7 +618,7 @@ def save_config(agent_id: str, payload: Dict[str, Any] = Body(...)):
     native_content = payload.get("nativeContent")
     if native_content and isinstance(native_content, str):
         file_map = {
-            "hermes-agent": "hermes.yaml",
+            "hermes-agent": "config.yaml",
             "zeroclaw": "zeroclaw.toml",
             "openclaw": "openclaw.json",
             "picoclaw": "picoclaw.json",
@@ -1344,7 +1344,8 @@ async def test_llm_connection(request: Request):
     
     provider = str(body.get("provider", "ollama")).lower()
     api_key = str(body.get("apiKey", body.get("api_key", ""))).strip()
-    base_url = str(body.get("baseUrl", body.get("base_url", ""))).strip()
+    raw_base_url = str(body.get("baseUrl", body.get("base_url", ""))).strip()
+    base_url = raw_base_url.replace("11434host:11434", "11434").replace(":11434host:", ":11434").replace("host:11434", "11434")
 
     if provider != "ollama" and not api_key:
         return {
@@ -1432,7 +1433,8 @@ async def benchmark_llm_provider(request: Request):
     except Exception:
         body = {}
     provider = str(body.get("provider", "ollama")).lower()
-    base_url = str(body.get("baseUrl", body.get("base_url", ""))).strip()
+    raw_base_url = str(body.get("baseUrl", body.get("base_url", ""))).strip()
+    base_url = raw_base_url.replace("11434host:11434", "11434").replace(":11434host:", ":11434").replace("host:11434", "11434")
 
     target_url = "https://api.openai.com/v1/models"
     headers = {"Content-Type": "application/json"}

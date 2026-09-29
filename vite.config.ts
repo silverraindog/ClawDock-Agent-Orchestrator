@@ -1365,10 +1365,10 @@ fallback:
             console.log(`[Vite API Server Proxy] [${timestamp}] Fetching model list from baseUrl "${targetBaseUrl}" (Provider: ${queryProvider}) to bypass browser CORS`);
 
             // Sanitize: Fix concatenation bugs like '11434host:11434'
-            let sanitizedBase = targetBaseUrl;
-            if (sanitizedBase.includes('11434host:11434')) {
-              sanitizedBase = sanitizedBase.replace('11434host:11434', '192.168.1.49:11434');
-            }
+            let sanitizedBase = targetBaseUrl
+              .replace(/11434host:11434/g, '11434')
+              .replace(/:11434host:\d+/g, ':11434')
+              .replace(/host:11434/g, '11434');
             if (!sanitizedBase.startsWith('http')) sanitizedBase = 'http://' + sanitizedBase;
 
             const cleanBase = sanitizedBase.replace(/\/+$/, '').replace(/\/v1\/?$/, '');

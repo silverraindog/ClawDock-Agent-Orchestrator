@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isLocalDeployment, parseNativeConfigToSchema, detectOpenClawConfigFormat, enhanceConfigWithNative } from './configParser';
+import { isLocalDeployment, parseNativeConfigToSchema, detectOpenClawConfigFormat, enhanceConfigWithNative, sanitizeConfigString } from './configParser';
 import { AgentFullConfig } from '../types';
 
 describe('Config Parser Utilities', () => {
@@ -89,6 +89,80 @@ temperature = 0.5
       expect(enhanced.model.model).toBe('gemma4-soul:latest');
       expect(enhanced.model.provider).toBe('ollama');
       expect(enhanced.model.temperature).toBe(0.7); // Should retain from base
+    });
+  });
+
+  describe('sanitizeConfigString', () => {
+    it('normalizes corrupted port strings like 11434host:11434 to 11434 without altering valid configuration structures', () => {
+      const corruptedConfig = {
+        system: {
+          agentName: 'Hermes Agent',
+          description: 'Autonomous worker',
+          port: '11434host:11434',
+        },
+        model: {
+          provider: 'ollama',
+          model: 'gemma4-soul:latest',
+          baseUrl: 'http://localhost:11434host:11434',
+          portString: '11434host:11434',
+          temperature: 0.7,
+          maxTokens: 4096,
+        },
+        fallback: {
+          enabled: true,
+          provider: 'custom',
+          baseUrl: 'http://192.168.1.49:11434host:11434',
+          maxRetries: 3,
+        },
+        channels: {
+          discord: {
+            enabled: true,
+            webhookUrl: 'https://discord.com/api/webhooks/123/abc',
+          },
+        },
+        tags: ['edge', 'local', '11434host:11434'],
+      };
+
+      const sanitizedConfig = sanitizeConfigString(corruptedConfig);
+
+      // Verify corrupted strings are normalized to '11434'
+      expect(sanitizedConfig.system.port).toBe('11434');
+      expect(sanitizedConfig.model.baseUrl).toBe('http://localhost:11434');
+      expect(sanitizedConfig.model.portString).toBe('11434');
+      expect(sanitizedConfig.fallback.baseUrl).toBe('http://192.168.1.49:11434');
+      expect(sanitizedConfig.tags).toEqual(['edge', 'local', '11434']);
+
+      // Verify valid configuration structures are preserved
+      expect(sanitizedConfig.system.agentName).toBe('Hermes Agent');
+      expect(sanitizedConfig.system.description).toBe('Autonomous worker');
+      expect(sanitizedConfig.model.provider).toBe('ollama');
+      expect(sanitizedConfig.model.model).toBe('gemma4-soul:latest');
+      expect(sanitizedConfig.model.temperature).toBe(0.7);
+      expect(sanitizedConfig.model.maxTokens).toBe(4096);
+      expect(sanitizedConfig.fallback.enabled).toBe(true);
+      expect(sanitizedConfig.fallback.provider).toBe('custom');
+      expect(sanitizedConfig.fallback.maxRetries).toBe(3);
+      expect(sanitizedConfig.channels.discord.enabled).toBe(true);
+      expect(sanitizedConfig.channels.discord.webhookUrl).toBe('https://discord.com/api/webhooks/123/abc');
+    });
+
+    it('normalizes standalone corrupted string to 11434', () => {
+      expect(sanitizeConfigString('11434host:11434')).toBe('11434');
+      expect(sanitizeConfigString('http://localhost:11434host:11434')).toBe('http://localhost:11434');
+    });
+
+    it('normalizes serialized config JSON string containing 11434host:11434', () => {
+      const rawJson = JSON.stringify({
+        endpoint: 'http://localhost:11434host:11434',
+        port: '11434host:11434',
+        provider: 'ollama',
+      });
+      const sanitizedJson = sanitizeConfigString(rawJson);
+      expect(sanitizedJson).not.toContain('11434host:11434');
+      const parsed = JSON.parse(sanitizedJson);
+      expect(parsed.endpoint).toBe('http://localhost:11434');
+      expect(parsed.port).toBe('11434');
+      expect(parsed.provider).toBe('ollama');
     });
   });
 });

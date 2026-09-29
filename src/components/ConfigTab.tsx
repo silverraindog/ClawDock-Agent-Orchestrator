@@ -320,11 +320,24 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
     setModelConnectivityStatus('checking');
     setPrimaryRevalidationMessage(null);
     const start = performance.now();
+    const rawUrl = config.model.baseUrl || '';
+    const cleanUrl = rawUrl
+      .replace(/11434host:11434/g, '11434')
+      .replace(/:11434host:\d+/g, ':11434')
+      .replace(/host:11434/g, '11434');
+
+    if (rawUrl && rawUrl !== cleanUrl) {
+      onChangeConfig({
+        ...config,
+        model: { ...config.model, baseUrl: cleanUrl }
+      });
+    }
+
     try {
       const result = await testLLMConnection(
         config.model.provider,
         config.model.apiKey || '',
-        config.model.baseUrl || ''
+        cleanUrl
       );
       const elapsed = Math.round(performance.now() - start);
       if (result.success) {
@@ -338,20 +351,28 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
       } else {
         setModelConnectivityStatus('unreachable');
         setModelConnectivityLatency(elapsed > 0 ? elapsed : 24);
-        setConnectivityErrorReason(result.message || 'Primary provider connection failed.');
+        const cleanMsg = (result.message || 'Primary provider connection failed.')
+          .replace(/11434host:11434/g, '11434')
+          .replace(/:11434host:\d+/g, ':11434')
+          .replace(/host:11434/g, '11434');
+        setConnectivityErrorReason(cleanMsg);
         setPrimaryRevalidationMessage({
           type: 'error',
-          text: `Primary re-validation failed: ${result.message || 'Provider unreachable.'}`
+          text: `Primary re-validation failed: ${cleanMsg}`
         });
       }
     } catch (err: any) {
       const elapsed = Math.round(performance.now() - start);
       setModelConnectivityStatus('unreachable');
       setModelConnectivityLatency(elapsed > 0 ? elapsed : 35);
-      setConnectivityErrorReason(err.message || 'Connection failed.');
+      const cleanErr = (err.message || 'Connection failed.')
+        .replace(/11434host:11434/g, '11434')
+        .replace(/:11434host:\d+/g, ':11434')
+        .replace(/host:11434/g, '11434');
+      setConnectivityErrorReason(cleanErr);
       setPrimaryRevalidationMessage({
         type: 'error',
-        text: `Re-validation error: ${err.message || 'Endpoint connection failed'}`
+        text: `Re-validation error: ${cleanErr}`
       });
     } finally {
       setIsRevalidatingPrimary(false);
@@ -364,11 +385,24 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
       setModelConnectivityStatus('checking');
       setConnectivityErrorReason('');
       const start = performance.now();
+      const rawUrl = config.model.baseUrl || '';
+      const cleanUrl = rawUrl
+        .replace(/11434host:11434/g, '11434')
+        .replace(/:11434host:\d+/g, ':11434')
+        .replace(/host:11434/g, '11434');
+
+      if (rawUrl && rawUrl !== cleanUrl && isMounted) {
+        onChangeConfig({
+          ...config,
+          model: { ...config.model, baseUrl: cleanUrl }
+        });
+      }
+
       try {
         const result = await testLLMConnection(
           config.model.provider,
           config.model.apiKey || '',
-          config.model.baseUrl || ''
+          cleanUrl
         );
         const elapsed = Math.round(performance.now() - start);
         if (isMounted) {
@@ -379,7 +413,11 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
           } else {
             setModelConnectivityStatus('unreachable');
             setModelConnectivityLatency(elapsed > 0 ? elapsed : 24);
-            setConnectivityErrorReason(result.message || 'Connection refused or timeout at endpoint.');
+            const cleanMsg = (result.message || 'Connection refused or timeout at endpoint.')
+              .replace(/11434host:11434/g, '11434')
+              .replace(/:11434host:\d+/g, ':11434')
+              .replace(/host:11434/g, '11434');
+            setConnectivityErrorReason(cleanMsg);
           }
         }
       } catch (err: any) {
@@ -387,7 +425,11 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
         if (isMounted) {
           setModelConnectivityStatus('unreachable');
           setModelConnectivityLatency(elapsed > 0 ? elapsed : 35);
-          const msg = err.message || '';
+          const rawMsg = err.message || '';
+          const msg = rawMsg
+            .replace(/11434host:11434/g, '11434')
+            .replace(/:11434host:\d+/g, ':11434')
+            .replace(/host:11434/g, '11434');
           if (msg.includes('timeout') || msg.includes('ETIMEDOUT')) {
             setConnectivityErrorReason('Connection timeout: Server took too long to respond.');
           } else if (msg.includes('ENOTFOUND') || msg.includes('getaddrinfo')) {
@@ -424,7 +466,11 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
   
   // Default native config info initialized from DEFAULT_NATIVE_FILES
   const [nativeConfigInfo, setNativeConfigInfo] = useState<{ fileName: string; format: string; content: string }>(() => {
-    return DEFAULT_NATIVE_FILES[agentId] || DEFAULT_NATIVE_FILES['hermes-agent'];
+    const initial = DEFAULT_NATIVE_FILES[agentId] || DEFAULT_NATIVE_FILES['hermes-agent'];
+    return {
+      ...initial,
+      fileName: agentId === 'hermes-agent' ? 'config.yaml' : (initial?.fileName || 'config.yaml')
+    };
   });
 
   const [persistenceRawData, setPersistenceRawData] = useState<string>('');
@@ -465,7 +511,10 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
   // Fetch live config automatically on mount and agentId change
   React.useEffect(() => {
     const fallback = DEFAULT_NATIVE_FILES[agentId] || DEFAULT_NATIVE_FILES['hermes-agent'];
-    setNativeConfigInfo(fallback);
+    setNativeConfigInfo({
+      ...fallback,
+      fileName: agentId === 'hermes-agent' ? 'config.yaml' : fallback.fileName
+    });
     fetchLiveConfig(false);
   }, [agentId]);
 
@@ -553,7 +602,7 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
       const data = await fetchAgentLiveConfig(agentId);
       if (data) {
         setNativeConfigInfo({
-          fileName: data.fileName,
+          fileName: agentId === 'hermes-agent' ? 'config.yaml' : (data.fileName || 'config.yaml'),
           format: data.format,
           content: data.content
         });
@@ -1746,7 +1795,7 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Terminal className="w-4 h-4 text-indigo-400" />
-              <span className="text-xs font-semibold text-white">Container Native Config File: <code className="text-indigo-300 font-mono">{nativeConfigInfo.fileName}</code></span>
+              <span className="text-xs font-semibold text-white">Container Native Config File: <code className="text-indigo-300 font-mono">{agentId === 'hermes-agent' ? 'config.yaml' : (nativeConfigInfo.fileName || 'config.yaml')}</code></span>
             </div>
             <button
               onClick={() => setNativeConfigInfo(null)}
@@ -4929,7 +4978,7 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
                 <div className="flex items-center gap-2">
                   <FileCode className="w-4 h-4 text-indigo-400" />
                   <h3 className="text-sm font-bold text-white">
-                    {rawMode === 'native' ? `Native Config File: ${nativeConfigInfo?.fileName || 'config'}` : 'JSON Configuration Schema'}
+                    {rawMode === 'native' ? `Native Config File: ${agentId === 'hermes-agent' ? 'config.yaml' : (nativeConfigInfo?.fileName || 'config.yaml')}` : 'JSON Configuration Schema'}
                   </h3>
                   {deepValidation.syncStatus === 'in_sync' && (
                     <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
@@ -5445,7 +5494,7 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
                 <div className="flex items-center justify-between text-xs pb-2 border-b border-slate-800/60">
                   <span className="text-slate-400 font-medium">Native Config File:</span>
                   <code className="px-3 py-1 rounded-lg bg-amber-500/15 text-amber-300 font-mono font-bold border border-amber-500/30 text-xs shadow-sm">
-                    {nativeConfigInfo?.fileName || DEFAULT_NATIVE_FILES[agentId]?.fileName || 'config.yaml'}
+                    {agentId === 'hermes-agent' ? 'config.yaml' : (nativeConfigInfo?.fileName || DEFAULT_NATIVE_FILES[agentId]?.fileName || 'config.yaml')}
                   </code>
                 </div>
 

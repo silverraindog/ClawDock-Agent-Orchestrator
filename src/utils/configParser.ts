@@ -465,6 +465,12 @@ export function parseNativeConfigToSchema(
           if (ym.useProxy !== undefined || ym.use_proxy !== undefined) {
             parsedUseProxy = Boolean(ym.useProxy ?? ym.use_proxy);
           }
+        } else if (typeof parsedYaml.model === 'string') {
+          parsedModelName = parsedYaml.model;
+        }
+
+        if (parsedYaml.provider && typeof parsedYaml.provider === 'string') {
+          parsedProvider = parsedYaml.provider as LLMProvider;
         }
 
         if (parsedYaml.system_prompt || parsedYaml.systemPrompt) {
@@ -1190,4 +1196,29 @@ export function migrateOpenClawV1ToV2(
     targetVersion: 'v2',
     timestamp: new Date().toISOString()
   };
+}
+
+/**
+ * Sanitizes a configuration string or object by normalizing corrupted port/host
+ * patterns such as '11434host:11434' to '11434' without altering valid configuration structures.
+ */
+export function sanitizeConfigString(input: string): string;
+export function sanitizeConfigString<T>(input: T): T;
+export function sanitizeConfigString(input: any): any {
+  if (typeof input === 'string') {
+    return input
+      .replace(/11434host:\d+/g, '11434')
+      .replace(/11434host:11434/g, '11434');
+  }
+  if (input !== null && typeof input === 'object') {
+    if (Array.isArray(input)) {
+      return input.map(item => sanitizeConfigString(item));
+    }
+    const result: Record<string, any> = {};
+    for (const [key, value] of Object.entries(input)) {
+      result[key] = sanitizeConfigString(value);
+    }
+    return result;
+  }
+  return input;
 }

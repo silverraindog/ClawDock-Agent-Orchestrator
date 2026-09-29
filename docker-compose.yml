@@ -32,14 +32,10 @@ services:
       # External host config mounts into ClawDock container directory
       - /home/zeroclaw/config.toml:/data/clawdock/zeroclaw.toml
       - /home/openclaw/openclaw.json:/data/clawdock/openclaw.json
-      - /home/sargus/.hermes-data/config.yaml:/data/clawdock/hermes.yaml
+      - /home/sargus/.hermes-data/config.yaml:/data/clawdock/config.yaml
       - /opt/bots/picaclaw/data/config.json:/data/clawdock/picoclaw.json
       # Shared workspace for agents to read/write files and execute code
       - ./workspace:/workspace
-      - /home/zeroclaw/config.toml:/data/clawdock/zeroclaw.toml
-      - /home/openclaw/openclaw.json:/data/clawdock/openclaw.json
-      - /home/sargus/.hermes-data/config.yaml:/data/clawdock/hermes.yaml
-      - /opt/bots/picaclaw/data/config.json:/data/clawdock/picoclaw.json
     environment:
       - PORT=3000
       - PYTHONUNBUFFERED=1
@@ -95,7 +91,7 @@ services:
   #    - "8080:8080"
   #  volumes:
   #    - ./workspace:/workspace
-  #    - ./data/clawdock/hermes.yaml:/etc/hermes/config.yaml
+  #    - ./data/clawdock/config.yaml:/etc/hermes/config.yaml
   #    - ./data/everos:/data/everos
   #  environment:
   #    - HERMES_PORT=8080

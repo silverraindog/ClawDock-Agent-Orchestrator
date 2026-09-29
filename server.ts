@@ -128,7 +128,11 @@ async function handleModelsRequest(req: any, res: any) {
     };
 
     const provider = (getParam('provider', 'modelProvider', 'model_provider', 'model-provider', 'prov', 'type') || 'ollama').toLowerCase();
-    const baseUrl = getParam('baseUrl', 'base_url', 'base-url', 'url', 'endpoint', 'apiBase', 'api_base') || '';
+    const rawBaseUrl = getParam('baseUrl', 'base_url', 'base-url', 'url', 'endpoint', 'apiBase', 'api_base') || '';
+    const baseUrl = rawBaseUrl
+      .replace(/11434host:11434/g, '11434')
+      .replace(/:11434host:\d+/g, ':11434')
+      .replace(/host:11434/g, '11434');
     const apiKey = getParam('apiKey', 'api_key', 'api-key', 'key', 'auth') || '';
     const agentId = getParam('agentId', 'agent_id', 'agent-id', 'agent', 'id', 'agentName', 'botId') || p.id || 'hermes-agent';
     const timestamp = new Date().toLocaleTimeString();
@@ -417,7 +421,11 @@ app.all(['/api/test-conn-v2', '/api/test-connection'], async (req, res) => {
     const query = req.query || {};
     const provider = body.provider || query.provider || 'ollama';
     const apiKey = body.apiKey || query.apiKey || '';
-    const baseUrl = body.baseUrl || query.baseUrl || body.base_url || query.base_url || '';
+    const rawBaseUrl = body.baseUrl || query.baseUrl || body.base_url || query.base_url || '';
+    const baseUrl = rawBaseUrl
+      .replace(/11434host:11434/g, '11434')
+      .replace(/:11434host:\d+/g, ':11434')
+      .replace(/host:11434/g, '11434');
     const cleanProvider = (provider || 'ollama').toLowerCase();
 
     // 1. Validate based on provider requirements
@@ -581,8 +589,12 @@ app.all(['/api/test-conn-v2', '/api/test-connection'], async (req, res) => {
 // Benchmark Latency Route for LLM Provider base URLs
 app.post('/api/benchmark', async (req, res) => {
   try {
-    const { provider, baseUrl } = req.body;
+    const { provider, baseUrl: rawBaseUrl } = req.body;
     const cleanProvider = (provider || 'ollama').toLowerCase();
+    const baseUrl = (rawBaseUrl || '')
+      .replace(/11434host:11434/g, '11434')
+      .replace(/:11434host:\d+/g, ':11434')
+      .replace(/host:11434/g, '11434');
 
     let targetUrl = '';
     let headers: Record<string, string> = {
@@ -3675,13 +3687,13 @@ app.put('/api/agents/:id/config', (req, res) => {
             // Write config file directly into container paths so hermes finds it immediately
             if (agentId === 'hermes-agent') {
               try {
-                execSync(`docker exec -i ${cName} sh -c "mkdir -p /root/.hermes /opt/hermes /etc/hermes /home/sargus/.hermes /home/sargus/.hermes-data && cat > /root/.hermes/config.yaml && cp /root/.hermes/config.yaml /opt/hermes/config.yaml && cp /root/.hermes/config.yaml /workspace/hermes.yaml && cp /root/.hermes/config.yaml /etc/hermes/config.yaml && cp /root/.hermes/config.yaml /home/sargus/.hermes-data/config.yaml && cp /root/.hermes/config.yaml /home/sargus/.hermes/config.yaml"`, {
+                execSync(`docker exec -i ${cName} sh -c "mkdir -p /root/.hermes /opt/hermes /etc/hermes /home/sargus/.hermes /home/sargus/.hermes-data && cat > /root/.hermes/config.yaml && cp /root/.hermes/config.yaml /opt/hermes/config.yaml && cp /root/.hermes/config.yaml /workspace/config.yaml && cp /root/.hermes/config.yaml /etc/hermes/config.yaml && cp /root/.hermes/config.yaml /home/sargus/.hermes-data/config.yaml && cp /root/.hermes/config.yaml /home/sargus/.hermes/config.yaml"`, {
                   input: nativeContent,
                   encoding: 'utf8',
                   timeout: 3000,
                   stdio: ['pipe', 'pipe', 'ignore']
                 });
-                execLogs.push(`Wrote hermes.yaml configuration to container ${cName} (/root/.hermes/config.yaml)`);
+                execLogs.push(`Wrote config.yaml configuration to container ${cName} (/root/.hermes/config.yaml)`);
               } catch (e: any) {
                 execLogs.push(`Failed to write config into container: ${e.message}`);
               }

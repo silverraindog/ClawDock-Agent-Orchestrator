@@ -1091,8 +1091,16 @@ export default function App() {
     const fb = cfg?.fallback || {};
     const model = m?.default || m?.model || 'gemma4-soul:latest';
     const provider = m?.provider || 'custom';
-    const baseUrl = m?.baseUrl || 'http://192.168.1.49:11434';
+    const rawBase = m?.baseUrl || 'http://192.168.1.49:11434';
+    const baseUrl = rawBase
+      .replace(/11434host:11434/g, '11434')
+      .replace(/:11434host:\d+/g, ':11434')
+      .replace(/host:11434/g, '11434');
     const apiKey = m?.apiKey || 'ollama';
+    const cleanFbBase = (fb?.baseUrl || baseUrl)
+      .replace(/11434host:11434/g, '11434')
+      .replace(/:11434host:\d+/g, ':11434')
+      .replace(/host:11434/g, '11434');
 
     return `version: "1.0.0"
 agent_id: "${cfg?.agentId || 'hermes-agent'}"
@@ -1119,7 +1127,7 @@ fallback:
   target_agent_id: "${fb?.targetAgentId || 'zeroclaw'}"
   provider: "${fb?.provider || 'ollama'}"
   model: "${fb?.model || 'hermes-3-llama-3.1-8b'}"
-  base_url: "${fb?.baseUrl || baseUrl}"
+  base_url: "${cleanFbBase}"
   api_key: "${fb?.apiKey || ''}"
 
 security:
@@ -1142,12 +1150,27 @@ moa:
   const handleSaveConfig = async (restartContainer: boolean = true, manualNativeContent?: string) => {
     setIsSavingConfig(true);
 
+    const STATIC_OLLAMA_ENDPOINT = 'http://192.168.1.49:11434';
+
     // Sanitize baseUrl to prevent '11434host:11434' style corruption
     const sanitize = (url: string) => {
-      if (!url) return 'http://192.168.1.49:11434';
-      let clean = url.replace(/11434host:11434/g, '11434');
+      if (!url) return STATIC_OLLAMA_ENDPOINT;
+      let clean = url
+        .replace(/11434host:11434/g, '11434')
+        .replace(/:11434host:\d+/g, ':11434')
+        .replace(/host:11434/g, '11434');
       if (!clean.startsWith('http')) clean = 'http://' + clean;
       return clean;
+    };
+
+    const sanitizeJsonEndpoints = (raw: string): string => {
+      let result = raw;
+      result = result.replace(/11434host:11434/g, '11434');
+      result = result.replace(/:11434host:\d+/g, ':11434');
+      result = result.replace(/host:11434/g, '11434');
+      result = result.replace(/moa:\/\/local(?::\d+)?(?=\/|"|\s|$)/g, STATIC_OLLAMA_ENDPOINT);
+      result = result.replace(/http:\/\/local(?::\d+)?(?=\/|"|\s|$)/g, STATIC_OLLAMA_ENDPOINT);
+      return result;
     };
     
     // Sanitize config in place
@@ -1273,11 +1296,11 @@ moa:
       normalizedConfig.moa.providerEndpoints['custom:ollama'] = STATIC_OLLAMA_ENDPOINT;
       normalizedConfig.moa.providerEndpoints['moa'] = STATIC_OLLAMA_ENDPOINT;
 
-      // Ensure model baseUrl does not use moa://local or http://local
-      if (!normalizedConfig.model.baseUrl || normalizedConfig.model.baseUrl === 'moa://local' || normalizedConfig.model.baseUrl.includes('local')) {
+      // Ensure model baseUrl does not use moa://local or mock http://local
+      if (!normalizedConfig.model.baseUrl || normalizedConfig.model.baseUrl === 'moa://local' || normalizedConfig.model.baseUrl === 'http://local' || normalizedConfig.model.baseUrl === 'http://local:11434') {
         normalizedConfig.model.baseUrl = STATIC_OLLAMA_ENDPOINT;
       }
-      if (normalizedConfig.fallback?.baseUrl === 'moa://local' || normalizedConfig.fallback?.baseUrl?.includes('local')) {
+      if (normalizedConfig.fallback?.baseUrl === 'moa://local' || normalizedConfig.fallback?.baseUrl === 'http://local' || normalizedConfig.fallback?.baseUrl === 'http://local:11434') {
         normalizedConfig.fallback.baseUrl = STATIC_OLLAMA_ENDPOINT;
       }
 
@@ -1315,9 +1338,10 @@ moa:
         normalizedConfig.moa.proposerEndpoints[key] = STATIC_OLLAMA_ENDPOINT;
       });
 
-      // Force any existing keys in providerEndpoints matching 'local' to static IP
+      // Force any existing mock local endpoints in providerEndpoints to static IP
       Object.keys(normalizedConfig.moa.providerEndpoints).forEach(key => {
-        if (normalizedConfig.moa.providerEndpoints[key].includes('local')) {
+        const val = normalizedConfig.moa.providerEndpoints[key];
+        if (val === 'moa://local' || val === 'http://local' || val === 'http://local:11434') {
           normalizedConfig.moa.providerEndpoints[key] = STATIC_OLLAMA_ENDPOINT;
         }
       });
@@ -1326,17 +1350,16 @@ moa:
       delete normalizedConfig.providerMapping['latest'];
       delete normalizedConfig.providerMapping['16b'];
 
-      // Replace any instances of 'moa://local' in normalizedConfig
+      // Sanitize JSON representation of normalizedConfig without corrupting localhost
       const configJsonBeforeSanitize = JSON.stringify(normalizedConfig, null, 2);
       console.group('%c[handleSaveConfig] MOA Static IP & Endpoint Sanitization Audit', 'color: #38bdf8; font-weight: bold;');
-      console.log('[handleSaveConfig] Config JSON BEFORE moa://local replacement:\n', configJsonBeforeSanitize);
+      console.log('[handleSaveConfig] Config JSON BEFORE sanitization:\n', configJsonBeforeSanitize);
       
       let sanitizedConfigJson = JSON.stringify(normalizedConfig);
-      sanitizedConfigJson = sanitizedConfigJson.replace(/moa:\/\/local\/?/g, STATIC_OLLAMA_ENDPOINT);
-      sanitizedConfigJson = sanitizedConfigJson.replace(/http:\/\/local(?::\d+)?\/?/g, STATIC_OLLAMA_ENDPOINT);
+      sanitizedConfigJson = sanitizeJsonEndpoints(sanitizedConfigJson);
       normalizedConfig = JSON.parse(sanitizedConfigJson);
       
-      console.log('[handleSaveConfig] Config JSON AFTER moa://local replacement:\n', JSON.stringify(normalizedConfig, null, 2));
+      console.log('[handleSaveConfig] Config JSON AFTER sanitization:\n', JSON.stringify(normalizedConfig, null, 2));
       console.groupEnd();
 
       // Determine final native content format
@@ -1357,8 +1380,7 @@ moa:
       }
 
       // Explicitly sanitize the native content string (whether manual or generated)
-      nativeContent = nativeContent.replace(/moa:\/\/local\/?/g, STATIC_OLLAMA_ENDPOINT);
-      nativeContent = nativeContent.replace(/http:\/\/local(?::\d+)?\/?/g, STATIC_OLLAMA_ENDPOINT);
+      nativeContent = sanitizeJsonEndpoints(nativeContent);
 
       // Save locally immediately to guarantee session persistence
       const updatedConfigs = { ...configs, [selectedAgentId]: normalizedConfig };
@@ -1375,11 +1397,10 @@ moa:
         console.warn('[handleSaveConfig] Failed to sync local storage nativeFiles:', e);
       }
 
-      // Sync explicitly with backend persistence.json, replacing any instances of 'moa://local'
+      // Sync explicitly with backend persistence.json
       try {
         let persistencePayload = JSON.stringify({ configs: updatedConfigs });
-        persistencePayload = persistencePayload.replace(/moa:\/\/local\/?/g, STATIC_OLLAMA_ENDPOINT);
-        persistencePayload = persistencePayload.replace(/http:\/\/local(?::\d+)?\/?/g, STATIC_OLLAMA_ENDPOINT);
+        persistencePayload = sanitizeJsonEndpoints(persistencePayload);
         await fetch('/api/persistence', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
@@ -1389,25 +1410,24 @@ moa:
         console.warn('[handleSaveConfig] Persistence sync failed:', err);
       }
 
-      // Generate the final JSON payload for the config PUT request and explicitly replace 'moa://local' with 'http://192.168.1.49:11434'
+      // Generate the final JSON payload for the config PUT request
       const payloadObject = { 
         config: normalizedConfig,
         nativeContent, 
         restartContainer 
       };
 
-      // Granular logging before and after regex replacement of 'moa://local' on generated JSON payload
+      // Granular logging before and after sanitization on generated JSON payload
       const exactJsonBeforeReplacement = JSON.stringify(payloadObject, null, 2);
       const rawStringBeforeReplacement = JSON.stringify(payloadObject);
 
-      console.group('%c[handleSaveConfig] Generated JSON Payload moa://local Replacement Audit', 'color: #10b981; font-weight: bold; font-size: 12px;');
+      console.group('%c[handleSaveConfig] Generated JSON Payload Sanitization Audit', 'color: #10b981; font-weight: bold; font-size: 12px;');
       console.log('[handleSaveConfig] Static IP Target Address:', STATIC_OLLAMA_ENDPOINT);
       console.log('[handleSaveConfig] Contains "moa://local" BEFORE replacement?:', rawStringBeforeReplacement.includes('moa://local'));
       console.log('[handleSaveConfig] >>> EXACT JSON STRING BEFORE REPLACEMENT:\n' + exactJsonBeforeReplacement);
 
-      // Execute regex replacement
-      let generatedJsonPayload = rawStringBeforeReplacement.replace(/moa:\/\/local\/?/g, STATIC_OLLAMA_ENDPOINT);
-      generatedJsonPayload = generatedJsonPayload.replace(/http:\/\/local(?::\d+)?\/?/g, STATIC_OLLAMA_ENDPOINT);
+      // Execute safe sanitization
+      let generatedJsonPayload = sanitizeJsonEndpoints(rawStringBeforeReplacement);
 
       const exactJsonAfterReplacement = JSON.stringify(JSON.parse(generatedJsonPayload), null, 2);
       console.log('[handleSaveConfig] Contains "moa://local" AFTER replacement?:', generatedJsonPayload.includes('moa://local'));
