@@ -4118,6 +4118,20 @@ app.get('/api/agents/:id/metadata', async (req, res) => {
   });
 });
 
+// Fetch agent version and docker status
+app.get('/api/agents/:id/version', (req, res) => {
+  const agentId = req.params.id;
+  const current: any = agentStates[agentId] || { status: 'running', version: 'v1.0.0', dockerImage: `clawdock-${agentId}:latest` };
+  return res.json({
+    success: true,
+    agentId,
+    version: current.version || 'v1.0.0',
+    dockerImage: current.dockerImage || `clawdock-${agentId}:latest`,
+    status: current.status || 'running',
+    timestamp: new Date().toISOString()
+  });
+});
+
 // Execute CLI command inside agent Docker container
 app.all('/api/agents/:id/exec', (req, res) => {
   const agentId = req.params.id;
