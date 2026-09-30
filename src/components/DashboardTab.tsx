@@ -67,6 +67,8 @@ interface DashboardTabProps {
   onApplyPresetToAgent?: (preset: ModelPresetSnapshot, targetAgentId: any) => void;
   onAddToast?: (type: 'success' | 'error' | 'info', title: string, description?: string) => void;
   onAddLog?: (log: string) => void;
+  versionErrors?: Record<string, boolean>;
+  onResyncVersion?: (agentId: string) => void;
 }
 
 // Sub-component for Agent Health real-time latency ping chart
@@ -1436,7 +1438,9 @@ export const AgentControlHub: React.FC<{
   presets?: ModelPresetSnapshot[];
   onApplyPresetToAgent?: (preset: ModelPresetSnapshot, targetAgentId: any) => void;
   onAddToast?: (type: 'success' | 'error' | 'info', title: string, description?: string) => void;
-}> = ({ agents, onRestartAgent, selectedAgentId, onSelectAgent, presets, onApplyPresetToAgent, onAddToast }) => {
+  versionErrors?: Record<string, boolean>;
+  onResyncVersion?: (agentId: string) => void;
+}> = ({ agents, onRestartAgent, selectedAgentId, onSelectAgent, presets, onApplyPresetToAgent, onAddToast, versionErrors, onResyncVersion }) => {
   return (
     <div className="p-5 rounded-2xl border border-slate-800 bg-slate-900/90 space-y-4">
       <div className="flex items-center justify-between">
@@ -1473,6 +1477,9 @@ export const AgentControlHub: React.FC<{
                       {ag.name}
                       {isSelected && (
                         <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 shrink-0 animate-pulse" title="Active Focus Agent" />
+                      )}
+                      {versionErrors?.[ag.id] && (
+                        <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0" title="Version fetch failed (404)" />
                       )}
                     </h4>
                     <p className="text-[9px] font-mono text-slate-500 truncate uppercase mt-0.5">
@@ -1596,7 +1603,9 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
   presets = [],
   onApplyPresetToAgent,
   onAddToast,
-  onAddLog
+  onAddLog,
+  versionErrors,
+  onResyncVersion
 }) => {
   // Polling mechanism to fetch agent status updates every 5 seconds
   React.useEffect(() => {
@@ -1660,6 +1669,9 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
                   title={`Focus on ${ag.name} (${ag.status})`}
                 >
                   <span>{ag.name}</span>
+                  {versionErrors?.[ag.id] && (
+                    <AlertTriangle className="w-3.5 h-3.5 text-amber-500" title="Version fetch failed (404)" />
+                  )}
                   {/* Color-coded status badge: green for running, gray for stopped, orange for error */}
                   {isRunning ? (
                     <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
@@ -1930,6 +1942,8 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
         presets={presets}
         onApplyPresetToAgent={onApplyPresetToAgent}
         onAddToast={onAddToast}
+        versionErrors={versionErrors}
+        onResyncVersion={onResyncVersion}
       />
 
       {/* Real-time CPU & Memory Telemetry Visualization */}

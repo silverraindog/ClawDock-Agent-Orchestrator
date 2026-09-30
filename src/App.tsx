@@ -2717,6 +2717,8 @@ moa:
               onApplyPresetToAgent={handleApplyPresetToAgent}
               onAddToast={addToast}
               onAddLog={(log) => setContainerLogs(prev => [...prev, log])}
+              versionErrors={versionErrors}
+              onResyncVersion={refreshAgentVersions}
             />
           )}
 

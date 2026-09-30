@@ -15,7 +15,8 @@ import {
   Search,
   ArrowUpCircle,
   Activity,
-  Menu
+  Menu,
+  AlertTriangle
 } from 'lucide-react';
 import { AgentId, AgentInfo, DockerSystemInfo, SystemUpdateItem } from '../types';
 import { ApiHealthIndicator } from './ApiHealthIndicator';
@@ -288,8 +289,9 @@ export const Navbar: React.FC<NavbarProps> = ({
               'bg-cyan-400'
             }`} />
             <div className="flex flex-col items-start leading-none gap-0.5">
-              <span className="font-bold text-xs sm:text-sm">
+              <span className="font-bold text-xs sm:text-sm flex items-center gap-1.5">
                 {currentAgent?.name || selectedAgentId || 'Agent'}
+                {versionErrors?.[selectedAgentId] && <AlertTriangle className="w-3 h-3 text-amber-500" />}
               </span>
               <span className="text-[9px] font-mono text-indigo-400/70 font-bold uppercase tracking-tighter">
                 {currentAgent.version.startsWith('v') ? currentAgent.version : `v${currentAgent.version}`}
