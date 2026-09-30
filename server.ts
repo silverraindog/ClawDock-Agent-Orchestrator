@@ -3728,9 +3728,9 @@ app.put('/api/agents/:id/config', (req, res) => {
     }
 
     // Extract target model and provider if present
-    const targetModel = (agentId === 'hermes-agent' && (!config?.model?.model || config?.model?.model === 'claude-3-7-sonnet' || config?.model?.model === 'latest')) ? 'gemma4-soul:latest' : (config?.model?.model || 'gemma4-soul:latest');
-    const targetProvider = (agentId === 'hermes-agent' && (!config?.model?.provider || config?.model?.provider === 'anthropic' || config?.model?.provider === 'ollama' || config?.model?.provider === 'custom:ollama')) ? 'custom' : (config?.model?.provider || 'custom');
-    const targetApiKey = config?.model?.apiKey || (agentId === 'hermes-agent' ? 'ollama' : '');
+    const targetModel = config?.model?.model || (agentId === 'hermes-agent' ? 'gemma4-soul:latest' : 'default');
+    const targetProvider = config?.model?.provider || (agentId === 'hermes-agent' ? 'custom' : 'default');
+    const targetApiKey = config?.model?.apiKey || '';
 
     // Attempt real Docker container execution & CLI config setting if Docker is available
     let containerRestarted = false;

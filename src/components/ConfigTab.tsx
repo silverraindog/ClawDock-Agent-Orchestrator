@@ -532,9 +532,18 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
     if (rawMode === 'schema') {
       setRawText(JSON.stringify(config, null, 2));
     } else {
-      setRawText(nativeConfigInfo?.content || DEFAULT_NATIVE_FILES[agentId]?.content || JSON.stringify(config, null, 2));
+      const fallback = DEFAULT_NATIVE_FILES[agentId] || DEFAULT_NATIVE_FILES['hermes-agent'];
+      if (fallback.format === 'yaml') {
+        try {
+          setRawText(YAML.dump(config));
+        } catch {
+          setRawText(nativeConfigInfo?.content || JSON.stringify(config, null, 2));
+        }
+      } else {
+        setRawText(JSON.stringify(config, null, 2));
+      }
     }
-  }, [config, rawMode, nativeConfigInfo, agentId]);
+  }, [config, rawMode, agentId]);
 
   // Deep-Link schema validation between native content and JSON schema
   const deepValidation = React.useMemo(() => {
@@ -987,17 +996,20 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
     setShowSaveValidationWarning(false);
     setPendingRestartParam(null);
 
+    const manualContent = activeSection === 'raw' && rawMode === 'native' ? rawText : undefined;
+
     if (restart) {
       setIsSaveToAgentConfirmOpen(true);
     } else {
       // Save directly to file without exec commands / restart
-      onSaveConfig(false, rawMode === 'native' ? rawText : undefined);
+      onSaveConfig(false, manualContent);
     }
   };
 
   const handleConfirmSaveToAgent = () => {
     setIsSaveToAgentConfirmOpen(false);
-    onSaveConfig(true, rawMode === 'native' ? rawText : undefined);
+    const manualContent = activeSection === 'raw' && rawMode === 'native' ? rawText : undefined;
+    onSaveConfig(true, manualContent);
   };
 
   useEffect(() => {
@@ -1568,7 +1580,8 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
               onClick={() => {
                 setShowSaveValidationWarning(false);
                 if (pendingRestartParam !== null) {
-                  onSaveConfig(pendingRestartParam, rawMode === 'native' ? rawText : undefined);
+                  const manualContent = activeSection === 'raw' && rawMode === 'native' ? rawText : undefined;
+                  onSaveConfig(pendingRestartParam, manualContent);
                 }
               }}
               className="px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-semibold shadow-sm transition-colors"

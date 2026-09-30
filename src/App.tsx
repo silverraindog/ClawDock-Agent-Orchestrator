@@ -1215,62 +1215,36 @@ moa:
       }
 
       // Pre-save check when saving directly to agent: verify container is running
+      let containerIsRunning = true;
+      let detectData: any = null;
       if (restartContainer) {
-        let isRunning = false;
-        let detectData: any = null;
-
         try {
           const detectRes = await fetch(`/api/agents/${selectedAgentId}/detect`);
           if (detectRes.ok) {
             detectData = await detectRes.json();
-            isRunning = detectData.status === 'running';
+            containerIsRunning = detectData.status === 'running';
           }
         } catch (err: any) {
           console.warn('[handleSaveConfig] Container pre-save detect check warning:', err);
         }
 
-        // If container is not running, show helpful warning and stop
-        if (!isRunning) {
-          const containerStatus = detectData?.status || 'stopped';
-          addToast(
-            'error',
-            'Container Offline',
-            `Cannot save to agent: ${currentAgent.name} is currently ${containerStatus}. Start the container or use 'Save configuration to file'.`
-          );
-
+        if (!containerIsRunning) {
+          console.info(`[handleSaveConfig] Container ${selectedAgentId} is offline; configuration will be written to disk/persistence without container CLI execution.`);
+        } else {
+          // Show execution loading state in ConfigInjectionAlert
           setInjectionAlertsMap(prev => ({
             ...prev,
             [selectedAgentId]: {
-              status: 'stopped_warning',
+              status: 'executing',
               agentId: selectedAgentId,
-              title: `Container is ${containerStatus.toUpperCase()}`,
-              message: `Pre-save check failed: Container for ${currentAgent.name} is currently ${containerStatus}. Hermes CLI configuration commands require an active container instance to execute.`,
-              warnings: [
-                `Verified status via /api/agents/${selectedAgentId}/detect at ${new Date().toLocaleTimeString()}`,
-                `Current status: ${containerStatus}`,
-                `Resolution: Start the container from the Docker tab, or click 'Save configuration to file' to update settings on disk without executing container commands.`
-              ],
+              title: `Executing 'Save to Agent' on ${currentAgent.name}`,
+              message: `Injecting configuration and executing 'hermes config set' commands via docker exec...`,
+              isExecuting: true,
+              lastCommand: `docker exec ${detectData?.containerId || selectedAgentId} hermes config set model "${currentConfig.model.model}" && hermes config set provider "${currentConfig.model.provider}"`,
               timestamp: new Date().toLocaleTimeString()
             }
           }));
-
-          setIsSavingConfig(false);
-          return;
         }
-
-        // Show execution loading state in ConfigInjectionAlert
-        setInjectionAlertsMap(prev => ({
-          ...prev,
-          [selectedAgentId]: {
-            status: 'executing',
-            agentId: selectedAgentId,
-            title: `Executing 'Save to Agent' on ${currentAgent.name}`,
-            message: `Injecting configuration and executing 'hermes config set' commands via docker exec...`,
-            isExecuting: true,
-            lastCommand: `docker exec ${detectData?.containerId || selectedAgentId} hermes config set model "${currentConfig.model.model}" && hermes config set provider "${currentConfig.model.provider}"`,
-            timestamp: new Date().toLocaleTimeString()
-          }
-        }));
       }
 
       // Ensure main model, fallback, and MOA configurations are saved and mapped to local static IP
