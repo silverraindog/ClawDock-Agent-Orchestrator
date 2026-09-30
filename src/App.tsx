@@ -188,6 +188,7 @@ export default function App() {
   const [lastBulkUpdate, setLastBulkUpdate] = useState<SystemUpdateItem[]>([]);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isDiscoveryOpen, setIsDiscoveryOpen] = useState(false);
+  const [versionErrors, setVersionErrors] = useState<Record<string, boolean>>({});
 
   const [dockerInfo, setDockerInfo] = useState<DockerSystemInfo>({
     dockerAvailable: true,
@@ -239,6 +240,43 @@ export default function App() {
       } catch {}
       return next;
     });
+  };
+
+  const refreshAgentVersions = async (targetId?: string) => {
+    const agentIds = targetId ? [targetId] : ['hermes-agent', 'zeroclaw', 'openclaw', 'picoclaw'];
+    for (const id of agentIds) {
+      try {
+        const url = `/api/agents/${id}/version`;
+        const res = await fetch(url);
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.success) {
+            setVersionErrors(prev => ({ ...prev, [id]: false }));
+            setAgents(prev => prev.map(agent => {
+              if (agent.id === id) {
+                const newVer = data.version || agent.version;
+                const newImg = data.dockerImage || agent.dockerImage;
+                if (agent.version !== newVer || agent.dockerImage !== newImg) {
+                  return {
+                    ...agent,
+                    version: newVer,
+                    dockerImage: newImg
+                  };
+                }
+              }
+              return agent;
+            }));
+          }
+        } else {
+          console.warn(`[App Version Poll] Failed to fetch agent version | URL: ${url} | Status: ${res.status} ${res.statusText}`);
+          if (res.status === 404) {
+            setVersionErrors(prev => ({ ...prev, [id]: true }));
+          }
+        }
+      } catch (err) {
+        console.error(`[App Version Poll] Network or fetch error for agent "${id}":`, err);
+      }
+    }
   };
 
   // Fetch initial telemetry, persistent state, and live configuration files via resilient bridge
@@ -399,35 +437,8 @@ export default function App() {
     }, 5000);
 
     // 6. 30-second polling mechanism to keep agent versions in sync with docker image changes
-    const refreshAgentVersions = async () => {
-      const agentIds = ['hermes-agent', 'zeroclaw', 'openclaw', 'picoclaw'];
-      for (const id of agentIds) {
-        try {
-          const res = await fetch(`/api/agents/${id}/version`);
-          if (res.ok) {
-            const data = await res.json();
-            if (data && data.success) {
-              setAgents(prev => prev.map(agent => {
-                if (agent.id === id) {
-                  const newVer = data.version || agent.version;
-                  const newImg = data.dockerImage || agent.dockerImage;
-                  if (agent.version !== newVer || agent.dockerImage !== newImg) {
-                    return {
-                      ...agent,
-                      version: newVer,
-                      dockerImage: newImg
-                    };
-                  }
-                }
-                return agent;
-              }));
-            }
-          }
-        } catch {}
-      }
-    };
-
-    const versionInterval = setInterval(refreshAgentVersions, 30000);
+    refreshAgentVersions();
+    const versionInterval = setInterval(() => refreshAgentVersions(), 30000);
 
     return () => {
       clearInterval(pollInterval);
@@ -2560,6 +2571,8 @@ moa:
           onOpenUpdates={() => setCurrentTab('updates')}
           updates={updates}
           onOpenMobileMenu={() => setIsMobileMenuOpen(true)}
+          versionErrors={versionErrors}
+          onResyncVersion={refreshAgentVersions}
         />
 
         {/* Navigation Bar: Top Menu & Bottom Menu (Zero Horizontal Scrolling) */}

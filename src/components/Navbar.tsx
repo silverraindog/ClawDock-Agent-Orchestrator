@@ -91,6 +91,8 @@ interface NavbarProps {
   onOpenUpdates?: () => void;
   updates?: SystemUpdateItem[];
   onOpenMobileMenu?: () => void;
+  versionErrors?: Record<string, boolean>;
+  onResyncVersion?: (agentId: string) => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -107,7 +109,9 @@ export const Navbar: React.FC<NavbarProps> = ({
   updatesCount,
   onOpenUpdates,
   updates,
-  onOpenMobileMenu
+  onOpenMobileMenu,
+  versionErrors,
+  onResyncVersion
 }) => {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -294,6 +298,24 @@ export const Navbar: React.FC<NavbarProps> = ({
             <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform ${dropdownOpen ? 'rotate-180' : ''}`} />
           </button>
 
+          {/* Version 404 Indicator & Re-sync Button for Selected Agent */}
+          {versionErrors?.[selectedAgentId] && (
+            <div className="absolute left-0 top-full mt-1.5 z-20 flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs shadow-lg whitespace-nowrap">
+              <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping" />
+              <span className="font-mono text-[10px] font-bold">Version 404</span>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onResyncVersion?.(selectedAgentId);
+                }}
+                className="px-2 py-0.5 rounded bg-rose-600 hover:bg-rose-500 text-white font-bold text-[10px] transition-colors shadow"
+                title="Manually trigger version fetch for this agent ID"
+              >
+                Re-sync Version
+              </button>
+            </div>
+          )}
+
           {/* Dropdown Menu */}
           {dropdownOpen && (
             <div className="absolute right-0 mt-2 w-72 rounded-2xl bg-slate-900 border border-slate-800 shadow-2xl shadow-black/80 py-2 z-50 animate-in fade-in zoom-in-95">
@@ -330,8 +352,20 @@ export const Navbar: React.FC<NavbarProps> = ({
                         <p className="text-[11px] text-slate-400 truncate mt-0.5">
                           {agent.framework}
                         </p>
-                        <div className="mt-1.5 flex items-center gap-1.5">
+                        <div className="mt-1.5 flex items-center justify-between gap-2">
                           {getStatusBadge(agent.status)}
+                          {versionErrors?.[agent.id] && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onResyncVersion?.(agent.id);
+                              }}
+                              className="px-2 py-0.5 rounded bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 text-[10px] font-bold transition-colors"
+                              title="Re-sync version for this agent"
+                            >
+                              Re-sync Version
+                            </button>
+                          )}
                         </div>
                       </div>
                     </button>
