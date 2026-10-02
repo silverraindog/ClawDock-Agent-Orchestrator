@@ -2444,6 +2444,49 @@ function saveClawdockPersistence(data: Record<string, any>) {
   }
 }
 
+// Dedicated Persistence Atomic Commit Endpoint
+app.post(['/api/persistence/commit', '/api/persistence/commit/'], (req, res) => {
+  try {
+    const { agentId, config, meta, timestamp } = req.body || {};
+    const current = loadClawdockPersistence();
+
+    if (!current.configs) current.configs = {};
+    if (agentId && config) {
+      current.configs[agentId] = config;
+    }
+
+    if (!current.commitHistory) current.commitHistory = [];
+    current.commitHistory.unshift({
+      id: `commit-${agentId || 'global'}-${Date.now()}`,
+      agentId,
+      timestamp: timestamp || new Date().toISOString(),
+      meta: meta || {}
+    });
+    // Keep max 50 commits
+    if (current.commitHistory.length > 50) {
+      current.commitHistory = current.commitHistory.slice(0, 50);
+    }
+
+    current.lastCommitted = {
+      agentId,
+      timestamp: timestamp || new Date().toISOString(),
+      meta: meta || {}
+    };
+
+    saveClawdockPersistence(current);
+
+    return res.json({
+      success: true,
+      committed: true,
+      agentId,
+      timestamp: timestamp || new Date().toISOString(),
+      data: current
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, committed: false, error: err.message });
+  }
+});
+
 // JSON Persistence Endpoints with support for GET, POST, PUT, OPTIONS
 app.all('/api/persistence', (req, res, next) => {
   if (req.method === 'OPTIONS') {
@@ -3493,8 +3536,20 @@ function generateHermesYaml(cfg: any): string {
     }
 
     const itemProv = (resolved.provider === 'custom:ollama' || resolved.provider === 'ollama') ? 'custom' : resolved.provider;
-    const itemBaseUrl = itemProv === 'custom' ? finalBaseUrlV1 : '';
-    const itemApiKey = itemProv === 'custom' ? finalApiKey : '';
+    const itemBaseUrl = itemProv === 'custom' 
+      ? finalBaseUrlV1 
+      : itemProv === 'openrouter' 
+        ? 'https://openrouter.ai/api/v1' 
+        : itemProv === 'openai' 
+          ? 'https://api.openai.com/v1' 
+          : itemProv === 'anthropic' 
+            ? 'https://api.anthropic.com/v1' 
+            : '';
+    const itemApiKey = itemProv === 'custom' 
+      ? (finalApiKey || 'ollama') 
+      : itemProv === 'openrouter' 
+        ? (moa?.apiKey || fb?.apiKey || m?.apiKey || process.env.OPENROUTER_API_KEY || '') 
+        : (moa?.apiKey || m?.apiKey || '');
 
     return `        - provider: ${itemProv}
           model: ${resolved.model}
@@ -3532,8 +3587,18 @@ function generateHermesYaml(cfg: any): string {
     aggProv = 'custom';
   }
   const aggModel = resolvedAgg.model;
-  const aggBaseUrl = aggProv === 'custom' ? finalBaseUrlV1 : '';
-  const aggApiKey = aggProv === 'custom' ? finalApiKey : '';
+  const aggBaseUrl = aggProv === 'custom' 
+    ? finalBaseUrlV1 
+    : aggProv === 'openrouter' 
+      ? 'https://openrouter.ai/api/v1' 
+      : aggProv === 'openai' 
+        ? 'https://api.openai.com/v1' 
+        : '';
+  const aggApiKey = aggProv === 'custom' 
+    ? (finalApiKey || 'ollama') 
+    : aggProv === 'openrouter' 
+      ? (moa?.aggregatorApiKey || fb?.apiKey || m?.apiKey || process.env.OPENROUTER_API_KEY || '') 
+      : (moa?.apiKey || m?.apiKey || '');
 
   const fbProvider = fb?.provider || fb?.fallbackProvider || 'openrouter';
   const fbModel = fb?.model || fb?.fallbackModel || 'anthropic/claude-3.7-sonnet';
@@ -3612,9 +3677,14 @@ moa:
     ollama: "${finalBaseUrl}"
     custom:ollama: "${finalBaseUrl}"
     local-ollama: "${finalBaseUrl}"
+    openrouter: "https://openrouter.ai/api/v1"
   provider_mapping:
-    ${aggModel}: "custom"
-${rawProposers.map((p: any) => `    ${typeof p === 'string' ? (p === 'latest' ? 'gemma4-soul:latest' : p === '16b' ? 'deepseek-coder-v2:16b' : p) : p.model || p.name}: "custom"`).join('\n')}
+    ${aggModel}: "${aggProv}"
+${rawProposers.map((p: any) => {
+  const pName = typeof p === 'string' ? (p === 'latest' ? 'gemma4-soul:latest' : p === '16b' ? 'deepseek-coder-v2:16b' : p) : p.model || p.name;
+  const pProv = parseModelAndProvider(pName, providerMapping, 'gemma4-soul:latest').provider;
+  return `    ${pName}: "${pProv}"`;
+}).join('\n')}
   presets:
     default:
       reference_models:
@@ -3792,6 +3862,42 @@ app.put('/api/agents/:id/config', (req, res) => {
                 } catch (e: any) {
                   execLogs.push(`Failed to set API key via CLI: ${e.message}`);
                 }
+              }
+            } else if (agentId === 'zeroclaw') {
+              try {
+                execSync(`docker exec -i ${cName} sh -c "mkdir -p /root/.zeroclaw /etc/zeroclaw /workspace && cat > /root/.zeroclaw/config.toml && cp /root/.zeroclaw/config.toml /etc/zeroclaw/config.toml && cp /root/.zeroclaw/config.toml /workspace/zeroclaw.toml"`, {
+                  input: nativeContent,
+                  encoding: 'utf8',
+                  timeout: 3000,
+                  stdio: ['pipe', 'pipe', 'ignore']
+                });
+                execLogs.push(`Wrote zeroclaw.toml configuration to container ${cName}`);
+              } catch (e: any) {
+                execLogs.push(`Container file write warning: ${e.message}`);
+              }
+            } else if (agentId === 'openclaw') {
+              try {
+                execSync(`docker exec -i ${cName} sh -c "mkdir -p /root/.openclaw /etc/openclaw /workspace && cat > /root/.openclaw/config.json && cp /root/.openclaw/config.json /etc/openclaw/config.json && cp /root/.openclaw/config.json /workspace/openclaw.json"`, {
+                  input: nativeContent,
+                  encoding: 'utf8',
+                  timeout: 3000,
+                  stdio: ['pipe', 'pipe', 'ignore']
+                });
+                execLogs.push(`Wrote openclaw.json configuration to container ${cName}`);
+              } catch (e: any) {
+                execLogs.push(`Container file write warning: ${e.message}`);
+              }
+            } else if (agentId === 'picoclaw') {
+              try {
+                execSync(`docker exec -i ${cName} sh -c "mkdir -p /root/.picoclaw /etc/picoclaw /workspace && cat > /root/.picoclaw/config.json && cp /root/.picoclaw/config.json /etc/picoclaw/config.json && cp /root/.picoclaw/config.json /workspace/picoclaw.json"`, {
+                  input: nativeContent,
+                  encoding: 'utf8',
+                  timeout: 3000,
+                  stdio: ['pipe', 'pipe', 'ignore']
+                });
+                execLogs.push(`Wrote picoclaw.json configuration to container ${cName}`);
+              } catch (e: any) {
+                execLogs.push(`Container file write warning: ${e.message}`);
               }
             }
 
@@ -4119,7 +4225,7 @@ app.get('/api/agents/:id/metadata', async (req, res) => {
 });
 
 // Fetch agent version and docker status
-app.get('/api/agents/:id/version', (req, res) => {
+app.all(['/api/agents/:id/version', '/api/agents/:id/version/'], (req, res) => {
   const agentId = req.params.id;
   const current: any = agentStates[agentId] || { status: 'running', version: 'v1.0.0', dockerImage: `clawdock-${agentId}:latest` };
   return res.json({

@@ -17,7 +17,10 @@ import {
   PanelBottom,
   PanelTop,
   Menu,
-  X
+  X,
+  AlertTriangle,
+  Info,
+  Save
 } from 'lucide-react';
 import { 
   AgentId, 
@@ -69,7 +72,8 @@ import {
   fetchLastKnownGoodConfigs,
   getLocalCheckpointHistory,
   deleteLocalCheckpointSnapshot,
-  fetchCheckpointHistory
+  fetchCheckpointHistory,
+  commitState
 } from './utils/apiBridge';
 import { validateModelAgainstCatalog } from './utils/modelValidation';
 
@@ -96,7 +100,7 @@ import {
   SchemaValidationError, 
   NetworkTransportError 
 } from './utils/configValidator';
-import { enhanceConfigWithNative, detectOpenClawConfigFormat, sanitizeConfigString } from './utils/configParser';
+import { enhanceConfigWithNative, detectOpenClawConfigFormat, sanitizeConfigString, generateHermesYaml } from './utils/configParser';
 
 type MainTab = 'dashboard' | 'config' | 'presets' | 'everos' | 'skills' | 'mcp' | 'docker' | 'console' | 'export' | 'updates' | 'diagnostics' | 'agent-logs';
 
@@ -189,6 +193,16 @@ export default function App() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isDiscoveryOpen, setIsDiscoveryOpen] = useState(false);
   const [versionErrors, setVersionErrors] = useState<Record<string, boolean>>({});
+  const [saveConfirmationState, setSaveConfirmationState] = useState<{
+    isOpen: boolean;
+    restartContainer: boolean;
+    manualNativeContent?: string;
+    agentId: AgentId;
+    agentName: string;
+    model: string;
+    provider: string;
+    containerId?: string;
+  } | null>(null);
 
   const [dockerInfo, setDockerInfo] = useState<DockerSystemInfo>({
     dockerAvailable: true,
@@ -247,8 +261,11 @@ export default function App() {
     for (const id of agentIds) {
       try {
         const url = `/api/agents/${id}/version`;
-        const res = await fetch(url);
-        if (res.ok) {
+        const res = await fetch(url, {
+          headers: { 'Accept': 'application/json' }
+        });
+        const contentType = res.headers.get('content-type') || '';
+        if (res.ok && contentType.includes('application/json')) {
           const data = await res.json();
           if (data && data.success) {
             setVersionErrors(prev => ({ ...prev, [id]: false }));
@@ -268,13 +285,12 @@ export default function App() {
             }));
           }
         } else {
-          console.warn(`[App Version Poll] Failed to fetch agent version | URL: ${url} | Status: ${res.status} ${res.statusText}`);
-          if (res.status === 404) {
-            setVersionErrors(prev => ({ ...prev, [id]: true }));
-          }
+          console.warn(`[App Version Poll] Endpoint ${url} returned status ${res.status} (Content-Type: ${contentType})`);
+          setVersionErrors(prev => ({ ...prev, [id]: true }));
         }
-      } catch (err) {
-        console.error(`[App Version Poll] Network or fetch error for agent "${id}":`, err);
+      } catch (err: any) {
+        console.warn(`[App Version Poll] Network or polling issue for agent "${id}":`, err?.message || err);
+        setVersionErrors(prev => ({ ...prev, [id]: true }));
       }
     }
   };
@@ -1092,73 +1108,44 @@ export default function App() {
     }
   };
 
-  // Hermes YAML generator helper
-  const generateHermesYaml = (cfg: any): string => {
-    const m = cfg?.model || {};
-    const sys = cfg?.system || {};
-    const moa = cfg?.moa || {};
-    const sec = cfg?.security || {};
-    const sto = cfg?.storage || {};
-    const fb = cfg?.fallback || {};
-    const model = m?.default || m?.model || 'gemma4-soul:latest';
-    const provider = m?.provider || 'custom';
-    const rawBase = m?.baseUrl || 'http://192.168.1.49:11434';
-    const baseUrl = rawBase
-      .replace(/11434host:11434/g, '11434')
-      .replace(/:11434host:\d+/g, ':11434')
-      .replace(/host:11434/g, '11434');
-    const apiKey = m?.apiKey || 'ollama';
-    const cleanFbBase = (fb?.baseUrl || baseUrl)
-      .replace(/11434host:11434/g, '11434')
-      .replace(/:11434host:\d+/g, ':11434')
-      .replace(/host:11434/g, '11434');
-
-    return `version: "1.0.0"
-agent_id: "${cfg?.agentId || 'hermes-agent'}"
-agent_name: "${sys?.agentName || 'Hermes Code Assistant'}"
-persona: "${sys?.personaName || 'Hermes Prime'}"
-system_preset: "${sys?.preset || 'engineer'}"
-system_prompt: "${(sys?.systemPrompt || '').replace(/"/g, '\\"')}"
-
-model:
-  provider: ${provider}
-  apiKey: ${apiKey}
-  temperature: ${m?.temperature ?? 0.3}
-  reasoningEffort: ${m?.reasoningEffort || 'high'}
-  maxTokens: ${m?.maxTokens ?? 8192}
-  contextWindow: ${m?.contextWindow ?? 200000}
-  baseUrl: ${baseUrl}
-  topP: ${m?.topP ?? 0.95}
-  default: ${model}
-  base_url: ${baseUrl}/v1
-
-fallback:
-  enabled: ${fb?.enabled ?? true}
-  strategy: "${fb?.strategy || 'on_offline'}"
-  target_agent_id: "${fb?.targetAgentId || 'zeroclaw'}"
-  provider: "${fb?.provider || 'ollama'}"
-  model: "${fb?.model || 'hermes-3-llama-3.1-8b'}"
-  base_url: "${cleanFbBase}"
-  api_key: "${fb?.apiKey || ''}"
-
-security:
-  sandbox_mode: "${sec?.sandboxMode || 'docker_isolated'}"
-  max_execution_time_sec: ${sec?.maxExecutionTimeSec ?? 120}
-
-storage:
-  memory_backend: "${sto?.memoryBackend || 'everos'}"
-  db_path: "${sto?.dbPath || '/data/everos/memories'}"
-
-moa:
-  enabled: ${moa?.enabled ?? true}
-  rounds: ${moa?.rounds ?? 2}
-  temperature_spread: ${moa?.temperatureSpread ?? 0.3}
-  consensus_threshold: ${moa?.consensusThreshold ?? 0.85}
-`;
-  };
-
   // Save config with restartContainer toggle and pre-save running container verification
-  const handleSaveConfig = async (restartContainer: boolean = true, manualNativeContent?: string) => {
+  const handleSaveConfig = async (
+    restartContainer: boolean = true, 
+    manualNativeContent?: string,
+    skipConfirm: boolean = false
+  ) => {
+    // If container restart/execution is requested on an active running container, prompt for confirmation first
+    if (restartContainer && !skipConfirm) {
+      let isRunning = currentAgent.status === 'running';
+      let containerId = currentAgent.containerId;
+      try {
+        const detectRes = await fetch(`/api/agents/${selectedAgentId}/detect`);
+        if (detectRes.ok) {
+          const detectData = await detectRes.json();
+          if (detectData && typeof detectData.status === 'string') {
+            isRunning = detectData.status === 'running';
+            containerId = detectData.containerId || containerId;
+          }
+        }
+      } catch (err) {
+        console.warn('[handleSaveConfig] Detect check error:', err);
+      }
+
+      if (isRunning) {
+        setSaveConfirmationState({
+          isOpen: true,
+          restartContainer,
+          manualNativeContent,
+          agentId: selectedAgentId,
+          agentName: currentAgent.name,
+          model: currentConfig.model?.model || 'default',
+          provider: currentConfig.model?.provider || 'default',
+          containerId
+        });
+        return;
+      }
+    }
+
     setIsSavingConfig(true);
 
     const STATIC_OLLAMA_ENDPOINT = 'http://192.168.1.49:11434';
@@ -1420,20 +1407,60 @@ moa:
         headers: { 'Content-Type': 'application/json' },
         body: generatedJsonPayload
       });
-      const data = await res.json();
+      
+      let data: any = {};
+      try {
+        data = await res.json();
+      } catch (e) {
+        if (!res.ok) {
+          throw new Error(`Server returned HTTP ${res.status} ${res.statusText}`);
+        }
+      }
+
+      if (!res.ok || (data && data.success === false)) {
+        throw new Error(data?.error || `Failed to commit configuration to container (HTTP ${res.status})`);
+      }
+
+      // Explicitly commit the final state to the backend persistence layer via commitState utility to guarantee backend storage atomicity
+      try {
+        const commitResult = await commitState(selectedAgentId, normalizedConfig, {
+          restartContainer,
+          manualNativeContent: !!manualNativeContent,
+          model: normalizedConfig.model?.model,
+          provider: normalizedConfig.model?.provider,
+          filePath: DEFAULT_NATIVE_FILES[selectedAgentId]?.fileName || 'config.yaml'
+        });
+        if (!commitResult.success) {
+          console.warn('[handleSaveConfig] State commit to /api/persistence/commit returned warning:', commitResult.error);
+        }
+      } catch (commitErr) {
+        console.warn('[handleSaveConfig] Non-fatal commitState warning:', commitErr);
+      }
+
+      // Explicitly commit the active model & provider changes to the React agents state
+      setAgents(prev => prev.map(ag => {
+        if (ag.id === selectedAgentId) {
+          return {
+            ...ag,
+            model: normalizedConfig.model?.model || ag.model,
+            framework: `${normalizedConfig.model?.provider || ag.framework.split(' ')[0]} - ${normalizedConfig.model?.model || ag.model}`
+          };
+        }
+        return ag;
+      }));
 
       if (restartContainer) {
         addToast(
           'success', 
-          'Saved to Agent', 
-          data.message || `Updated configuration and executed container commands for ${currentAgent.name}`
+          'Configuration Committed & Saved', 
+          data.message || `Saved to ${DEFAULT_NATIVE_FILES[selectedAgentId]?.fileName || 'config file'} (Model: ${normalizedConfig.model?.model}, Provider: ${normalizedConfig.model?.provider}) and restarted ${currentAgent.name}.`
         );
 
         const execLogs: string[] = data.execLogs || [];
         const lastCmd = `docker exec ${selectedAgentId} hermes config set model "${currentConfig.model.model}" && hermes config set provider "${currentConfig.model.provider}"`;
         const outputText = execLogs.length > 0
           ? execLogs.join('\n')
-          : `[Docker Engine] hermes config set model "${currentConfig.model.model}" (applied)\n[Docker Engine] hermes config set provider "${currentConfig.model.provider}" (applied)\n[Docker Engine] Container ${selectedAgentId} restarted with updated configuration.`;
+          : `[Docker Engine] Config saved to data/clawdock/${DEFAULT_NATIVE_FILES[selectedAgentId]?.fileName || 'config.yaml'}\n[Docker Engine] Model set to "${currentConfig.model.model}" (${currentConfig.model.provider})\n[Docker Engine] Container ${selectedAgentId} restarted with updated configuration.`;
 
         setInjectionAlertsMap(prev => ({
           ...prev,
@@ -1452,14 +1479,14 @@ moa:
 
         setContainerLogs(prev => [
           ...prev,
-          `[Docker Engine] Container ${selectedAgentId} updated with model=${currentConfig.model.model}, provider=${currentConfig.model.provider}.`,
+          `[Docker Engine] Container ${selectedAgentId} committed with model=${currentConfig.model.model}, provider=${currentConfig.model.provider}.`,
           ...execLogs
         ]);
       } else {
         addToast(
           'success', 
-          'Saved to File', 
-          data.message || `Updated configuration schema for ${currentAgent.name}`
+          'Configuration Saved to File', 
+          data.message || `Written to data/clawdock/${DEFAULT_NATIVE_FILES[selectedAgentId]?.fileName || 'config file'} (Model: ${normalizedConfig.model?.model}, Provider: ${normalizedConfig.model?.provider})`
         );
 
         setInjectionAlertsMap(prev => ({
@@ -1512,8 +1539,23 @@ moa:
         return nextMap;
       });
 
-    } catch {
-      addToast('success', 'Configuration Saved', `Local schema updated for ${currentAgent.name}`);
+    } catch (err: any) {
+      console.error('[handleSaveConfig] Save operation error:', err);
+      addToast(
+        'error', 
+        'Save Failed', 
+        err?.message || `Failed to save configuration for ${currentAgent.name}. Please check Docker container connectivity and try again.`
+      );
+      setInjectionAlertsMap(prev => ({
+        ...prev,
+        [selectedAgentId]: {
+          status: 'error',
+          agentId: selectedAgentId,
+          title: 'Configuration Save Failed',
+          message: err?.message || 'Could not commit configuration to persistent storage or container environment.',
+          timestamp: new Date().toLocaleTimeString()
+        }
+      }));
     } finally {
       setIsSavingConfig(false);
     }
@@ -2900,6 +2942,113 @@ moa:
         onUnbindContainer={handleUnbindContainer}
         onStartAgent={handleStartAgent}
       />
+
+      {/* Running Container Execution Authorization Confirmation Modal */}
+      {saveConfirmationState?.isOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
+            {/* Modal Header */}
+            <div className="p-4 sm:p-5 border-b border-slate-800 flex items-center justify-between bg-slate-900/90">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-amber-500/10 border border-amber-500/20">
+                  <AlertTriangle className="w-5 h-5 text-amber-400" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white">Authorize Container Configuration Change</h3>
+                  <p className="text-[11px] text-slate-400">Explicit user authorization required for active container</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setSaveConfirmationState(null)}
+                className="text-slate-400 hover:text-white p-1 hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-5 space-y-4">
+              <p className="text-xs text-slate-300 leading-relaxed">
+                The container for <strong className="text-white">{saveConfirmationState.agentName}</strong> is currently <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 text-[10px] font-bold border border-emerald-500/20 font-mono">RUNNING</span>. Applying these changes will execute container-side configuration commands and trigger a graceful restart.
+              </p>
+
+              {/* Highlights Card */}
+              <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-2.5">
+                <div className="flex items-center justify-between text-xs pb-2 border-b border-slate-800/60">
+                  <span className="text-slate-400 font-medium">Target Agent:</span>
+                  <span className="px-2.5 py-0.5 rounded-lg bg-indigo-500/20 text-indigo-300 font-bold border border-indigo-500/30 text-xs">
+                    {saveConfirmationState.agentName}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between text-xs pb-2 border-b border-slate-800/60">
+                  <span className="text-slate-400 font-medium">Container ID:</span>
+                  <code className="text-slate-300 font-mono text-[11px]">
+                    {saveConfirmationState.containerId || saveConfirmationState.agentId}
+                  </code>
+                </div>
+
+                <div className="flex items-center justify-between text-xs pb-2 border-b border-slate-800/60">
+                  <span className="text-slate-400 font-medium">Target Model:</span>
+                  <span className="font-mono text-slate-200 font-semibold">{saveConfirmationState.model} <span className="text-slate-400">({saveConfirmationState.provider})</span></span>
+                </div>
+
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-slate-400 font-medium">Execution Impact:</span>
+                  <span className="text-amber-300 font-semibold text-[11px]">Inject Config &amp; Graceful Restart</span>
+                </div>
+              </div>
+
+              <div className="p-3 rounded-lg bg-amber-950/30 border border-amber-500/20 text-[11px] text-amber-200 flex items-start gap-2">
+                <Info className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                <p className="leading-relaxed">
+                  Active chat sessions and inference workers on this agent node may briefly reconnect during restart.
+                </p>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 border-t border-slate-800 bg-slate-950/60 flex flex-wrap items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setSaveConfirmationState(null)}
+                className="px-3.5 py-2 rounded-xl text-xs font-semibold text-slate-300 bg-slate-800 hover:bg-slate-700 border border-slate-700 cursor-pointer transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const state = saveConfirmationState;
+                  setSaveConfirmationState(null);
+                  if (state) {
+                    handleSaveConfig(false, state.manualNativeContent, true);
+                  }
+                }}
+                className="px-3.5 py-2 rounded-xl text-xs font-semibold text-slate-200 bg-slate-800 hover:bg-slate-750 border border-indigo-500/40 cursor-pointer transition-colors"
+                title="Save configuration to disk without restarting the running container"
+              >
+                Save to File Only
+              </button>
+              <button
+                type="button"
+                id="confirm-authorize-container-btn"
+                onClick={() => {
+                  const state = saveConfirmationState;
+                  setSaveConfirmationState(null);
+                  if (state) {
+                    handleSaveConfig(true, state.manualNativeContent, true);
+                  }
+                }}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 shadow-lg shadow-indigo-600/30 flex items-center gap-1.5 cursor-pointer transition-all"
+              >
+                <Save className="w-3.5 h-3.5" />
+                <span>Authorize &amp; Execute</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {isBulkUpdateSummaryOpen && <BulkUpdateSummaryModal isOpen={isBulkUpdateSummaryOpen} onClose={() => setIsBulkUpdateSummaryOpen(false)} updates={lastBulkUpdate} />}
       {/* Toast Notification Container */}

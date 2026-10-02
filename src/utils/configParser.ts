@@ -1222,3 +1222,294 @@ export function sanitizeConfigString(input: any): any {
   }
   return input;
 }
+
+/**
+ * Resolves a model name string or object into its respective provider and model identifier.
+ */
+export function parseModelAndProvider(
+  rawInput: string,
+  providerMapping: Record<string, string> = {},
+  defaultFallbackModel = 'gemma4-soul:latest'
+): { provider: string; model: string } {
+  const KNOWN_PROVIDERS = new Set(['custom', 'ollama', 'openrouter', 'openai', 'anthropic', 'gemini', 'google', 'groq', 'mistral', 'together', 'deepseek']);
+  let raw = (!rawInput || rawInput === 'default') ? defaultFallbackModel : rawInput.trim();
+
+  // Repair known corrupted single-token model names
+  if (raw === 'latest') raw = 'gemma4-soul:latest';
+  if (raw === '16b') raw = 'deepseek-coder-v2:16b';
+
+  if (raw.startsWith('custom:ollama:')) {
+    return { provider: 'custom', model: raw.slice('custom:ollama:'.length) };
+  }
+  if (raw.startsWith('ollama:') || raw.startsWith('custom:')) {
+    const modelPart = raw.slice(raw.indexOf(':') + 1);
+    return { provider: 'custom', model: modelPart };
+  }
+
+  // Check if it starts with a recognized provider prefix (e.g. openrouter:anthropic/claude-3-7-sonnet)
+  const firstColonIndex = raw.indexOf(':');
+  if (firstColonIndex !== -1 && !raw.includes('://')) {
+    const candidatePrefix = raw.slice(0, firstColonIndex).toLowerCase();
+    if (KNOWN_PROVIDERS.has(candidatePrefix)) {
+      const modelPart = raw.slice(firstColonIndex + 1);
+      return { provider: candidatePrefix === 'ollama' ? 'custom' : candidatePrefix, model: modelPart };
+    }
+  }
+
+  // Check providerMapping
+  const alias = providerMapping[raw];
+  if (alias) {
+    if (alias === 'local-ollama' || alias === 'ollama' || alias === 'custom:ollama' || alias === 'custom') {
+      return { provider: 'custom', model: raw };
+    }
+    if (alias === 'remote-openrouter' || alias === 'openrouter') {
+      return { provider: 'openrouter', model: raw };
+    }
+    if (alias === 'remote-openai' || alias === 'openai') {
+      return { provider: 'openai', model: raw };
+    }
+    if (alias === 'remote-anthropic' || alias === 'anthropic') {
+      return { provider: 'anthropic', model: raw };
+    }
+    return { provider: alias, model: raw };
+  }
+
+  if (raw.includes('/')) {
+    return { provider: 'openrouter', model: raw };
+  }
+
+  return { provider: 'custom', model: raw };
+}
+
+/**
+ * Generates a complete, standard config.yaml for Hermes Agent including the comprehensive moa configuration.
+ */
+export function generateHermesYaml(cfg: any): string {
+  const m = cfg?.model || {};
+  const sys = cfg?.system || {};
+  const moa = cfg?.moa || {};
+  const sec = cfg?.security || {};
+  const sto = cfg?.storage || {};
+  const env = cfg?.customEnv || cfg?.env || {};
+  const fb = cfg?.fallback || {};
+  const web = cfg?.web || {};
+
+  const providerMapping: Record<string, string> = { ...(moa?.providerMapping || {}), ...(cfg?.providerMapping || {}) };
+  delete providerMapping['latest'];
+  delete providerMapping['16b'];
+
+  const rawModel = m?.default || m?.model || 'gemma4-soul:latest';
+  const model = (rawModel === 'default' || rawModel === 'latest') ? 'gemma4-soul:latest' : rawModel;
+  const rawProvider = m?.provider || 'custom';
+  const isOllamaLocal = rawProvider === 'ollama' || rawProvider === 'custom' || m?.baseUrl?.includes('192.168.1.49') || m?.baseUrl === 'http://192.168.1.49:11434' || !m?.baseUrl;
+  const finalProvider = isOllamaLocal ? 'custom' : rawProvider;
+  const finalApiKey = isOllamaLocal ? (m?.apiKey || 'ollama') : (m?.apiKey || '');
+  const rawBaseUrl = m?.baseUrl || (isOllamaLocal ? 'http://192.168.1.49:11434' : '');
+  const finalBaseUrl = rawBaseUrl || 'http://192.168.1.49:11434';
+  const finalBaseUrlV1 = rawBaseUrl ? (rawBaseUrl.endsWith('/v1') ? rawBaseUrl : rawBaseUrl + '/v1') : 'http://192.168.1.49:11434/v1';
+
+  // Proposer / Reference model resolution
+  const rawProposers = (moa?.proposerModels && moa.proposerModels.length > 0)
+    ? moa.proposerModels
+    : ['gemma4-soul:latest', 'deepseek-coder-v2:16b', 'qwen2-5-coder-7b-32k:latest'];
+
+  const referenceModelsList = rawProposers.map((rawModelName: any) => {
+    let resolved;
+    if (typeof rawModelName === 'string') {
+      const s = rawModelName === 'latest' ? 'gemma4-soul:latest' : rawModelName === '16b' ? 'deepseek-coder-v2:16b' : rawModelName;
+      resolved = parseModelAndProvider(s, providerMapping, 'gemma4-soul:latest');
+    } else {
+      const p = rawModelName.provider || '';
+      const mod = rawModelName.model || 'gemma4-soul:latest';
+      if (p && !['custom', 'ollama', 'openrouter', 'openai', 'anthropic', 'gemini'].includes(p)) {
+        resolved = {
+          provider: 'custom',
+          model: `${p}:${mod}`
+        };
+      } else {
+        resolved = {
+          provider: (p === 'custom:ollama' || p === 'ollama' || !p) ? 'custom' : p,
+          model: mod === 'latest' ? 'gemma4-soul:latest' : mod === '16b' ? 'deepseek-coder-v2:16b' : mod
+        };
+      }
+    }
+
+    const itemProv = (resolved.provider === 'custom:ollama' || resolved.provider === 'ollama') ? 'custom' : resolved.provider;
+    const itemBaseUrl = itemProv === 'custom' 
+      ? finalBaseUrlV1 
+      : itemProv === 'openrouter' 
+        ? 'https://openrouter.ai/api/v1' 
+        : itemProv === 'openai' 
+          ? 'https://api.openai.com/v1' 
+          : itemProv === 'anthropic' 
+            ? 'https://api.anthropic.com/v1' 
+            : '';
+    const itemApiKey = itemProv === 'custom' 
+      ? (finalApiKey || 'ollama') 
+      : itemProv === 'openrouter' 
+        ? (moa?.apiKey || fb?.apiKey || m?.apiKey || 'env:OPENROUTER_API_KEY') 
+        : (moa?.apiKey || m?.apiKey || '');
+
+    return `        - provider: ${itemProv}
+          model: ${resolved.model}
+          base_url: ${itemBaseUrl || finalBaseUrlV1}
+          api_key: ${itemApiKey || finalApiKey}
+          enabled: true`;
+  }).join('\n');
+
+  // Aggregator model resolution
+  let rawAgg = moa?.aggregatorModel || model || 'gemma4-soul:latest';
+  if (rawAgg === 'latest') rawAgg = 'gemma4-soul:latest';
+  if (rawAgg === '16b') rawAgg = 'deepseek-coder-v2:16b';
+
+  let resolvedAgg;
+  if (typeof rawAgg === 'string') {
+    resolvedAgg = parseModelAndProvider(rawAgg, providerMapping, model || 'gemma4-soul:latest');
+  } else {
+    const p = rawAgg.provider || '';
+    const mod = rawAgg.model || model || 'gemma4-soul:latest';
+    if (p && !['custom', 'ollama', 'openrouter', 'openai', 'anthropic', 'gemini'].includes(p)) {
+      resolvedAgg = {
+        provider: 'custom',
+        model: `${p}:${mod}`
+      };
+    } else {
+      resolvedAgg = {
+        provider: (p === 'custom:ollama' || p === 'ollama' || !p) ? 'custom' : p,
+        model: mod === 'latest' ? 'gemma4-soul:latest' : mod === '16b' ? 'deepseek-coder-v2:16b' : mod
+      };
+    }
+  }
+
+  let aggProv = resolvedAgg.provider;
+  if (aggProv === 'custom:ollama' || aggProv === 'ollama') {
+    aggProv = 'custom';
+  }
+  const aggModel = resolvedAgg.model;
+  const aggBaseUrl = aggProv === 'custom' 
+    ? finalBaseUrlV1 
+    : aggProv === 'openrouter' 
+      ? 'https://openrouter.ai/api/v1' 
+      : aggProv === 'openai' 
+        ? 'https://api.openai.com/v1' 
+        : '';
+  const aggApiKey = aggProv === 'custom' 
+    ? (finalApiKey || 'ollama') 
+    : aggProv === 'openrouter' 
+      ? (moa?.aggregatorApiKey || fb?.apiKey || m?.apiKey || 'env:OPENROUTER_API_KEY') 
+      : (moa?.apiKey || m?.apiKey || '');
+
+  const fbProvider = fb?.provider || fb?.fallbackProvider || 'openrouter';
+  const fbModel = fb?.model || fb?.fallbackModel || 'nex-agi/nex-n2.5-mini:free';
+  const fbApiKey = fb?.apiKey || '';
+  const fbBaseUrl = fb?.baseUrl || 'https://openrouter.ai/api/v1';
+
+  return `version: "1.0.0"
+agent_id: "${cfg?.agentId || 'hermes-agent'}"
+agent_name: "${sys?.agentName || 'Hermes Code Assistant'}"
+persona: "${sys?.personaName || 'Hermes Prime'}"
+system_preset: "${sys?.preset || 'engineer'}"
+system_prompt: "${(sys?.systemPrompt || 'You are hermes-agent, an autonomous AI assistant.').replace(/"/g, '\\"')}"
+
+model:
+  provider: ${finalProvider}
+  apiKey: ${finalApiKey}
+  temperature: ${m?.temperature ?? 0.3}
+  reasoningEffort: ${m?.reasoningEffort || 'high'}
+  maxTokens: ${m?.maxTokens ?? 8192}
+  contextWindow: ${m?.contextWindow ?? 200000}
+  baseUrl: ${finalBaseUrl}
+  topP: ${m?.topP ?? 0.95}
+  default: ${model}
+  base_url: ${finalBaseUrlV1}
+
+web:
+  backend: ${web?.backend || 'exa'}
+  provider_tier:
+    exa: ${web?.provider_tier?.exa || 'free'}
+
+fallback:
+  enabled: ${fb?.enabled ?? true}
+  strategy: "${fb?.strategy || 'on_offline'}"
+  target_agent_id: "${fb?.targetAgentId || 'zeroclaw'}"
+  latency_threshold_ms: ${fb?.latencyThresholdMs ?? 3000}
+  provider: "${fbProvider}"
+  model: "${fbModel}"
+  api_key: "${fbApiKey.replace(/"/g, '\\"')}"
+  base_url: "${fbBaseUrl}"
+  use_proxy: ${fb?.useProxy !== false}
+
+channels:
+  telegram:
+    enabled: true
+    bot_token: "env:TELEGRAM_BOT_TOKEN"
+    allowed_users: ["@developer", "@admin"]
+    mode: "polling"
+  discord:
+    enabled: false
+  webhook:
+    enabled: true
+    port: 8080
+    auth_token: "hermes_secret_token_99"
+
+security:
+  sandbox_mode: "${sec?.sandboxMode || 'docker_isolated'}"
+  allowed_directories:
+    - "/workspace"
+    - "/tmp/agent-scratch"
+    - "/var/log/hermes"
+  max_execution_time_sec: ${sec?.maxExecutionTimeSec ?? 120}
+  block_network_access: ${sec?.blockNetworkAccess ?? false}
+  require_approval_for_commands: ${sec?.requireApprovalForCommands ?? false}
+
+storage:
+  memory_backend: "${sto?.memoryBackend || 'everos'}"
+  db_path: "${sto?.dbPath || '/data/everos/memories'}"
+  auto_summarize_interval: ${sto?.autoSummarizeInterval ?? 25}
+  max_history_turns: ${sto?.maxHistoryTurns ?? 100}
+  vector_db_url: "${sto?.vectorDbUrl || 'http://everos:8080'}"
+
+moa:
+  enabled: ${moa?.enabled ?? true}
+  provider_endpoints:
+    custom: "${finalBaseUrl}"
+    ollama: "${finalBaseUrl}"
+    custom:ollama: "${finalBaseUrl}"
+    local-ollama: "${finalBaseUrl}"
+    openrouter: "https://openrouter.ai/api/v1"
+  provider_mapping:
+    ${aggModel}: "${aggProv}"
+${rawProposers.map((p: any) => {
+  const pName = typeof p === 'string' ? (p === 'latest' ? 'gemma4-soul:latest' : p === '16b' ? 'deepseek-coder-v2:16b' : p) : p.model || p.name;
+  const pProv = parseModelAndProvider(pName, providerMapping, 'gemma4-soul:latest').provider;
+  return `    ${pName}: "${pProv}"`;
+}).join('\n')}
+  presets:
+    default:
+      reference_models:
+${referenceModelsList}
+      aggregator:
+        provider: ${aggProv}
+        model: ${aggModel}
+        base_url: ${aggBaseUrl || finalBaseUrlV1}
+        api_key: ${aggApiKey || finalApiKey}
+      degraded_reference_policy: loud
+      fanout: user_turn
+  reference_models:
+${referenceModelsList}
+  aggregator:
+    provider: ${aggProv}
+    model: ${aggModel}
+    base_url: ${aggBaseUrl || finalBaseUrlV1}
+    api_key: ${aggApiKey || finalApiKey}
+  degraded_reference_policy: loud
+  max_tokens: 4096
+  fanout: user_turn
+  rounds: ${moa?.rounds ?? 2}
+  temperature_spread: ${moa?.temperatureSpread ?? 0.3}
+  consensus_threshold: ${moa?.consensusThreshold ?? 0.85}
+
+env:
+${Object.entries(env).map(([k, v]) => `  ${k}: "${v}"`).join('\n')}
+`;
+}

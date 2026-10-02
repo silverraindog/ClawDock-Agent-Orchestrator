@@ -1856,3 +1856,74 @@ export async function executeAgentCommand(
   }
 }
 
+/**
+ * Explicitly commits the final configuration state and metadata to the backend persistence layer
+ * via POST /api/persistence/commit to guarantee backend storage atomicity.
+ */
+export async function commitState(
+  agentId: AgentId | string,
+  config: any,
+  meta: Record<string, any> = {}
+): Promise<{ success: boolean; data?: any; error?: string; timestamp: string }> {
+  const timestamp = new Date().toISOString();
+  try {
+    const payload = {
+      agentId,
+      config,
+      timestamp,
+      meta: {
+        committedAt: timestamp,
+        source: 'handleSaveConfig',
+        ...meta
+      }
+    };
+
+    const res = await fetch('/api/persistence/commit', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify(payload)
+    });
+
+    if (res.ok) {
+      const result = await res.json();
+      return {
+        success: result?.success ?? true,
+        data: result?.data || result,
+        timestamp
+      };
+    } else {
+      // Fallback to /api/persistence if specific commit subroute is unreachable
+      const fallbackRes = await fetch('/api/persistence', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({
+          data: {
+            configs: { [agentId]: config },
+            lastCommit: { agentId, timestamp, meta }
+          }
+        })
+      });
+      const fbData = await fallbackRes.json().catch(() => null);
+      return {
+        success: fallbackRes.ok,
+        data: fbData,
+        timestamp,
+        error: fallbackRes.ok ? undefined : `HTTP ${res.status} ${res.statusText}`
+      };
+    }
+  } catch (err: any) {
+    console.error(`[commitState] Failed to commit state for agent "${agentId}":`, err);
+    return {
+      success: false,
+      error: err?.message || 'Network error during backend state commit',
+      timestamp
+    };
+  }
+}
+

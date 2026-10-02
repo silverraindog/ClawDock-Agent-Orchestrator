@@ -83,7 +83,7 @@ import {
   validateFallbackConfiguration,
   VALID_PROVIDERS
 } from '../utils/configValidator';
-import { parseNativeConfigToSchema } from '../utils/configParser';
+import { parseNativeConfigToSchema, generateHermesYaml } from '../utils/configParser';
 import {
   AgentPurpose,
   ModelCombinationSuggestion,
@@ -532,15 +532,23 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
     if (rawMode === 'schema') {
       setRawText(JSON.stringify(config, null, 2));
     } else {
-      const fallback = DEFAULT_NATIVE_FILES[agentId] || DEFAULT_NATIVE_FILES['hermes-agent'];
-      if (fallback.format === 'yaml') {
+      if (agentId === 'hermes-agent') {
         try {
-          setRawText(YAML.dump(config));
+          setRawText(generateHermesYaml(config));
         } catch {
           setRawText(nativeConfigInfo?.content || JSON.stringify(config, null, 2));
         }
       } else {
-        setRawText(JSON.stringify(config, null, 2));
+        const fallback = DEFAULT_NATIVE_FILES[agentId] || DEFAULT_NATIVE_FILES['hermes-agent'];
+        if (fallback.format === 'yaml') {
+          try {
+            setRawText(YAML.dump(config));
+          } catch {
+            setRawText(nativeConfigInfo?.content || JSON.stringify(config, null, 2));
+          }
+        } else {
+          setRawText(JSON.stringify(config, null, 2));
+        }
       }
     }
   }, [config, rawMode, agentId]);
