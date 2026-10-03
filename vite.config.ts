@@ -106,7 +106,7 @@ function apiServerPlugin(): Plugin {
     clientIp: string;
   }
 
-  const serverRequestLogs: ServerRequestLog[] = [];
+  let serverRequestLogs: ServerRequestLog[] = [];
 
   // Seed initial 50 recorded requests for immediate visualization
   const initialEndpoints = [
@@ -1301,14 +1301,7 @@ fallback:
       // Comprehensive logging for all incoming API requests (Method + URL)
       console.log(`[Vite API Server] [${timestamp}] ${method} ${pathname} (Query: ${parsedUrl.search})`);
 
-      // NEW DEBUG LOG
-      // Find all routes that match this pathname
-      const matchingRoutes = dynamicRouteMappings.filter(r => r.pattern.test(pathname));
-      if (matchingRoutes.length === 0) {
-        console.log(`[Vite API Server] Debug: No route matched for ${pathname}`);
-      } else {
-        console.log(`[Vite API Server] Debug: ${matchingRoutes.length} routes matched for ${pathname}`);
-      }
+
 
       // Set CORS headers for all responses
       res.setHeader('Access-Control-Allow-Origin', '*');
