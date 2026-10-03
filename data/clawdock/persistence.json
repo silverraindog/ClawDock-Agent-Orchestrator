@@ -1,7 +1,7 @@
 {
   "configs": {
     "hermes-agent": {
-      "verified": true
+      "status": "active"
     },
     "zeroclaw": {
       "agentId": "zeroclaw",
@@ -290,6 +290,24 @@
   "testKey": "testValue",
   "commitHistory": [
     {
+      "id": "commit-hermes-agent-1791018023413",
+      "agentId": "hermes-agent",
+      "timestamp": "2026-10-03T09:00:23.413Z",
+      "meta": {}
+    },
+    {
+      "id": "commit-hermes-agent-1791017754620",
+      "agentId": "hermes-agent",
+      "timestamp": "2026-10-03T08:55:54.620Z",
+      "meta": {}
+    },
+    {
+      "id": "commit-hermes-agent-1791017681268",
+      "agentId": "hermes-agent",
+      "timestamp": "2026-10-03T08:54:41.268Z",
+      "meta": {}
+    },
+    {
       "id": "commit-hermes-agent-1791010544258",
       "agentId": "hermes-agent",
       "timestamp": "2026-10-03T06:55:44.258Z",
@@ -442,7 +460,7 @@
   ],
   "lastCommitted": {
     "agentId": "hermes-agent",
-    "timestamp": "2026-10-03T06:55:44.258Z",
+    "timestamp": "2026-10-03T09:00:23.413Z",
     "meta": {}
   }
 }

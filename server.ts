@@ -45,6 +45,9 @@ export interface ServerRequestLog {
   status: number;
   durationMs: number;
   clientIp: string;
+  payload?: any;
+  requestHeaders?: any;
+  stackTrace?: string;
 }
 
 const serverRequestLogs: ServerRequestLog[] = [];
@@ -78,9 +81,43 @@ for (let i = 0; i < 50; i++) {
     pathname: ep.path,
     status,
     durationMs,
-    clientIp: '127.0.0.1'
+    clientIp: '127.0.0.1',
+    requestHeaders: {
+      'host': 'localhost:3000',
+      'accept': 'application/json',
+      'user-agent': 'Clawdock-Monitor/1.0'
+    },
+    payload: ep.method === 'POST' ? { agentId: 'hermes-agent', test: true } : undefined,
+    stackTrace: status === 500 ? `Error: Internal Server Error on ${ep.path}\n    at handleRequest (/app/applet/server.ts:138:11)` : undefined
   });
 }
+
+// Seed recent 405 Method Not Allowed error on /api/persistence/commit
+serverRequestLogs.unshift({
+  id: 'req_seed_405_commit',
+  timestamp: new Date(seedNow - 20000).toISOString(),
+  method: 'DELETE',
+  url: '/api/persistence/commit',
+  pathname: '/api/persistence/commit',
+  status: 405,
+  durationMs: 12,
+  clientIp: '127.0.0.1',
+  requestHeaders: {
+    'host': 'localhost:3000',
+    'content-type': 'application/json',
+    'accept': 'application/json',
+    'user-agent': 'Clawdock-Diagnostic-Interceptor/1.0'
+  },
+  payload: {
+    agentId: 'hermes-agent',
+    action: 'delete_persistence_state',
+    reason: 'simulated_method_mismatch'
+  },
+  stackTrace: `HTTP 405 Method Interceptor: Method 'DELETE' not allowed on route '/api/persistence/commit'
+Allowed Methods: GET, POST, PUT, OPTIONS
+    at app.all (/app/applet/server.ts:2455:24)
+    at Layer.handle [as handle_request] (/app/applet/node_modules/express/lib/router/layer.js:95:5)`
+});
 
 app.use((req, res, next) => {
   if (req.path.startsWith('/api/')) {
@@ -122,7 +159,10 @@ app.use((req, res, next) => {
           pathname: req.path,
           status: res.statusCode,
           durationMs: elapsedMs,
-          clientIp: (req.ip || req.socket?.remoteAddress || '127.0.0.1') as string
+          clientIp: (req.ip || req.socket?.remoteAddress || '127.0.0.1') as string,
+          payload: req.body || null,
+          requestHeaders: req.headers || null,
+          stackTrace: (req as any).stackTrace || (res.statusCode === 405 ? `HTTP 405 Method Not Allowed on ${req.path}` : res.statusCode >= 500 ? `HTTP ${res.statusCode} Server Error on ${req.path}` : undefined)
         });
         if (serverRequestLogs.length > 200) serverRequestLogs.pop();
       }
@@ -2453,6 +2493,7 @@ app.all(['/api/persistence/commit', '/api/persistence/commit/'], (req, res) => {
   if (req.method !== 'GET' && req.method !== 'POST' && req.method !== 'PUT' && req.method !== 'OPTIONS') {
     res.setHeader('Allow', 'GET, POST, PUT, OPTIONS');
     const stackTrace = new Error(`HTTP 405 Method Interceptor: Method '${req.method}' not allowed on route '/api/persistence/commit'`).stack || '';
+    (req as any).stackTrace = stackTrace;
     return res.status(405).json({
       error: 'Method Not Allowed',
       method: req.method,

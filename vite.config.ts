@@ -115,11 +115,12 @@ function apiServerPlugin(): Plugin {
     clientIp: string;
     payload?: any;
     requestHeaders?: any;
+    stackTrace?: string;
   }
 
   let serverRequestLogs: ServerRequestLog[] = [];
 
-  // Seed initial 50 recorded requests for immediate visualization
+  // Seed initial recorded requests for immediate visualization
   const initialEndpoints = [
     { method: 'GET', path: '/api/health', baseMs: 14 },
     { method: 'GET', path: '/api/agents/all/config', baseMs: 42 },
@@ -148,9 +149,45 @@ function apiServerPlugin(): Plugin {
       pathname: ep.path,
       status,
       durationMs,
-      clientIp: '127.0.0.1'
+      clientIp: '127.0.0.1',
+      requestHeaders: {
+        'host': '127.0.0.1:3000',
+        'accept': 'application/json',
+        'user-agent': 'Clawdock-Diagnostic-Probe/1.0'
+      },
+      payload: ep.method === 'POST' ? { agentId: 'hermes-agent', sync: true } : undefined,
+      stackTrace: status === 500 ? `Error: Internal Server Error on ${ep.path}\n    at handleRequest (vite.config.ts:1380:11)` : undefined
     });
   }
+
+  // Seed recent 405 error on /api/persistence/commit to allow immediate visual inspection
+  serverRequestLogs.unshift({
+    id: 'req_init_405_mismatch',
+    timestamp: new Date(seedNow - 25000).toISOString(),
+    method: 'DELETE',
+    url: '/api/persistence/commit',
+    pathname: '/api/persistence/commit',
+    status: 405,
+    durationMs: 12,
+    clientIp: '127.0.0.1',
+    requestHeaders: {
+      'host': '127.0.0.1:3000',
+      'content-type': 'application/json',
+      'accept': 'application/json',
+      'origin': 'http://127.0.0.1:3000'
+    },
+    payload: {
+      agentId: 'hermes-agent',
+      action: 'unauthorized_clear_persistence',
+      reason: 'test_method_mismatch'
+    },
+    stackTrace: `[Router Validation Mismatch Error] HTTP method mismatch on endpoint /api/persistence/commit.
+Invoked Method: DELETE.
+Registered & Allowed Methods for this pattern: GET, POST, PUT
+    at Router.validateMethod (vite.config.ts:1326:27)
+    at Router.handle (vite.config.ts:1374:31)
+    at apiHandler (vite.config.ts:2553:28)`
+  });
 
   function recordServerLog(entry: ServerRequestLog) {
     serverRequestLogs.unshift(entry);
@@ -1279,8 +1316,8 @@ fallback:
 
   interface RegisteredRoute {
     pattern: RegExp;
-    methodMap: Map<string, RouteHandlerFn>;
     allowedMethods: string[];
+    methodMap: Map<string, RouteHandlerFn>;
   }
 
   class Router {
@@ -1289,33 +1326,46 @@ fallback:
     // Strictly defined whitelist of supported HTTP methods for API centralization
     private static readonly ALLOWED_METHOD_WHITELIST = new Set(['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'HEAD']);
 
-    public register(pattern: RegExp, methodsOrHandlers: string[] | Record<string, RouteHandlerFn>, handler?: RouteHandlerFn) {
+    public register(
+      pattern: RegExp,
+      methodsOrHandlers: string[] | Record<string, RouteHandlerFn>,
+      handlerOrMap?: RouteHandlerFn | Record<string, RouteHandlerFn>
+    ) {
+      let allowedMethods: string[] = [];
       const methodMap = new Map<string, RouteHandlerFn>();
 
       if (Array.isArray(methodsOrHandlers)) {
-        for (const m of methodsOrHandlers) {
-          const upperM = m.toUpperCase();
-          if (!Router.ALLOWED_METHOD_WHITELIST.has(upperM)) {
-            throw new Error(`[Router Schema Error] Unsupported HTTP method "${upperM}" for pattern ${pattern}`);
+        allowedMethods = methodsOrHandlers.map(m => m.toUpperCase());
+        if (typeof handlerOrMap === 'function') {
+          for (const m of allowedMethods) {
+            methodMap.set(m, handlerOrMap);
           }
-          if (handler) {
-            methodMap.set(upperM, handler);
+        } else if (handlerOrMap && typeof handlerOrMap === 'object') {
+          for (const [m, h] of Object.entries(handlerOrMap)) {
+            const upperM = m.toUpperCase();
+            if (typeof h === 'function') {
+              methodMap.set(upperM, h);
+            }
           }
         }
       } else if (methodsOrHandlers && typeof methodsOrHandlers === 'object') {
+        allowedMethods = Object.keys(methodsOrHandlers).map(m => m.toUpperCase());
         for (const [m, h] of Object.entries(methodsOrHandlers)) {
           const upperM = m.toUpperCase();
-          if (!Router.ALLOWED_METHOD_WHITELIST.has(upperM)) {
-            throw new Error(`[Router Schema Error] Unsupported HTTP method "${upperM}" for pattern ${pattern}`);
-          }
           if (typeof h === 'function') {
             methodMap.set(upperM, h);
           }
         }
       }
 
-      const allowedMethods = Array.from(methodMap.keys());
-      this.routes.push({ pattern, methodMap, allowedMethods });
+      // Strictly verify every method in the array against the map-based allowed whitelist
+      for (const m of allowedMethods) {
+        if (!Router.ALLOWED_METHOD_WHITELIST.has(m)) {
+          throw new Error(`[Router Schema Error] Unsupported HTTP method "${m}" for pattern ${pattern}`);
+        }
+      }
+
+      this.routes.push({ pattern, allowedMethods, methodMap });
     }
 
     private async validateMethod(upperMethod: string, route: RegisteredRoute, context: { req: any; res: any; pathname: string }): Promise<boolean> {
@@ -1335,6 +1385,7 @@ fallback:
 
         // Generate full stack trace for request interceptor
         const stackTrace = new Error(mismatchErrorMsg).stack || '';
+        req.stackTrace = stackTrace;
 
         res.statusCode = 405;
         res.setHeader('Content-Type', 'application/json');
@@ -1415,7 +1466,8 @@ fallback:
             durationMs,
             clientIp: req.socket?.remoteAddress || '127.0.0.1',
             payload: req.bodyPayload || null,
-            requestHeaders: req.headers || null
+            requestHeaders: req.headers || null,
+            stackTrace: req.stackTrace || (res.statusCode === 405 ? `HTTP 405 Method Not Allowed on ${pathname}` : res.statusCode >= 500 ? `HTTP ${res.statusCode} Internal Server Error on ${pathname}` : undefined)
           });
         }
         return originalEnd.apply(res, args);
@@ -1441,6 +1493,7 @@ fallback:
       const dynamicRouteMappings = [
         {
           pattern: /^\/api\/persistence\/commit(\/)?$/i,
+          allowedMethods: ['GET', 'POST', 'PUT'],
           handlers: {
             GET: async () => {
               res.setHeader('Content-Type', 'application/json');
@@ -2544,10 +2597,11 @@ fallback:
 
       const router = new Router();
       for (const route of dynamicRouteMappings) {
+        const allowedMethods = (route as any).allowedMethods || (route as any).methods || (('handlers' in route && route.handlers) ? Object.keys(route.handlers) : []);
         if ('handlers' in route && route.handlers) {
-          router.register(route.pattern, route.handlers);
+          router.register(route.pattern, allowedMethods, route.handlers);
         } else {
-          router.register(route.pattern, route.methods || [], route.handler);
+          router.register(route.pattern, allowedMethods, route.handler);
         }
       }
       const handled = await router.handle({ req, res, pathname, method, parsedUrl, timestamp });
@@ -2565,1185 +2619,6 @@ fallback:
         timestamp: new Date().toISOString() 
       }));
       return;
-
-      // Centralized Request Router using switch statement
-      switch (pathname) {
-        case '/api/health': {
-          res.setHeader('Content-Type', 'application/json');
-          console.log(`[Vite API Server] [${timestamp}] 200 OK: GET /api/health`);
-          return res.end(JSON.stringify({ status: 'ok', uptime: process.uptime(), timestamp }));
-        }
-
-        // Docker status and containers endpoints
-        case '/api/docker/status':
-        case '/api/docker/status/': {
-          res.setHeader('Content-Type', 'application/json');
-          console.log(`[Vite API Server] [${timestamp}] 200 OK: GET /api/docker/status`);
-          const runningCount = Object.values(agentStates).filter((s: any) => s.status === 'running').length;
-          const totalCount = Math.max(4, Object.keys(agentStates).length);
-          return res.end(JSON.stringify({
-            dockerAvailable: true,
-            daemonVersion: '26.1.4-ce',
-            operatingSystem: 'Linux Container (Cloud/Host)',
-            totalContainers: totalCount,
-            runningContainers: runningCount,
-            socketPath: '/var/run/docker.sock',
-            environment: 'linux_native',
-            timestamp
-          }));
-        }
-
-        case '/api/docker/containers': {
-          res.setHeader('Content-Type', 'application/json');
-          console.log(`[Vite API Server] [${timestamp}] 200 OK: GET /api/docker/containers`);
-          return res.end(JSON.stringify({
-            success: true,
-            containers: Object.entries(agentStates).map(([id, st]: [string, any]) => ({
-              id: st.containerId || 'c_' + id,
-              name: st.containerName || id,
-              status: st.status,
-              image: st.dockerImage || `clawdock-${id}:latest`,
-              state: st.status === 'running' ? 'running' : 'stopped'
-            })),
-            timestamp
-          }));
-        }
-
-        // 2. State endpoint (GET, POST, PUT) - Full agent states object
-        case '/api/state': {
-          res.setHeader('Content-Type', 'application/json');
-          console.log(`[Vite API Server] [${timestamp}] [TRACE /api/state] Direct Router Match: method=${method}, url="${req.url}", exact pathname="${pathname}", matchedSwitchCase="/api/state", clientIP=${req.socket?.remoteAddress || 'unknown'}`);
-          if (method === 'GET') {
-            console.log(`[Vite API Server] [${timestamp}] 200 OK: GET /api/state - Full Agent States:`, Object.keys(agentStates));
-            return res.end(JSON.stringify({
-              success: true,
-              agentStates: { ...agentStates },
-              timestamp
-            }));
-          }
-
-          if (method === 'POST' || method === 'PUT') {
-            const body = await readRequestBody(req);
-            console.log(`[Vite API Server] [${timestamp}] 200 OK: ${method} /api/state - Updated state:`, body?.agentStates ? Object.keys(body.agentStates) : 'none');
-            if (body && body.agentStates) {
-              agentStates = { ...agentStates, ...body.agentStates };
-            }
-            return res.end(JSON.stringify({
-              success: true,
-              agentStates: { ...agentStates },
-              timestamp
-            }));
-          }
-          res.statusCode = 405;
-          return res.end(JSON.stringify({ success: false, error: 'Method not allowed. Use GET, POST, or PUT.' }));
-        }
-
-        // Resource monitoring stats direct router endpoints
-        case '/api/stats':
-        case '/api/stats/':
-        case '/api/agents/stats':
-        case '/api/agents/stats/':
-        case '/api/agent/stats':
-        case '/api/agent/stats/': {
-          res.setHeader('Content-Type', 'application/json');
-          const qId = parsedUrl.searchParams.get('agentId') || parsedUrl.searchParams.get('agent') || 'hermes-agent';
-          return res.end(JSON.stringify(buildAgentStatsPayload(qId), null, 2));
-        }
-
-        // 3. Diagnostics Request Logs (Real-time HTTP requests ring buffer)
-        case '/api/diagnostics/request-logs': {
-          res.setHeader('Content-Type', 'application/json');
-          console.log(`[Vite API Server] [${timestamp}] 200 OK: GET /api/diagnostics/request-logs (${serverRequestLogs.length} items)`);
-          return res.end(JSON.stringify({
-            success: true,
-            logs: serverRequestLogs,
-            total: serverRequestLogs.length,
-            timestamp
-          }));
-        }
-
-        // 3. Standardized Agent Config retrieval: /api/agents/all/config (and alias /api/agents/all/configs)
-        case '/api/agents/all/config':
-        case '/api/agents/all/configs': {
-          res.setHeader('Content-Type', 'application/json');
-          console.log(`[Vite API Server] [${timestamp}] 200 OK: GET ${pathname} (Standardized /config suffix)`);
-          const agentIds = ['hermes-agent', 'zeroclaw', 'openclaw', 'picoclaw'];
-          const configs: Record<string, any> = {};
-          for (const id of agentIds) {
-            configs[id] = getAgentConfig(id);
-          }
-          return res.end(JSON.stringify({ success: true, configs }));
-        }
-
-        // 4. Persistence endpoint (GET, POST, PUT)
-        case '/api/persistence/commit':
-        case '/api/persistence': {
-          res.setHeader('Content-Type', 'application/json');
-          const persistenceFile = path.join(dataDir, 'persistence.json');
-
-          if (method === 'GET') {
-            console.log(`[Vite API Server] [${timestamp}] 200 OK: GET ${pathname}`);
-            let data: any = {};
-            try {
-              if (fs.existsSync(persistenceFile)) {
-                data = JSON.parse(fs.readFileSync(persistenceFile, 'utf8'));
-              }
-            } catch {}
-            return res.end(JSON.stringify({ success: true, data }));
-          }
-
-          if (method === 'POST' || method === 'PUT') {
-            ensureDataDir();
-            const body = await readRequestBody(req);
-            console.log(`[Vite API Server] [${timestamp}] 200 OK: ${method} ${pathname} - Processing persistence write`);
-            let existing: any = {};
-            try {
-              if (fs.existsSync(persistenceFile)) {
-                existing = JSON.parse(fs.readFileSync(persistenceFile, 'utf8'));
-              }
-            } catch {}
-
-            if (body.key && body.value !== undefined) {
-              existing[body.key] = body.value;
-            } else if (body.data && typeof body.data === 'object') {
-              existing = { ...existing, ...body.data };
-            } else if (body && typeof body === 'object') {
-              existing = { ...existing, ...body };
-            }
-
-            try {
-              fs.writeFileSync(persistenceFile, JSON.stringify(existing, null, 2), 'utf8');
-            } catch {}
-
-            return res.end(JSON.stringify({ success: true, data: existing }));
-          }
-          res.statusCode = 405;
-          return res.end(JSON.stringify({ error: 'Method not allowed' }));
-        }
-
-        // 6. Diagnostics Logs
-        case '/api/diagnostics/logs': {
-          res.setHeader('Content-Type', 'application/json');
-          console.log(`[Vite API Server] [${timestamp}] 200 OK: /api/diagnostics/logs`);
-          return res.end(JSON.stringify({
-            logs: [
-              `[${timestamp}] [SYSTEM] Clawdock container daemon v2.4 initialized.`,
-              `[${timestamp}] [DOCKER] Bridge network clawdock-net active at 172.28.0.0/16.`,
-              `[${timestamp}] [EVEROS] Memory graph synchronization active.`
-            ]
-          }));
-        }
-
-        // 7. AI Chat Endpoint
-        case '/api/chat': {
-          res.setHeader('Content-Type', 'application/json');
-          const body = await readRequestBody(req);
-          console.log(`[Vite API Server] [${timestamp}] 200 OK: POST /api/chat`);
-          return res.end(JSON.stringify({
-            success: true,
-            response: `[Clawdock Simulator] Received message "${body?.message || ''}". Agent is fully active in container.`
-          }));
-        }
-
-        // 7b. Test Connection Endpoints
-        case '/api/test-connection':
-        case '/api/test-connection/':
-        case '/api/test-conn-v2':
-        case '/api/test-conn-v2/': {
-          res.setHeader('Content-Type', 'application/json');
-          res.setHeader('Access-Control-Allow-Origin', '*');
-          res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS');
-          res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept');
-
-          let body: any = {};
-          try {
-            body = (await readRequestBody(req)) || {};
-          } catch {}
-
-          const provider = body.provider || parsedUrl.searchParams.get('provider') || 'ollama';
-          const apiKey = body.apiKey || parsedUrl.searchParams.get('apiKey') || '';
-          const baseUrl = body.baseUrl || parsedUrl.searchParams.get('baseUrl') || body.base_url || parsedUrl.searchParams.get('base_url') || '';
-          const cleanProvider = provider.toLowerCase();
-
-          console.log(`[Vite API Server] ${method} ${pathname} (Provider: ${cleanProvider})`);
-
-          if (cleanProvider !== 'ollama' && (!apiKey || !apiKey.trim())) {
-            return res.end(JSON.stringify({
-              success: false,
-              errorType: 'MISSING_API_KEY',
-              message: `API Key is required to authenticate with ${provider.toUpperCase()}.`
-            }));
-          }
-
-          let url = '';
-          let headers: Record<string, string> = { 'Content-Type': 'application/json' };
-
-          if (cleanProvider === 'ollama') {
-            const roots = baseUrl && baseUrl.trim() 
-              ? [baseUrl.trim()]
-              : ['http://host.docker.internal:11434', 'http://localhost:11434', 'http://127.0.0.1:11434'];
-            
-            let ollamaSuccess = false;
-            let errorMsg = 'Could not establish connection to local Ollama. Ensure Ollama is running.';
-
-            for (const root of roots) {
-              try {
-                const controller = new AbortController();
-                const timer = setTimeout(() => controller.abort(), 1200);
-                const response = await fetch(`${root.replace(/\/+$/, '')}/api/tags`, { signal: controller.signal });
-                clearTimeout(timer);
-                if (response.ok) {
-                  ollamaSuccess = true;
-                  break;
-                }
-              } catch (err: any) {
-                errorMsg = err.message || errorMsg;
-              }
-            }
-
-            if (ollamaSuccess) {
-              return res.end(JSON.stringify({ success: true, message: 'Successfully connected to Ollama instance.' }));
-            } else {
-              return res.end(JSON.stringify({ success: false, errorType: 'CONNECTION_FAILURE', message: errorMsg }));
-            }
-          }
-
-          if (cleanProvider === 'openai') {
-            url = baseUrl && baseUrl.trim() ? `${baseUrl.trim().replace(/\/+$/, '')}/v1/models` : 'https://api.openai.com/v1/models';
-            headers['Authorization'] = `Bearer ${apiKey.trim()}`;
-          } else if (cleanProvider === 'anthropic') {
-            url = baseUrl && baseUrl.trim() ? `${baseUrl.trim().replace(/\/+$/, '')}/v1/models` : 'https://api.anthropic.com/v1/models';
-            headers['x-api-key'] = apiKey.trim();
-            headers['anthropic-version'] = '2023-06-01';
-          } else if (cleanProvider === 'gemini') {
-            url = `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey.trim()}`;
-          } else if (cleanProvider === 'deepseek') {
-            url = baseUrl && baseUrl.trim() ? `${baseUrl.trim().replace(/\/+$/, '')}/models` : 'https://api.deepseek.com/models';
-            headers['Authorization'] = `Bearer ${apiKey.trim()}`;
-          } else if (cleanProvider === 'groq') {
-            url = baseUrl && baseUrl.trim() ? `${baseUrl.trim().replace(/\/+$/, '')}/v1/models` : 'https://api.groq.com/openai/v1/models';
-            headers['Authorization'] = `Bearer ${apiKey.trim()}`;
-          } else if (cleanProvider === 'mistral') {
-            url = baseUrl && baseUrl.trim() ? `${baseUrl.trim().replace(/\/+$/, '')}/v1/models` : 'https://api.mistral.ai/v1/models';
-            headers['Authorization'] = `Bearer ${apiKey.trim()}`;
-          } else if (cleanProvider === 'openrouter') {
-            url = baseUrl && baseUrl.trim() ? `${baseUrl.trim().replace(/\/+$/, '')}/v1/models` : 'https://openrouter.ai/api/v1/models';
-            headers['Authorization'] = `Bearer ${apiKey.trim()}`;
-          } else if (cleanProvider === 'custom') {
-            if (!baseUrl || !baseUrl.trim()) {
-              return res.end(JSON.stringify({
-                success: false,
-                errorType: 'MISSING_BASE_URL',
-                message: 'Base URL is required for Custom provider connections.'
-              }));
-            }
-            url = `${baseUrl.trim().replace(/\/+$/, '')}/v1/models`;
-            headers['Authorization'] = `Bearer ${apiKey.trim()}`;
-          } else {
-            url = baseUrl && baseUrl.trim() ? `${baseUrl.trim().replace(/\/+$/, '')}/v1/models` : 'https://api.openai.com/v1/models';
-            headers['Authorization'] = `Bearer ${apiKey.trim()}`;
-          }
-
-          try {
-            const controller = new AbortController();
-            const timer = setTimeout(() => controller.abort(), 6000);
-            const response = await fetch(url, {
-              method: 'GET',
-              headers,
-              signal: controller.signal
-            });
-            clearTimeout(timer);
-
-            if (response.ok) {
-              return res.end(JSON.stringify({
-                success: true,
-                message: `Successfully connected & authenticated with ${provider.toUpperCase()}.`
-              }));
-            } else {
-              const text = await response.text();
-              let parsedErr = 'Authentication or connection rejected by server.';
-              try {
-                const js = JSON.parse(text);
-                parsedErr = js.error?.message || js.message || parsedErr;
-              } catch {
-                if (text) parsedErr = text.slice(0, 150);
-              }
-
-              if (response.status === 405) {
-                return res.end(JSON.stringify({
-                  success: true,
-                  message: `Successfully reached the provider endpoint. (Server responded with 405 Method Not Allowed, confirming the host is online, reachable, and active).`
-                }));
-              }
-
-              if (response.status === 401 || response.status === 403) {
-                return res.end(JSON.stringify({
-                  success: false,
-                  errorType: 'INVALID_CREDENTIALS',
-                  message: `Invalid API Key or unauthorized access. (${response.status}: ${parsedErr})`
-                }));
-              }
-
-              return res.end(JSON.stringify({
-                success: false,
-                errorType: 'PROVIDER_REJECTED',
-                message: `Server returned status ${response.status}: ${parsedErr}`
-              }));
-            }
-          } catch (fetchErr: any) {
-            const isTimeout = fetchErr.name === 'AbortError' || fetchErr.message?.includes('aborted') || fetchErr.message?.includes('timeout');
-            if (isTimeout) {
-              return res.end(JSON.stringify({
-                success: false,
-                errorType: 'TIMEOUT',
-                message: `Connection timed out while reaching ${provider.toUpperCase()}. Please check your connection or base URL.`
-              }));
-            }
-            return res.end(JSON.stringify({
-              success: false,
-              errorType: 'NETWORK_ERROR',
-              message: `Network Error: Could not reach the provider endpoint. (${fetchErr.message || 'DNS resolution or route failed'})`
-            }));
-          }
-        }
-
-        // 8a-2. Proxy Model Search Endpoint accepting modelQuery parameter
-        case '/api/proxy/search':
-        case '/api/proxy/search/': {
-          res.setHeader('Content-Type', 'application/json');
-          res.setHeader('Access-Control-Allow-Origin', '*');
-          if (method === 'OPTIONS') return res.end(JSON.stringify({ success: true }));
-
-          let body: any = {};
-          if (method === 'POST' || method === 'PUT' || method === 'GET') {
-            try { body = (await readRequestBody(req)) || {}; } catch {}
-          }
-
-          const query = (
-            parsedUrl.searchParams.get('modelQuery') ||
-            parsedUrl.searchParams.get('query') ||
-            parsedUrl.searchParams.get('q') ||
-            body.modelQuery ||
-            body.query ||
-            body.q ||
-            ''
-          ).toLowerCase().trim();
-
-          const allProxyModels = [
-            { value: 'gemma4-soul:latest', label: 'gemma4-soul:latest (Local Edge)', tag: 'Active', provider: 'ollama' },
-            { value: 'qwen2.5-coder:7b', label: 'qwen2.5-coder:7b (Edge Coding)', tag: 'Sipeed', provider: 'ollama' },
-            { value: 'deepseek-r1:8b', label: 'deepseek-r1:8b (Local Reasoning)', tag: 'Reasoning', provider: 'ollama' },
-            { value: 'llama3.2:3b', label: 'llama3.2:3b (Ultra-light)', tag: 'Edge', provider: 'ollama' },
-            { value: 'hermes-3-llama-3.1-8b', label: 'Hermes 3 Llama 3.1 8B', tag: 'Agent', provider: 'ollama' },
-            { value: 'anthropic/claude-3-7-sonnet', label: 'Claude 3.7 Sonnet', tag: 'Frontier', provider: 'anthropic' },
-            { value: 'anthropic/claude-3-5-sonnet', label: 'Claude 3.5 Sonnet', tag: 'Flagship', provider: 'anthropic' },
-            { value: 'openai/gpt-4o', label: 'GPT-4o', tag: 'Flagship', provider: 'openai' },
-            { value: 'openai/gpt-4o-mini', label: 'GPT-4o Mini', tag: 'Fast', provider: 'openai' },
-            { value: 'deepseek/deepseek-chat', label: 'DeepSeek Chat', tag: 'Coding', provider: 'deepseek' },
-            { value: 'deepseek/deepseek-reasoner', label: 'DeepSeek R1', tag: 'Reasoning', provider: 'deepseek' },
-            { value: 'mistralai/mistral-large-latest', label: 'Mistral Large', tag: 'Enterprise', provider: 'mistral' }
-          ];
-
-          const filtered = query 
-            ? allProxyModels.filter(m => m.value.toLowerCase().includes(query) || m.label.toLowerCase().includes(query) || m.tag.toLowerCase().includes(query))
-            : allProxyModels;
-
-          console.log(`[Vite API Server Proxy Search] query="${query}" -> matched ${filtered.length} models`);
-          return res.end(JSON.stringify({
-            success: true,
-            modelQuery: query,
-            count: filtered.length,
-            models: filtered,
-            timestamp: new Date().toISOString()
-          }));
-        }
-
-        // 8a. Backend Proxy Endpoint to fetch model lists from baseUrl (bypassing browser CORS & 403 Forbidden restrictions)
-        case '/api/proxy/models':
-        case '/api/proxy/models/':
-        case '/api/proxy/model-list':
-        case '/api/proxy/model-list/':
-        case '/api/proxy':
-        case '/api/proxy/': {
-          res.setHeader('Content-Type', 'application/json');
-          res.setHeader('Access-Control-Allow-Origin', '*');
-          res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS');
-          res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept');
-
-          if (method === 'OPTIONS') {
-            return res.end(JSON.stringify({ success: true }));
-          }
-
-          let body: any = {};
-          if (method === 'POST' || method === 'PUT' || method === 'GET') {
-            try {
-              body = (await readRequestBody(req)) || {};
-            } catch {}
-          }
-
-          const queryBaseUrl = parsedUrl.searchParams.get('baseUrl') ||
-                               parsedUrl.searchParams.get('base_url') ||
-                               parsedUrl.searchParams.get('url') ||
-                               body.baseUrl ||
-                               body.base_url ||
-                               body.url ||
-                               '';
-          const queryProvider = (
-            parsedUrl.searchParams.get('provider') ||
-            body.provider ||
-            'ollama'
-          ).toLowerCase().trim();
-
-          const apiKey = parsedUrl.searchParams.get('apiKey') ||
-                         parsedUrl.searchParams.get('api_key') ||
-                         parsedUrl.searchParams.get('key') ||
-                         body.apiKey ||
-                         body.api_key ||
-                         body.key ||
-                         '';
-
-          const agentId = parsedUrl.searchParams.get('agentId') ||
-                          parsedUrl.searchParams.get('agent_id') ||
-                          body.agentId ||
-                          body.agent_id ||
-                          'hermes-agent';
-
-          console.log(`[Vite API Server Proxy] [${timestamp}] Fetching model list for provider "${queryProvider}" (Agent: ${agentId})`);
-
-          if (queryProvider === 'openrouter') {
-            let openrouterModels: Array<{ value: string; label: string; tag: string }> = [];
-            const targetUrl = queryBaseUrl && queryBaseUrl.trim()
-              ? `${queryBaseUrl.trim().replace(/\/+$/, '')}/v1/models`
-              : 'https://openrouter.ai/api/v1/models';
-
-            if (apiKey || queryBaseUrl) {
-              try {
-                const controller = new AbortController();
-                const timer = setTimeout(() => controller.abort(), 3500);
-                const headers: Record<string, string> = {
-                  'Accept': 'application/json',
-                  'User-Agent': 'ClawDock/1.0'
-                };
-                if (apiKey) headers['Authorization'] = `Bearer ${apiKey.trim()}`;
-                const resp = await fetch(targetUrl, { signal: controller.signal, headers });
-                clearTimeout(timer);
-                if (resp.ok) {
-                  const json: any = await resp.json();
-                  const list = Array.isArray(json.data) ? json.data : (Array.isArray(json.models) ? json.models : []);
-                  if (list.length > 0) {
-                    openrouterModels = list.slice(0, 60).map((m: any) => {
-                      const mid = m.id || m.name;
-                      const mname = m.name || mid;
-                      return {
-                        value: String(mid),
-                        label: mname && mname !== mid ? `${mname} (${mid})` : String(mid),
-                        tag: 'OpenRouter'
-                      };
-                    });
-                  }
-                }
-              } catch (e: any) {
-                console.warn(`[Vite API Server Proxy] OpenRouter probe error:`, e?.message || e);
-              }
-            }
-
-            const catalog = openrouterModels.length > 0 ? openrouterModels : [
-              { value: 'anthropic/claude-3.7-sonnet', label: 'OpenRouter: Claude 3.7 Sonnet', tag: 'Proxy' },
-              { value: 'deepseek/deepseek-r1', label: 'OpenRouter: DeepSeek R1', tag: 'Proxy' },
-              { value: 'meta-llama/llama-3.3-70b-instruct', label: 'OpenRouter: Llama 3.3 70B', tag: 'Proxy' },
-              { value: 'openai/gpt-4o', label: 'OpenRouter: GPT-4o', tag: 'Proxy' }
-            ];
-
-            return res.end(JSON.stringify({
-              success: true,
-              source: openrouterModels.length > 0 ? 'backend_proxy_live' : 'backend_proxy_catalog',
-              baseUrl: queryBaseUrl,
-              provider: 'openrouter',
-              agentId,
-              isLiveProbed: openrouterModels.length > 0,
-              modelsCount: catalog.length,
-              rawModelNames: catalog.map(m => m.value),
-              models: catalog,
-              timestamp
-            }));
-          }
-
-          const targetBaseUrl = (queryBaseUrl || 'http://localhost:11434').trim();
-          const cleanBase = targetBaseUrl.replace(/\/+$/, '').replace(/\/v1\/?$/, '');
-          const probeEndpoints: string[] = [];
-
-          if (queryProvider === 'ollama' || cleanBase.includes('11434')) {
-            probeEndpoints.push(`${cleanBase}/api/tags`);
-            probeEndpoints.push(`${cleanBase}/v1/models`);
-          } else {
-            probeEndpoints.push(`${cleanBase}/v1/models`);
-            probeEndpoints.push(`${cleanBase}/models`);
-            probeEndpoints.push(`${cleanBase}/api/tags`);
-          }
-
-          let fetchedModels: Array<{ value: string; label: string; tag: string }> = [];
-          let rawNames: string[] = [];
-          let fetchSuccessful = false;
-          let fetchError: string | null = null;
-
-          for (const endpoint of probeEndpoints) {
-            try {
-              const controller = new AbortController();
-              const timer = setTimeout(() => controller.abort(), 2500);
-              const resp = await fetch(endpoint, {
-                method: 'GET',
-                signal: controller.signal,
-                headers: {
-                  'Accept': 'application/json',
-                  'User-Agent': 'Clawdock-Backend-Proxy/1.0'
-                }
-              });
-              clearTimeout(timer);
-
-              if (resp.ok) {
-                const data: any = await resp.json();
-                if (data && Array.isArray(data.models)) {
-                  rawNames = data.models.map((m: any) => m.name || m.model).filter(Boolean);
-                  fetchedModels = rawNames.map((name: string) => ({
-                    value: name,
-                    label: `${name} (Local Backend Proxy)`,
-                    tag: 'Proxy'
-                  }));
-                  fetchSuccessful = true;
-                  console.log(`[Vite API Server Proxy] Successfully proxied ${rawNames.length} models from ${endpoint}`);
-                  break;
-                } else if (data && Array.isArray(data.data)) {
-                  rawNames = data.data.map((m: any) => m.id || m.name).filter(Boolean);
-                  fetchedModels = rawNames.map((name: string) => ({
-                    value: name,
-                    label: `${name} (Backend Proxy)`,
-                    tag: 'Proxy'
-                  }));
-                  fetchSuccessful = true;
-                  console.log(`[Vite API Server Proxy] Successfully proxied ${rawNames.length} models from ${endpoint}`);
-                  break;
-                }
-              }
-            } catch (err: any) {
-              fetchError = err?.message || String(err);
-            }
-          }
-
-          if (fetchSuccessful && fetchedModels.length > 0) {
-            return res.end(JSON.stringify({
-              success: true,
-              source: 'backend_proxy',
-              baseUrl: targetBaseUrl,
-              provider: queryProvider,
-              agentId,
-              modelsCount: fetchedModels.length,
-              rawModelNames: rawNames,
-              models: fetchedModels,
-              timestamp
-            }));
-          }
-
-          const fallbackModels = [
-            { value: 'qwen2.5-coder:7b', label: 'qwen2.5-coder:7b (Local Proxy Fallback)', tag: 'Proxy Fallback' },
-            { value: 'qwen2.5-coder:14b', label: 'qwen2.5-coder:14b (Local Proxy Fallback)', tag: 'Proxy Fallback' },
-            { value: 'deepseek-r1:8b', label: 'deepseek-r1:8b (Local Proxy Fallback)', tag: 'Proxy Fallback' },
-            { value: 'llama3.3:70b', label: 'llama3.3:70b (Local Proxy Fallback)', tag: 'Proxy Fallback' },
-            { value: 'mistral-nemo:12b', label: 'mistral-nemo:12b (Local Proxy Fallback)', tag: 'Proxy Fallback' },
-            { value: 'gemma4-soul:latest', label: 'gemma4-soul:latest (Active Checkpoint)', tag: 'Active' }
-          ];
-
-          return res.end(JSON.stringify({
-            success: true,
-            source: 'backend_proxy_fallback',
-            baseUrl: targetBaseUrl,
-            provider: queryProvider,
-            agentId,
-            modelsCount: fallbackModels.length,
-            rawModelNames: fallbackModels.map(m => m.value),
-            models: fallbackModels,
-            timestamp
-          }));
-        }
-
-        // 8. Models Catalog & Live Probe Endpoint
-        case '/api/models':
-        case '/api/models/':
-        case '/api/model/list':
-        case '/api/model/list/':
-        case '/api/agents/models':
-        case '/api/agents/models/': {
-          res.setHeader('Content-Type', 'application/json');
-
-          let body: any = {};
-          if (method === 'POST' || method === 'PUT') {
-            try {
-              body = (await readRequestBody(req)) || {};
-            } catch {}
-          }
-
-          // Consistent extraction of agentId, provider, and baseUrl regardless of parameter order or naming variations
-          const { agentId, provider, baseUrl } = extractModelQueryParams(parsedUrl, body, pathname);
-
-          console.log(`[Vite API Server] [${timestamp}] ${method} ${pathname} - Extracted Model Query: agentId="${agentId}", provider="${provider}", baseUrl="${baseUrl}"`);
-
-          let liveOllamaModels: string[] = [];
-          if (baseUrl && (provider === 'ollama' || provider === 'custom' || baseUrl.includes('11434'))) {
-            try {
-              const cleanBase = baseUrl.replace(/\/v1\/?$/, '').replace(/\/+$/, '');
-              const targetTagsUrl = `${cleanBase}/api/tags`;
-              const controller = new AbortController();
-              const timer = setTimeout(() => controller.abort(), 2000);
-              const resp = await fetch(targetTagsUrl, { signal: controller.signal });
-              clearTimeout(timer);
-              if (resp.ok) {
-                const json: any = await resp.json();
-                if (Array.isArray(json.models)) {
-                  liveOllamaModels = json.models.map((m: any) => m.name || m.model).filter(Boolean);
-                  console.log(`[Vite API Server] Discovered ${liveOllamaModels.length} models live from Ollama at ${cleanBase}:`, liveOllamaModels);
-                }
-              }
-            } catch (err: any) {
-              console.log(`[Vite API Server] Live probe to ${baseUrl} failed or timed out: ${err?.message || err}. Using comprehensive local catalog.`);
-            }
-          }
-
-          const OLLAMA_CATALOG = [
-            { value: 'gemma4-soul:latest', label: 'gemma4-soul:latest (Local Edge / Active)', tag: 'Active' },
-            { value: 'qwen2.5-coder:7b', label: 'qwen2.5-coder:7b (Edge Coding)', tag: 'Sipeed' },
-            { value: 'qwen2.5-coder:14b', label: 'qwen2.5-coder:14b (Deep Coding)', tag: 'Local' },
-            { value: 'qwen2.5-coder:32b', label: 'qwen2.5-coder:32b (Heavy Coding)', tag: 'Local' },
-            { value: 'deepseek-r1:8b', label: 'deepseek-r1:8b (Local Reasoning)', tag: 'Reasoning' },
-            { value: 'deepseek-r1:14b', label: 'deepseek-r1:14b (Mid Reasoning)', tag: 'Reasoning' },
-            { value: 'deepseek-r1:32b', label: 'deepseek-r1:32b (Full Reasoning)', tag: 'Reasoning' },
-            { value: 'deepseek-r1:70b', label: 'deepseek-r1:70b (Max Reasoning)', tag: 'Reasoning' },
-            { value: 'llama3.3:70b', label: 'llama3.3:70b (High Capability)', tag: 'Local' },
-            { value: 'llama3.2:3b', label: 'llama3.2:3b (Ultra-light)', tag: 'Edge' },
-            { value: 'llama3.2:1b', label: 'llama3.2:1b (Nano Edge)', tag: 'Edge' },
-            { value: 'mistral-nemo:12b', label: 'mistral-nemo:12b (Balanced 128k)', tag: 'Local' },
-            { value: 'phi4:14b', label: 'phi4:14b (Microsoft Reasoning)', tag: 'Local' },
-            { value: 'codellama:7b', label: 'codellama:7b (Meta Code)', tag: 'Local' },
-            { value: 'codellama:13b', label: 'codellama:13b (Meta Code 13B)', tag: 'Local' },
-            { value: 'starcoder2:7b', label: 'starcoder2:7b (BigCode)', tag: 'Local' },
-            { value: 'command-r:35b', label: 'command-r:35b (Cohere Local)', tag: 'Local' }
-          ];
-
-          const ANTHROPIC_CATALOG = [
-            { value: 'claude-3-7-sonnet', label: 'Claude 3.7 Sonnet (Hybrid Reasoning)', tag: 'Frontier' },
-            { value: 'claude-3-5-sonnet', label: 'Claude 3.5 Sonnet (Benchmark Standard)', tag: 'Recommended' },
-            { value: 'claude-3-5-haiku', label: 'Claude 3.5 Haiku (Ultra-fast)', tag: 'Fast' },
-            { value: 'claude-3-opus', label: 'Claude 3 Opus (Research)', tag: 'Legacy' }
-          ];
-
-          const OPENAI_CATALOG = [
-            { value: 'gpt-4o', label: 'GPT-4o (Omni Flagship)', tag: 'Recommended' },
-            { value: 'gpt-4o-mini', label: 'GPT-4o Mini (Fast & Cheap)', tag: 'Fast' },
-            { value: 'o1', label: 'o1 (Deep Reasoning)', tag: 'Reasoning' },
-            { value: 'o3-mini', label: 'o3-mini (High-speed Reasoning)', tag: 'Reasoning' },
-            { value: 'gpt-4.5-preview', label: 'GPT-4.5 Preview', tag: 'Preview' }
-          ];
-
-          const DEEPSEEK_CATALOG = [
-            { value: 'deepseek-r1', label: 'DeepSeek-R1 (Frontier Reasoning)', tag: 'Reasoning' },
-            { value: 'deepseek-v3', label: 'DeepSeek-V3 (Multi-token General)', tag: 'Flagship' },
-            { value: 'deepseek-coder-v2', label: 'DeepSeek Coder V2 (236B MoE)', tag: 'Code' }
-          ];
-
-          const GROQ_CATALOG = [
-            { value: 'llama-3.3-70b-versatile', label: 'Llama 3.3 70B (300+ tok/s)', tag: 'Ultra-fast' },
-            { value: 'deepseek-r1-distill-llama-70b', label: 'DeepSeek R1 Distill 70B', tag: 'Fast Reasoning' },
-            { value: 'mixtral-8x7b-32768', label: 'Mixtral 8x7B (32k context)', tag: 'Fast' }
-          ];
-
-          const GEMINI_CATALOG = [
-            { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro (State-of-the-art coding)', tag: 'Frontier' },
-            { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash (State-of-the-art speed)', tag: 'Fast' },
-            { value: 'gemini-2.0-flash-thinking-exp', label: 'Gemini 2.0 Flash Thinking', tag: 'Reasoning' }
-          ];
-
-          const MISTRAL_CATALOG = [
-            { value: 'mistral-large-latest', label: 'Mistral Large 2 (Flagship)', tag: 'Flagship' },
-            { value: 'codestral-latest', label: 'Codestral (Specialized code)', tag: 'Code' },
-            { value: 'ministral-8b-latest', label: 'Ministral 8B (Compact)', tag: 'Edge' }
-          ];
-
-          const OPENROUTER_CATALOG = [
-            { value: 'anthropic/claude-3.7-sonnet', label: 'OpenRouter: Claude 3.7 Sonnet', tag: 'Proxy' },
-            { value: 'deepseek/deepseek-r1', label: 'OpenRouter: DeepSeek R1', tag: 'Proxy' },
-            { value: 'meta-llama/llama-3.3-70b-instruct', label: 'OpenRouter: Llama 3.3 70B', tag: 'Proxy' },
-            { value: 'openai/gpt-4o', label: 'OpenRouter: GPT-4o', tag: 'Proxy' }
-          ];
-
-          let models: any[] = [];
-          if (provider === 'anthropic') models = ANTHROPIC_CATALOG;
-          else if (provider === 'openai') models = OPENAI_CATALOG;
-          else if (provider === 'deepseek') models = DEEPSEEK_CATALOG;
-          else if (provider === 'groq') models = GROQ_CATALOG;
-          else if (provider === 'gemini') models = GEMINI_CATALOG;
-          else if (provider === 'mistral') models = MISTRAL_CATALOG;
-          else if (provider === 'openrouter') models = OPENROUTER_CATALOG;
-          else if (provider === 'custom') {
-            // Custom provider fallback: blend generic models and local options
-            const customSet = new Map<string, any>();
-            for (const m of liveOllamaModels) {
-              customSet.set(m, { value: m, label: `${m} (Live Ollama Server)`, tag: 'Live' });
-            }
-            const genericTop = [
-              { value: 'claude-3-7-sonnet', label: 'Claude 3.7 Sonnet', tag: 'Frontier' },
-              { value: 'gpt-4o', label: 'GPT-4o', tag: 'Flagship' },
-              { value: 'deepseek-r1', label: 'DeepSeek-R1', tag: 'Reasoning' },
-              { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro', tag: 'Frontier' },
-              { value: 'gemma4-soul:latest', label: 'gemma4-soul:latest (Local Edge)', tag: 'Active' },
-              { value: 'qwen2.5-coder:7b', label: 'qwen2.5-coder:7b', tag: 'Local' },
-              { value: 'llama3.3:70b', label: 'llama3.3:70b', tag: 'Local' },
-              { value: 'generic-custom-endpoint', label: 'Custom Endpoint Model', tag: 'Custom' }
-            ];
-            for (const item of genericTop) {
-              customSet.set(item.value, item);
-            }
-            models = Array.from(customSet.values());
-          } else {
-            // Ollama default
-            const map = new Map<string, any>();
-            for (const m of liveOllamaModels) {
-              map.set(m, { value: m, label: `${m} (Live Ollama Server)`, tag: 'Live' });
-            }
-            for (const item of OLLAMA_CATALOG) {
-              if (!map.has(item.value)) {
-                map.set(item.value, item);
-              }
-            }
-            models = Array.from(map.values());
-          }
-
-          // If current agent has an active model configured in native file, ensure it is included
-          try {
-            const agentCfg = getAgentConfig(agentId);
-            const activeModel = agentCfg?.configSchema?.model?.model;
-            if (activeModel && !models.some(m => m.value === activeModel)) {
-              models.unshift({
-                value: activeModel,
-                label: `${activeModel} (Container Active Checkpoint)`,
-                tag: 'Active'
-              });
-            }
-          } catch {}
-
-          return res.end(JSON.stringify({
-            success: true,
-            provider,
-            baseUrl,
-            agentId,
-            modelsCount: models.length,
-            isLiveProbed: liveOllamaModels.length > 0,
-            models
-          }));
-        }
-
-        // Resource monitoring endpoints
-        case '/api/openclaw/skills-sync':
-        case '/api/openclaw/skills-sync/': {
-          res.setHeader('Content-Type', 'application/json');
-          console.log(`[Vite API Server] [${timestamp}] ${method} /api/openclaw/skills-sync - Synchronous OpenClaw Skills & MCP Catalog Fetching`);
-
-          const skills = OPENCLAW_SYNCHRONOUS_CATALOG.skills;
-          const mcpServers = OPENCLAW_SYNCHRONOUS_CATALOG.mcpServers;
-
-          const responsePayload = {
-            success: true,
-            agentId: 'openclaw',
-            sourceUrl: OPENCLAW_VPS_SKILLS_URL,
-            mcpSourceUrl: OPENCLAW_VPS_MCP_URL,
-            isLiveSynced: true,
-            syncMode: 'synchronous-catalog',
-            statusMessage: `Synchronously fetched ${skills.length} skills and ${mcpServers.length} MCP servers from OpenClaw VPS registry catalog.`,
-            timestamp: new Date().toISOString(),
-            count: skills.length,
-            totalSkills: skills.length,
-            totalMcpServers: mcpServers.length,
-            skills,
-            mcpServers
-          };
-
-          return res.end(JSON.stringify(responsePayload));
-        }
-
-        // Additional compatibility aliases for OpenClaw skills and sync
-        case '/api/openclaw/skills':
-        case '/api/openclaw/skills/':
-        case '/api/openclaw/sync':
-        case '/api/openclaw/sync/':
-        case '/api/agents/openclaw/skills':
-        case '/api/agents/openclaw/skills/':
-        case '/api/agents/openclaw/skills-sync':
-        case '/api/agents/openclaw/skills-sync/': {
-          res.setHeader('Content-Type', 'application/json');
-          const skills = OPENCLAW_SYNCHRONOUS_CATALOG.skills;
-          const mcpServers = OPENCLAW_SYNCHRONOUS_CATALOG.mcpServers;
-
-          return res.end(JSON.stringify({
-            success: true,
-            agentId: 'openclaw',
-            sourceUrl: OPENCLAW_VPS_SKILLS_URL,
-            mcpSourceUrl: OPENCLAW_VPS_MCP_URL,
-            isLiveSynced: true,
-            syncMode: 'synchronous-catalog',
-            statusMessage: `Synchronously fetched ${skills.length} skills and ${mcpServers.length} MCP servers from OpenClaw VPS registry catalog.`,
-            timestamp: new Date().toISOString(),
-            count: skills.length,
-            totalSkills: skills.length,
-            totalMcpServers: mcpServers.length,
-            skills,
-            mcpServers
-          }));
-        }
-
-        // 10. OpenClaw MCP endpoint
-        case '/api/openclaw/mcp':
-        case '/api/openclaw/mcp/':
-        case '/api/agents/openclaw/mcp':
-        case '/api/agents/openclaw/mcp/': {
-          res.setHeader('Content-Type', 'application/json');
-          return res.end(JSON.stringify({
-            success: true,
-            agentId: 'openclaw',
-            mcpServers: [
-              {
-                id: 'mcp-openclaw-vps-hub',
-                name: 'OpenClaw VPS Remote MCP Hub',
-                description: 'Remote MCP registry server connected to https://openclawvps.io/skills/mcp.',
-                transport: 'sse',
-                url: 'https://openclawvps.io/skills/mcp/sse',
-                enabled: true,
-                category: 'OpenClaw VPS',
-                status: 'connected',
-                toolsProvided: ['openclaw_vps_fetch_skills', 'openclaw_vps_deploy_webhook', 'openclaw_vps_gateway_route', 'openclaw_vps_sync_mcp']
-              }
-            ]
-          }));
-        }
-
-        default: {
-          // Dynamic router fallback: Match agentConfigMatch and agentActionMatch with exact pathname logging
-
-          // Individual Agent Config: /api/agents/:id/config
-          const agentConfigMatch = pathname.match(/^\/api\/agents\/([^/]+)\/config(\/)?$/i);
-          if (agentConfigMatch) {
-            const agentId = agentConfigMatch[1];
-            console.log(`[Vite API Server] [${timestamp}] Regex matched agentConfigMatch on exact pathname: "${pathname}" -> agentId="${agentId}"`);
-
-            res.setHeader('Content-Type', 'application/json');
-
-            if (agentId === 'all') {
-              const agentIds = ['hermes-agent', 'zeroclaw', 'openclaw', 'picoclaw'];
-              const configs: Record<string, any> = {};
-              for (const id of agentIds) {
-                configs[id] = getAgentConfig(id);
-              }
-              return res.end(JSON.stringify({ success: true, configs }));
-            }
-
-            if (method === 'GET') {
-              console.log(`[Vite API Server] [${timestamp}] 200 OK: GET /api/agents/${agentId}/config`);
-              const cfg = getAgentConfig(agentId);
-              return res.end(JSON.stringify(cfg));
-            }
-
-            if (method === 'PUT' || method === 'POST') {
-              ensureDataDir();
-              const body = await readRequestBody(req);
-              console.log(`[Vite API Server] [${timestamp}] 200 OK: ${method} /api/agents/${agentId}/config - Writing config`);
-              const restart = body.restart !== false && body.restartContainer !== false;
-
-              const fallback = defaultNativeFiles[agentId] || defaultNativeFiles['hermes-agent'];
-              const fileName = fallback.fileName;
-              const filePath = path.join(dataDir, fileName);
-
-              let contentToWrite = body.nativeContent;
-              if (body.config || (typeof contentToWrite === 'string' && contentToWrite.trim().startsWith('{'))) {
-                const cfgObj = body.config || (() => {
-                  try { return JSON.parse(contentToWrite); } catch { return {}; }
-                })();
-                contentToWrite = convertConfigToNativeContent(agentId, cfgObj, fallback.format);
-              }
-
-              if (typeof contentToWrite === 'string') {
-                try {
-                  fs.writeFileSync(filePath, contentToWrite, 'utf8');
-                } catch {}
-                try {
-                  const rootPath = `/data/clawdock/${fileName}`;
-                  if (fs.existsSync('/data/clawdock')) {
-                    fs.writeFileSync(rootPath, contentToWrite, 'utf8');
-                  }
-                } catch {}
-              }
-
-              // Update persistence file with config
-              try {
-                const pFile = path.join(dataDir, 'persistence.json');
-                let pObj: any = {};
-                if (fs.existsSync(pFile)) {
-                  pObj = JSON.parse(fs.readFileSync(pFile, 'utf8'));
-                }
-                if (!pObj.configs) pObj.configs = {};
-                const incoming = body.config || body || {};
-                pObj.configs[agentId] = {
-                  ...(pObj.configs[agentId] || {}),
-                  ...incoming,
-                  fallback: {
-                    ...(pObj.configs[agentId]?.fallback || {}),
-                    ...(incoming.fallback || {})
-                  }
-                };
-                fs.writeFileSync(pFile, JSON.stringify(pObj, null, 2), 'utf8');
-              } catch {}
-
-              // Update state to restarting then running
-              if (restart && agentStates[agentId]) {
-                agentStates[agentId].status = 'restarting';
-                agentStates[agentId].logs.push(`[Docker Engine] Config saved to ${filePath}. Restarting container...`);
-                setTimeout(() => {
-                  if (agentStates[agentId]) {
-                    agentStates[agentId].status = 'running';
-                    agentStates[agentId].logs.push(`[Docker Engine] Container restarted with updated settings.`);
-                  }
-                }, 1200);
-              }
-
-              const updatedCfg = getAgentConfig(agentId);
-              return res.end(JSON.stringify({
-                success: true,
-                agentId,
-                filePath: `data/clawdock/${fileName}`,
-                restarted: restart,
-                nativeContent: updatedCfg.nativeContent,
-                configSchema: updatedCfg.configSchema
-              }));
-            }
-          }
-
-          // Code export endpoint
-          if (pathname === '/api/export/code' && (method === 'GET' || method === 'POST')) {
-            const accept = req.headers['accept'] || '';
-            if (accept.includes('application/json')) {
-              res.setHeader('Content-Type', 'application/json');
-              console.log(`[Vite API Server] [${timestamp}] 200 OK: ${method} /api/export/code (JSON)`);
-              return res.end(JSON.stringify({
-                success: true,
-                message: 'Code export archive package generated successfully',
-                downloadUrl: '/api/export/code',
-                filesCount: 32,
-                timestamp
-              }));
-            } else {
-              res.setHeader('Content-Type', 'application/zip');
-              res.setHeader('Content-Disposition', 'attachment; filename="clawdock-config-export.zip"');
-              console.log(`[Vite API Server] [${timestamp}] 200 OK: ${method} /api/export/code (ZIP Blob)`);
-              const zipBuffer = Buffer.from('PK\x03\x04\x14\x00\x00\x00\x08\x00\x00\x00!@#$ClawDockConfigurationArchive\x00\x00\x00', 'binary');
-              return res.end(zipBuffer);
-            }
-          }
-
-          // Bulk container restart
-          if (pathname === '/api/containers/restart-all' && method === 'POST') {
-            res.setHeader('Content-Type', 'application/json');
-            const agentIds = ['hermes-agent', 'zeroclaw', 'openclaw', 'picoclaw'];
-            agentIds.forEach(id => {
-              if (agentStates[id]) {
-                const wasStopped = agentStates[id].status === 'stopped';
-                agentStates[id].status = 'restarting';
-                agentStates[id].logs.push(`[${new Date().toLocaleTimeString()}] [Docker Engine] Bulk restart invoked. Restarting runtime for ${id}...`);
-                setTimeout(() => {
-                  if (agentStates[id]) {
-                    agentStates[id].status = 'running';
-                    agentStates[id].logs.push(`[${new Date().toLocaleTimeString()}] [Docker Engine] Bulk restart completed. Container active.`);
-                  }
-                }, 700);
-              }
-            });
-            return res.end(JSON.stringify({ success: true, count: agentIds.length, message: 'All agent containers restart sequence initiated.' }));
-          }
-
-          // Agent Lifecycle Actions: /api/agents/:id/:action
-          const agentActionMatch = pathname.match(/^\/api\/(?:agents?|agent)\/([^/]+)\/(start|stop|restart|install|detect|logs|docker-exec-config|doctor-fix|stats|resources|metrics|version)(\/)?$/i);
-          if (agentActionMatch) {
-            const agentId = agentActionMatch[1];
-            const action = agentActionMatch[2];
-            console.log(`[Vite API Server] [${timestamp}] Regex matched agentActionMatch on exact pathname: "${pathname}" -> agentId="${agentId}", action="${action}"`);
-
-            res.setHeader('Content-Type', 'application/json');
-            console.log(`[Vite API Server] [${timestamp}] 200 OK: ${method} /api/agents/${agentId}/${action}`);
-
-            if (action === 'version') {
-              return res.end(JSON.stringify({ success: true, version: '0.1.0' }));
-            }
-
-            if (action === 'stats' || action === 'resources' || action === 'metrics') {
-              const payload = buildAgentStatsPayload(agentId);
-              return res.end(JSON.stringify(payload, null, 2));
-            }
-
-            if (action === 'doctor-fix') {
-              if (agentStates[agentId]) {
-                agentStates[agentId].status = 'running';
-                agentStates[agentId].logs.push(`[${new Date().toLocaleTimeString()}] [${agentId}-gateway] Executing openclaw doctor --fix...`);
-                agentStates[agentId].logs.push(`[${new Date().toLocaleTimeString()}] [state/db] State database schema migrated successfully (audit-events-v2) at /home/openclaw/state/openclaw.sqlite`);
-                agentStates[agentId].logs.push(`[${new Date().toLocaleTimeString()}] [lifecycle] Workspace setup state migration completed for /home/openclaw/workspace`);
-                agentStates[agentId].logs.push(`[${new Date().toLocaleTimeString()}] [gateway] Gateway started successfully. Status: RUNNING on port 8082.`);
-              }
-              return res.end(JSON.stringify({
-                success: true,
-                status: 'running',
-                action: 'doctor-fix',
-                message: `OpenClaw doctor --fix completed successfully for ${agentId}. Database migrated to audit-events-v2 and gateway restarted.`
-              }));
-            }
-
-            if (action === 'start') {
-              if (agentStates[agentId]) {
-                agentStates[agentId].status = 'running';
-                agentStates[agentId].logs.push(`[${new Date().toLocaleTimeString()}] Container started.`);
-              }
-              return res.end(JSON.stringify({ success: true, status: 'running', action: 'started' }));
-            }
-
-            if (action === 'restart') {
-              let wasStopped = false;
-              if (agentStates[agentId]) {
-                wasStopped = agentStates[agentId].status === 'stopped';
-                agentStates[agentId].status = 'restarting';
-                agentStates[agentId].logs.push(
-                  wasStopped
-                    ? `[${new Date().toLocaleTimeString()}] [Docker Engine] Container was stopped. Starting container ${agentId}...`
-                    : `[${new Date().toLocaleTimeString()}] [Docker Engine] Received restart command. Executing docker restart for container ${agentId}...`
-                );
-                setTimeout(() => {
-                  if (agentStates[agentId]) {
-                    agentStates[agentId].status = 'running';
-                    agentStates[agentId].logs.push(`[${new Date().toLocaleTimeString()}] [Docker Engine] Container restarted and healthy.`);
-                  }
-                }, 600);
-              }
-              return res.end(JSON.stringify({ 
-                success: true, 
-                status: 'running', 
-                action: wasStopped ? 'started' : 'restarted',
-                message: wasStopped ? `Started container for ${agentId}` : `Restarted container for ${agentId}` 
-              }));
-            }
-
-            if (action === 'stop') {
-              if (agentStates[agentId]) {
-                agentStates[agentId].status = 'stopped';
-                agentStates[agentId].logs.push(`[${new Date().toLocaleTimeString()}] Container stopped.`);
-              }
-              return res.end(JSON.stringify({ success: true, status: 'stopped' }));
-            }
-
-            if (action === 'install') {
-              return res.end(JSON.stringify({ success: true, status: 'installed' }));
-            }
-
-            if (action === 'detect') {
-              return res.end(JSON.stringify({ success: true, detected: true, agentId }));
-            }
-
-            if (action === 'logs') {
-              const current = agentStates[agentId];
-              return res.end(JSON.stringify({ success: true, logs: current ? current.logs : [] }));
-            }
-
-            if (action === 'docker-exec-config') {
-              if (method !== 'GET' && method !== 'POST') {
-                res.statusCode = 405;
-                return res.end(JSON.stringify({ success: false, error: 'Method not allowed. Use GET or POST.' }));
-              }
-              const cfg = getAgentConfig(agentId);
-              return res.end(JSON.stringify({
-                success: true,
-                agentId,
-                nativeFileName: cfg.nativeFileName,
-                nativeFormat: cfg.nativeFormat,
-                nativeContent: cfg.nativeContent,
-                filePath: `data/clawdock/${cfg.nativeFileName}`,
-                configSchema: cfg.configSchema,
-                config: cfg.configSchema,
-                source: 'vite_api_docker_exec'
-              }));
-            }
-          }
-
-          // Agent Specific Models: /api/agents/:id/models
-          const agentModelsMatch = pathname.match(/^\/api\/agents\/([^/]+)\/models\/?$/);
-          if (agentModelsMatch) {
-            const agentId = agentModelsMatch[1];
-            res.setHeader('Content-Type', 'application/json');
-            const agentCfg = getAgentConfig(agentId);
-            const activeModel = agentCfg?.configSchema?.model?.model || 'gemma4-soul:latest';
-            return res.end(JSON.stringify({
-              success: true,
-              agentId,
-              models: [
-                { value: activeModel, label: `${activeModel} (Container Active Checkpoint)`, tag: 'Active' },
-                { value: 'gemma4-soul:latest', label: 'gemma4-soul:latest (Local Edge)', tag: 'Local' },
-                { value: 'qwen2.5-coder:7b', label: 'qwen2.5-coder:7b', tag: 'Local' },
-                { value: 'deepseek-r1', label: 'DeepSeek-R1 (Frontier Reasoning)', tag: 'Reasoning' },
-                { value: 'claude-3-7-sonnet', label: 'Claude 3.7 Sonnet', tag: 'Frontier' },
-                { value: 'gpt-4o', label: 'GPT-4o', tag: 'Flagship' }
-              ]
-            }));
-          }
-
-          // EverOS Memory Hub endpoints
-          if (pathname.startsWith('/api/everos/')) {
-            res.setHeader('Content-Type', 'application/json');
-            console.log(`[Vite API Server] [${timestamp}] 200 OK: EverOS endpoint ${pathname}`);
-            if (pathname === '/api/everos/status') {
-              return res.end(JSON.stringify({
-                status: 'online',
-                daemonVersion: 'v2.1.0',
-                backend: 'everos-vector-graph',
-                totalMemories: 1420,
-                activeBots: ['hermes-agent', 'openclaw', 'zeroclaw', 'picoclaw']
-              }));
-            }
-            return res.end(JSON.stringify({ success: true, count: 0, items: [] }));
-          }
-
-          if (pathname.startsWith('/api/')) {
-            console.warn(`[Vite API Server] [${timestamp}] Unhandled API route (Returning structured JSON 404): ${method} ${pathname}`);
-            
-            const misconfigs: string[] = [];
-            if (!req.url.includes('?')) {
-              misconfigs.push('Missing query parameters (e.g. ?baseUrl= or ?provider=)');
-            }
-            if (rawPath.endsWith('/') && rawPath.length > 5) {
-              misconfigs.push('Trailing slash detected in API pathname');
-            }
-            if (pathname.includes('/proxy') && !pathname.includes('/models')) {
-              misconfigs.push('Proxy subpath without /models endpoint specifier');
-            }
-
-            if (misconfigs.length > 0) {
-              console.warn(`[Vite API Server Debug] Possible misconfigurations detected for ${method} ${pathname}:`, misconfigs);
-            }
-
-            res.statusCode = 404;
-            res.setHeader('Content-Type', 'application/json');
-            return res.end(JSON.stringify({
-              error: 'Not Found',
-              status: 404,
-              message: `API endpoint ${method} ${pathname} was not found on this server.`,
-              possibleMisconfigurations: misconfigs,
-              pathname,
-              method,
-              timestamp: new Date().toISOString()
-            }));
-          }
-
-          next();
-        }
-      }
     };
   }
 
