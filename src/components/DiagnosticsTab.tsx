@@ -122,15 +122,16 @@ export const APIRequestInterceptor: React.FC<{ currentAgentId?: string }> = ({ c
     };
   }, []);
 
-  // Directly read serverRequestLogs from window object as specified
+  // Directly read global serverRequestLogs from window object as specified
   const logsFromWindow: ServerRequestLog[] = (typeof window !== 'undefined' && Array.isArray((window as any).serverRequestLogs) && (window as any).serverRequestLogs.length > 0)
     ? (window as any).serverRequestLogs
     : (windowLogs.length > 0 ? windowLogs : serverRequestLogs);
 
-  // Filter specifically for 405 Method Not Allowed or 500 status codes
-  const failedRequests = logsFromWindow.filter(
-    (log) => log.status === 405 || log.status >= 500
-  );
+  const [activeFilter, setActiveFilter] = useState<'405-only' | 'all'>('405-only');
+  const errors405 = logsFromWindow.filter((log) => log.status === 405);
+  const failedRequests = activeFilter === '405-only'
+    ? (errors405.length > 0 ? errors405 : logsFromWindow.filter((l) => l.status === 405 || l.status >= 500))
+    : logsFromWindow.filter((log) => log.status === 405 || log.status >= 500);
 
   // Test Probe controls for /api/persistence/commit
   const [probeMethod, setProbeMethod] = useState<'PUT' | 'POST' | 'GET' | 'DELETE'>('PUT');
@@ -338,13 +339,37 @@ export const APIRequestInterceptor: React.FC<{ currentAgentId?: string }> = ({ c
 
         {/* Right Column: Failed Requests Table (8 cols) */}
         <div className="lg:col-span-8 bg-slate-900/60 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-            <h3 className="text-xs font-bold text-slate-200 uppercase tracking-wider flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4 text-amber-500" />
-              Recent Failed Requests (405 or 500 Status)
-            </h3>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-800 pb-3 gap-2">
+            <div className="flex items-center gap-2">
+              <h3 className="text-xs font-bold text-slate-200 uppercase tracking-wider flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-amber-500" />
+                Recent 405 Method Not Allowed Errors
+              </h3>
+              <div className="flex items-center gap-1 bg-slate-950 p-0.5 rounded-lg border border-slate-800 ml-2">
+                <button
+                  onClick={() => setActiveFilter('405-only')}
+                  className={`px-2 py-0.5 text-[10px] font-mono rounded transition-colors ${
+                    activeFilter === '405-only'
+                      ? 'bg-amber-950 text-amber-400 font-bold border border-amber-500/20'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  405 Only ({errors405.length})
+                </button>
+                <button
+                  onClick={() => setActiveFilter('all')}
+                  className={`px-2 py-0.5 text-[10px] font-mono rounded transition-colors ${
+                    activeFilter === 'all'
+                      ? 'bg-indigo-950 text-indigo-400 font-bold border border-indigo-500/20'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  All Errors ({logsFromWindow.filter((l) => l.status === 405 || l.status >= 500).length})
+                </button>
+              </div>
+            </div>
             <span className="text-[10px] text-slate-500 font-mono">
-              Filtered from serverRequestLogs ({failedRequests.length} matching)
+              Filtered from global serverRequestLogs ({failedRequests.length} matching)
             </span>
           </div>
 
@@ -365,7 +390,7 @@ export const APIRequestInterceptor: React.FC<{ currentAgentId?: string }> = ({ c
                 {failedRequests.length === 0 ? (
                   <tr>
                     <td colSpan={7} className="text-center py-10 text-slate-500 text-xs italic">
-                      No 405 Method Not Allowed or 500 Server Error responses captured.
+                      No 405 Method Not Allowed responses captured in global serverRequestLogs.
                       Use the test probe on the left to simulate a request.
                     </td>
                   </tr>

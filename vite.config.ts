@@ -1323,8 +1323,10 @@ fallback:
 
   class Router {
     private routes: RegisteredRoute[] = [];
+    private routeMap = new Map<string, RegisteredRoute>();
+    // Centralized Map-based method-to-handler validation structure
+    private methodValidationMap = new Map<string, Map<string, RouteHandlerFn>>();
 
-    // Strictly defined whitelist of supported HTTP methods for API centralization
     // Strictly enforced Map-based validation whitelist of supported HTTP methods for API centralization
     private static readonly ALLOWED_METHOD_WHITELIST = new Map<string, boolean>([
       ['GET', true],
@@ -1336,6 +1338,10 @@ fallback:
       ['HEAD', true]
     ]);
 
+    /**
+     * Centralized route registration requiring explicit definition of allowedMethods
+     * Enforces Map-based method-to-handler validation structure for all routes
+     */
     public register(
       patternOrRoute: RegExp | { pattern: RegExp; allowedMethods: string[]; handlers?: Record<string, RouteHandlerFn>; handler?: RouteHandlerFn },
       methodsOrHandlers?: string[] | Record<string, RouteHandlerFn>,
@@ -1405,7 +1411,20 @@ fallback:
         }
       }
 
-      this.routes.push({ pattern, allowedMethods, methods: allowedMethods, methodMap });
+      const registeredRoute: RegisteredRoute = { pattern, allowedMethods, methods: allowedMethods, methodMap };
+      this.routes.push(registeredRoute);
+      this.routeMap.set(pattern.source, registeredRoute);
+      this.methodValidationMap.set(pattern.source, methodMap);
+    }
+
+    /**
+     * Refactor and load dynamicRouteMappings directly into the centralized Router class
+     */
+    public loadDynamicRouteMappings(mappings: Array<{ pattern: RegExp; allowedMethods: string[]; handlers?: Record<string, RouteHandlerFn>; handler?: RouteHandlerFn }>) {
+      for (const route of mappings) {
+        this.register(route);
+      }
+      return this;
     }
 
     private async validateMethod(upperMethod: string, route: RegisteredRoute, context: { req: any; res: any; pathname: string }): Promise<boolean> {
@@ -2638,10 +2657,7 @@ fallback:
         },
       ];
 
-      const router = new Router();
-      for (const route of dynamicRouteMappings) {
-        router.register(route);
-      }
+      const router = new Router().loadDynamicRouteMappings(dynamicRouteMappings);
       const handled = await router.handle({ req, res, pathname, method, parsedUrl, timestamp });
       if (handled) {
         return;
