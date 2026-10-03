@@ -717,6 +717,51 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
     setSelectedPurpose(getAgentDefaultPurpose(agentId));
   }, [agentId]);
 
+  // Listen to background discovery from AgentModelDiscovery component in DiagnosticsTab
+  useEffect(() => {
+    const handleDiscoveredModels = (e: any) => {
+      const models = e.detail?.models;
+      if (Array.isArray(models) && models.length > 0) {
+        const formatted = models.map((m: any) => {
+          const val = typeof m === 'string' ? m : (m.value || m.name || m.model || '');
+          return { value: val, label: `${val} (Discovered Live)`, tag: m.tag || 'Discovered' };
+        }).filter((m: any) => m.value);
+
+        setFetchedModelsMap((prev) => ({
+          ...prev,
+          [config.model.provider]: formatted,
+          'custom': formatted
+        }));
+      }
+    };
+
+    const handleSuggestedModel = (e: any) => {
+      const modelName = e.detail?.model;
+      if (modelName) {
+        onChangeConfig({
+          ...config,
+          model: {
+            ...config.model,
+            model: modelName
+          }
+        });
+      }
+    };
+
+    window.addEventListener('agentModelsDiscovered', handleDiscoveredModels);
+    window.addEventListener('selectedModelSuggested', handleSuggestedModel);
+
+    // Also check window.agentDiscoveredModels on mount
+    if (typeof window !== 'undefined' && Array.isArray((window as any).agentDiscoveredModels) && (window as any).agentDiscoveredModels.length > 0) {
+      handleDiscoveredModels({ detail: { models: (window as any).agentDiscoveredModels } });
+    }
+
+    return () => {
+      window.removeEventListener('agentModelsDiscovered', handleDiscoveredModels);
+      window.removeEventListener('selectedModelSuggested', handleSuggestedModel);
+    };
+  }, [config.model.provider, onChangeConfig]);
+
   const getContextSizeVal = (modelValue: string, label: string): number => {
     const str = (modelValue + ' ' + label).toLowerCase();
     if (str.includes('200k') || str.includes('claude-3-7') || str.includes('claude-3-5')) return 200000;

@@ -90,11 +90,114 @@ export function useServerRequestLogs() {
   return { serverRequestLogs, loading, error, refresh: fetchLogs, clearLogs };
 }
 
-/**
- * API Request Interceptor UI Component
- * Reads 'serverRequestLogs' from the window object and displays a table of recent 405 Method Not Allowed or 500 errors
- * Displays full headers, request payload, and an 'Inspect' modal to visualize the exact request lifecycle for debugging the /api/persistence/commit route.
- */
+export const AgentModelDiscovery: React.FC<{ currentAgentId?: string }> = ({ currentAgentId }) => {
+  const [agentId, setAgentId] = useState(currentAgentId || 'hermes-agent');
+  const [loading, setLoading] = useState(false);
+  const [discoveredModels, setDiscoveredModels] = useState<any[]>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  const scanModels = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/agents/${agentId}/models`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+      const data = await res.json();
+      const models = data.models || data.data || [];
+      setDiscoveredModels(models);
+      if (typeof window !== 'undefined') {
+        (window as any).agentDiscoveredModels = models;
+        window.dispatchEvent(new CustomEvent('agentModelsDiscovered', { detail: { agentId, models } }));
+      }
+    } catch (err: any) {
+      setError(err?.message || 'Failed to discover models');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    scanModels();
+  }, [agentId]);
+
+  return (
+    <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-5 space-y-4 shadow-xl">
+      <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+        <h3 className="text-xs font-bold text-slate-200 uppercase tracking-wider flex items-center gap-2">
+          <Layers className="w-4 h-4 text-indigo-400" />
+          Agent Model Discovery &amp; Scanner ({agentId})
+        </h3>
+        <button
+          onClick={scanModels}
+          disabled={loading}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-xs font-semibold text-white transition-all shadow disabled:opacity-50"
+        >
+          <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+          Scan Provider Models
+        </button>
+      </div>
+
+      <p className="text-[11px] text-slate-400 leading-relaxed">
+        Background discovery fetches provider model catalogs via <code className="text-indigo-300 font-mono">/api/agents/{agentId}/models</code>. When multiple model versions or variants are detected, suggestions are dynamically synchronized to configuration dropdowns.
+      </p>
+
+      {error && (
+        <div className="p-3 bg-red-950/30 border border-red-500/30 rounded-xl text-xs text-red-400 flex items-center gap-2">
+          <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+          {error}
+        </div>
+      )}
+
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <span className="text-[11px] font-bold text-slate-300">Discovered Models ({discoveredModels.length} variants detected)</span>
+          <select
+            value={agentId}
+            onChange={(e) => setAgentId(e.target.value)}
+            className="bg-slate-950 text-xs text-indigo-200 font-mono px-3 py-1 rounded-lg border border-slate-800 outline-none"
+          >
+            <option value="hermes-agent">hermes-agent</option>
+            <option value="zeroclaw">zeroclaw</option>
+            <option value="openclaw">openclaw</option>
+            <option value="picoclaw">picoclaw</option>
+          </select>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5 max-h-60 overflow-y-auto pr-1">
+          {discoveredModels.length === 0 ? (
+            <div className="col-span-full text-center py-10 text-slate-500 text-xs italic">
+              {loading ? 'Scanning provider model catalog...' : 'No models discovered yet. Click Scan Provider Models.'}
+            </div>
+          ) : (
+            discoveredModels.map((m: any, idx: number) => {
+              const name = typeof m === 'string' ? m : (m.value || m.name || m.model || 'unknown');
+              const tag = m.tag || m.provider || 'Live';
+              return (
+                <div key={idx} className="p-3 bg-slate-950/80 border border-slate-800 rounded-xl flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <span className="font-mono text-xs text-white font-semibold truncate block" title={name}>{name}</span>
+                    <span className="text-[10px] text-indigo-400 font-mono">{tag}</span>
+                  </div>
+                  <button
+                    onClick={() => {
+                      if (typeof window !== 'undefined') {
+                        (window as any).selectedDiscoveredModel = name;
+                        window.dispatchEvent(new CustomEvent('selectedModelSuggested', { detail: { model: name, agentId } }));
+                      }
+                    }}
+                    className="px-2.5 py-1 bg-indigo-600/30 hover:bg-indigo-600 text-indigo-200 hover:text-white rounded-lg text-[10px] font-semibold transition-colors shrink-0"
+                  >
+                    Suggest
+                  </button>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
 export const APIRequestInterceptor: React.FC<{ currentAgentId?: string }> = ({ currentAgentId }) => {
   const { serverRequestLogs, loading, error, refresh, clearLogs } = useServerRequestLogs();
   const [inspectModalLog, setInspectModalLog] = useState<ServerRequestLog | null>(null);
@@ -674,7 +777,7 @@ export const DiagnosticsTab = ({ currentAgentId, agent, config, onFixOpenClaw }:
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [verboseLogging, setVerboseLogging] = useState(() => localStorage.getItem('verboseLogging') === 'true');
-  const [activeSubTab, setActiveSubTab] = useState<'activity' | 'errors' | 'interceptor'>('interceptor');
+  const [activeSubTab, setActiveSubTab] = useState<'activity' | 'errors' | 'interceptor' | 'discovery'>('discovery');
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
@@ -820,10 +923,23 @@ export const DiagnosticsTab = ({ currentAgentId, agent, config, onFixOpenClaw }:
             </span>
           )}
         </button>
+        <button
+          onClick={() => setActiveSubTab('discovery')}
+          className={`px-4 py-2 text-xs font-semibold border-b-2 transition-all flex items-center gap-1.5 ${
+            activeSubTab === 'discovery'
+              ? 'border-indigo-400 text-indigo-300 bg-indigo-500/5'
+              : 'border-transparent text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <Layers className="w-3.5 h-3.5" />
+          Model Discovery
+        </button>
       </div>
 
       {/* Main active sub-tab view */}
-      {activeSubTab === 'interceptor' ? (
+      {activeSubTab === 'discovery' ? (
+        <AgentModelDiscovery currentAgentId={currentAgentId} />
+      ) : activeSubTab === 'interceptor' ? (
         /* API Request Interceptor UI Component */
         <APIRequestInterceptor currentAgentId={currentAgentId} />
       ) : activeSubTab === 'activity' ? (
