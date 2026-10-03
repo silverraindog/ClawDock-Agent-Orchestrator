@@ -1275,48 +1275,59 @@ fallback:
     };
   }
 
-  class ApiRouter {
-    private routes: Array<{
-      pattern: RegExp;
-      handlers: Record<string, (context: { req: any; res: any; pathname: string; method: string; parsedUrl: URL; timestamp: string }) => Promise<any>>;
-    }> = [];
+  type RouteHandlerFn = (context: { req: any; res: any; pathname: string; method: string; parsedUrl: URL; timestamp: string }) => Promise<any>;
 
-    // Strictly defined list of supported HTTP methods for API centralization
-    private static readonly SUPPORTED_METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'HEAD'];
+  interface RegisteredRoute {
+    pattern: RegExp;
+    methodMap: Map<string, RouteHandlerFn>;
+    allowedMethods: string[];
+  }
 
-    public register(pattern: RegExp, methodsOrHandlers: string[] | Record<string, any>, handler?: any) {
-      const handlers: Record<string, any> = {};
+  class Router {
+    private routes: RegisteredRoute[] = [];
+
+    // Strictly defined whitelist of supported HTTP methods for API centralization
+    private static readonly ALLOWED_METHOD_WHITELIST = new Set(['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'HEAD']);
+
+    public register(pattern: RegExp, methodsOrHandlers: string[] | Record<string, RouteHandlerFn>, handler?: RouteHandlerFn) {
+      const methodMap = new Map<string, RouteHandlerFn>();
 
       if (Array.isArray(methodsOrHandlers)) {
-        // Enforce method validation on array declaration
         for (const m of methodsOrHandlers) {
           const upperM = m.toUpperCase();
-          if (!ApiRouter.SUPPORTED_METHODS.includes(upperM)) {
+          if (!Router.ALLOWED_METHOD_WHITELIST.has(upperM)) {
             throw new Error(`[Router Schema Error] Unsupported HTTP method "${upperM}" for pattern ${pattern}`);
           }
-          handlers[upperM] = handler;
+          if (handler) {
+            methodMap.set(upperM, handler);
+          }
         }
-      } else {
-        // Enforce strict method validation on direct mapping schema
+      } else if (methodsOrHandlers && typeof methodsOrHandlers === 'object') {
         for (const [m, h] of Object.entries(methodsOrHandlers)) {
           const upperM = m.toUpperCase();
-          if (!ApiRouter.SUPPORTED_METHODS.includes(upperM)) {
+          if (!Router.ALLOWED_METHOD_WHITELIST.has(upperM)) {
             throw new Error(`[Router Schema Error] Unsupported HTTP method "${upperM}" for pattern ${pattern}`);
           }
-          handlers[upperM] = h;
+          if (typeof h === 'function') {
+            methodMap.set(upperM, h);
+          }
         }
       }
 
-      this.routes.push({ pattern, handlers });
+      const allowedMethods = Array.from(methodMap.keys());
+      this.routes.push({ pattern, methodMap, allowedMethods });
     }
 
     public async handle(context: { req: any; res: any; pathname: string; method: string; parsedUrl: URL; timestamp: string }): Promise<boolean> {
       const { req, pathname, method, res } = context;
+      const upperMethod = (method || 'GET').toUpperCase();
+
       for (const route of this.routes) {
         if (route.pattern.test(pathname)) {
-          const allowedMethods = Object.keys(route.handlers);
-          
-          if (method === 'OPTIONS') {
+          const { methodMap, allowedMethods } = route;
+
+          // Handle preflight OPTIONS automatically
+          if (upperMethod === 'OPTIONS') {
             res.statusCode = 200;
             res.setHeader('Content-Type', 'application/json');
             res.setHeader('Allow', allowedMethods.join(', '));
@@ -1324,12 +1335,12 @@ fallback:
             return true;
           }
 
-          const targetHandler = route.handlers[method];
-          if (!targetHandler) {
-            console.warn(`[Vite API Server] 405 Method Not Allowed: ${method} ${pathname}`);
-            console.warn(`[Vite API Server] Allowed methods: ${allowedMethods.join(', ')}`);
-            
-            // Read body to capture payload for debugging
+          // Strict Map-based method verification against whitelist & registered handlers
+          if (!methodMap.has(upperMethod)) {
+            const mismatchErrorMsg = `[Router Validation Mismatch Error] HTTP method mismatch on endpoint ${pathname}. Invoked Method: ${upperMethod}. Registered & Allowed Methods for this pattern: ${allowedMethods.join(', ')}`;
+            console.error(mismatchErrorMsg);
+
+            // Asynchronously capture request body payload for diagnostics
             try {
               req.bodyPayload = await readRequestBody(req);
             } catch (pErr) {
@@ -1337,15 +1348,15 @@ fallback:
             }
 
             // Generate full stack trace for request interceptor
-            const stackTrace = new Error(`HTTP 405 Method Interceptor: Method '${method}' not allowed on route '${pathname}'`).stack || '';
+            const stackTrace = new Error(mismatchErrorMsg).stack || '';
 
             res.statusCode = 405;
             res.setHeader('Content-Type', 'application/json');
             res.setHeader('Allow', allowedMethods.join(', '));
-            res.end(JSON.stringify({ 
-              error: 'Method Not Allowed', 
-              method, 
-              pathname, 
+            res.end(JSON.stringify({
+              error: 'Method Not Allowed',
+              method: upperMethod,
+              pathname,
               allowedMethods,
               stackTrace,
               timestamp: new Date().toISOString()
@@ -1353,6 +1364,7 @@ fallback:
             return true;
           }
 
+          const targetHandler = methodMap.get(upperMethod)!;
           await targetHandler(context);
           return true;
         }
@@ -2518,18 +2530,32 @@ fallback:
         },
       ];
 
-      const router = new ApiRouter();
+      const router = new Router();
       for (const route of dynamicRouteMappings) {
-        router.register(route.pattern, route.methods, route.handler);
+        if ('handlers' in route && route.handlers) {
+          router.register(route.pattern, route.handlers);
+        } else {
+          router.register(route.pattern, route.methods || [], route.handler);
+        }
       }
       const handled = await router.handle({ req, res, pathname, method, parsedUrl, timestamp });
       if (handled) {
         return;
       }
 
+      // Centralized modern fallback for unhandled API routes (nested switch bypassed)
+      res.statusCode = 404;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ 
+        error: 'Not Found', 
+        pathname, 
+        method, 
+        timestamp: new Date().toISOString() 
+      }));
+      return;
+
       // Centralized Request Router using switch statement
       switch (pathname) {
-        // 1. Health endpoint
         case '/api/health': {
           res.setHeader('Content-Type', 'application/json');
           console.log(`[Vite API Server] [${timestamp}] 200 OK: GET /api/health`);

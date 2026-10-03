@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { RefreshCw, Terminal, AlertTriangle, AlertCircle, Clock, ChevronDown, ChevronUp, Copy, Check, Activity, Info, ShieldAlert, Cpu, ArrowRight, Play, Eye, ListFilter } from 'lucide-react';
+import { RefreshCw, Terminal, AlertTriangle, AlertCircle, Clock, ChevronDown, ChevronUp, Copy, Check, Activity, Info, ShieldAlert, Cpu, Play, Eye, ListFilter } from 'lucide-react';
 
 export const DiagnosticsTab = ({ currentAgentId, agent, config, onFixOpenClaw }: { currentAgentId: string, agent: any, config: any, onFixOpenClaw: any }) => {
   const [logs, setLogs] = useState<any[]>([]);
@@ -189,7 +189,7 @@ export const DiagnosticsTab = ({ currentAgentId, agent, config, onFixOpenClaw }:
           <ShieldAlert className="w-3.5 h-3.5" />
           API Request Interceptor
           {failedLogs.length > 0 && (
-            <span className="ml-1 bg-amber-950/60 px-1.5 py-0.5 rounded text-[10px] text-amber-400 border border-amber-500/20 animate-pulse">
+            <span className="ml-1 bg-amber-955 px-1.5 py-0.5 rounded text-[10px] text-amber-400 border border-amber-500/20 animate-pulse">
               {failedLogs.length} Intercepted
             </span>
           )}
@@ -435,7 +435,7 @@ export const DiagnosticsTab = ({ currentAgentId, agent, config, onFixOpenClaw }:
               <div>
                 <span className="font-bold text-slate-200 block mb-1 text-sm">Real-time API Request Interceptor & Trace Capture</span>
                 <p className="text-slate-400 leading-relaxed text-xs">
-                  This interface captures, registers, and decodes any failed HTTP transaction returning a <strong>405 Method Not Allowed</strong> or <strong>500 Server Error</strong>. Analyze explicit method mappings and full request lifecycle traces to eliminate persistent anomalies.
+                  This interface captures, registers, and decodes any HTTP transaction returning a <strong>405 Method Not Allowed</strong> or <strong>500 Server Error</strong>, specifically targeting the `/api/persistence/commit` route.
                 </p>
               </div>
             </div>
@@ -520,86 +520,86 @@ export const DiagnosticsTab = ({ currentAgentId, agent, config, onFixOpenClaw }:
               )}
             </div>
 
-            {/* Column 2: Intercepted Failed Requests List (col-span-3) */}
-            <div className="lg:col-span-3 bg-slate-900/60 border border-slate-800 rounded-2xl p-4 space-y-3 shadow-xl">
-              <h3 className="text-xs font-bold text-slate-200 uppercase tracking-wider flex items-center gap-2 border-b border-slate-800 pb-3">
-                <ListFilter className="w-4 h-4 text-amber-500" />
-                Intercepted Failures List
-              </h3>
+            {/* Column 2: Intercepted 405 Method Mismatch Table & Lifecycle Inspector (col-span-9) */}
+            <div className="lg:col-span-9 space-y-4">
+              {/* The Intercepted Failed Requests Table */}
+              <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-4 shadow-xl space-y-3">
+                <h3 className="text-xs font-bold text-slate-200 uppercase tracking-wider flex items-center gap-2 border-b border-slate-800 pb-3">
+                  <ListFilter className="w-4 h-4 text-amber-500" />
+                  Intercepted Failures Logs Table (405 / 500)
+                </h3>
 
-              <div className="space-y-2 overflow-y-auto max-h-[480px]">
-                {failedLogs.length === 0 ? (
-                  <div className="text-center py-12 text-slate-500 text-xs italic">
-                    No intercepted failures (405 or 500) recorded in the active buffer.
-                  </div>
-                ) : (
-                  failedLogs.map((log) => {
-                    const isSelected = activeInspectedLog?.id === log.id;
-                    const is405 = log.status === 405;
-                    const is500 = log.status >= 500;
-                    
-                    return (
-                      <div
-                        key={log.id}
-                        onClick={() => setSelectedFailedLogId(log.id)}
-                        className={`p-3 rounded-xl border cursor-pointer transition-all ${
-                          isSelected
-                            ? is500 
-                              ? 'bg-rose-955/20 border-rose-500 text-rose-300' 
-                              : 'bg-amber-955/20 border-amber-500 text-amber-300'
-                            : 'bg-slate-950/40 border-slate-800 hover:border-slate-700'
-                        }`}
-                      >
-                        <div className="flex items-center justify-between mb-1.5">
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                            is500 ? 'bg-rose-950 text-rose-400' : 'bg-amber-950 text-amber-400'
-                          }`}>
-                            HTTP {log.status}
-                          </span>
-                          <span className="text-[10px] text-slate-500 font-mono">
-                            {new Date(log.timestamp).toLocaleTimeString([], { hour12: false })}
-                          </span>
-                        </div>
-
-                        <div className="flex items-center gap-1.5 min-w-0">
-                          <span className="px-1 py-0.5 rounded text-[9px] bg-slate-800 text-slate-400 font-mono">
-                            {log.method}
-                          </span>
-                          <span className="text-[11px] font-mono text-slate-300 truncate font-semibold block">
-                            {log.pathname}
-                          </span>
-                        </div>
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-            </div>
-
-            {/* Column 3: Active Failure lifecycle Inspector (col-span-6) */}
-            <div className="lg:col-span-6 bg-slate-900/60 border border-slate-800 rounded-2xl p-5 space-y-4 shadow-xl">
-              <h3 className="text-xs font-bold text-slate-200 uppercase tracking-wider flex items-center gap-2 border-b border-slate-800 pb-3">
-                <Eye className="w-4 h-4 text-indigo-400" />
-                Active Transaction Lifecycle Trace
-              </h3>
-
-              {!activeInspectedLog ? (
-                <div className="flex flex-col items-center justify-center py-24 text-center">
-                  <Cpu className="w-10 h-10 text-slate-600 mb-2 animate-pulse" />
-                  <p className="text-xs text-slate-400 font-semibold font-mono">Pipeline Inactive</p>
-                  <p className="text-[10px] text-slate-500 max-w-xs mt-1 leading-relaxed">
-                    Select an intercepted failure from the list or send a live DELETE probe to verify step-by-step lifecycle interception.
-                  </p>
+                <div className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/40">
+                  <table className="w-full text-left text-xs text-slate-300 border-collapse font-mono">
+                    <thead className="bg-slate-800/80 uppercase text-[9px] tracking-wider text-slate-400 border-b border-slate-800">
+                      <tr>
+                        <th className="px-4 py-2.5 font-semibold">Timestamp</th>
+                        <th className="px-4 py-2.5 font-semibold">Method</th>
+                        <th className="px-4 py-2.5 font-semibold">Pathname</th>
+                        <th className="px-4 py-2.5 font-semibold">Status</th>
+                        <th className="px-4 py-2.5 font-semibold">Allowed Methods Whitelist</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/40">
+                      {failedLogs.length === 0 ? (
+                        <tr>
+                          <td colSpan={5} className="text-center py-8 text-slate-500 text-xs italic">
+                            No active 405 or 500 logs recorded. Invoke a DELETE probe to populate.
+                          </td>
+                        </tr>
+                      ) : (
+                        failedLogs.map((log) => {
+                          const isSelected = activeInspectedLog?.id === log.id;
+                          const is500 = log.status >= 500;
+                          return (
+                            <tr
+                              key={log.id}
+                              onClick={() => setSelectedFailedLogId(log.id)}
+                              className={`cursor-pointer transition-all hover:bg-slate-800/30 ${
+                                isSelected 
+                                  ? is500 
+                                    ? 'bg-rose-950/30 text-rose-300' 
+                                    : 'bg-amber-950/30 text-amber-300' 
+                                  : ''
+                              }`}
+                            >
+                              <td className="px-4 py-2.5 text-[11px] text-slate-400">
+                                {new Date(log.timestamp).toLocaleTimeString([], { hour12: false })}
+                              </td>
+                              <td className="px-4 py-2.5">
+                                <span className="px-1.5 py-0.5 rounded text-[10px] bg-slate-800 font-bold text-slate-300">
+                                  {log.method}
+                                </span>
+                              </td>
+                              <td className="px-4 py-2.5 text-xs text-slate-200 font-semibold truncate max-w-xs">
+                                {log.pathname}
+                              </td>
+                              <td className="px-4 py-2.5 font-bold">
+                                <span className={is500 ? 'text-rose-500' : 'text-amber-500'}>
+                                  {log.status}
+                                </span>
+                              </td>
+                              <td className="px-4 py-2.5 text-emerald-400 text-[11px]">
+                                {log.status === 405 ? 'GET, POST, PUT, OPTIONS' : 'Unified'}
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
                 </div>
-              ) : (
-                <div className="space-y-4">
-                  {/* Trace ID & details */}
+              </div>
+
+              {/* The Details Inspector */}
+              {activeInspectedLog ? (
+                <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-5 space-y-4 shadow-xl">
                   <div className="flex items-center justify-between text-xs text-slate-400 bg-slate-950/40 p-2.5 rounded-xl border border-slate-800">
                     <span className="font-mono text-[11px]">inspectedId: <strong className="text-slate-300">{activeInspectedLog.id}</strong></span>
                     <span className="font-mono text-[11px] text-indigo-400">Duration: <strong>{activeInspectedLog.durationMs}ms</strong></span>
                   </div>
 
-                  {/* Flow Timline Stepper */}
+                  {/* Timeline Map */}
                   <div className="relative border-l-2 border-indigo-500/20 ml-3 pl-6 space-y-5 text-xs text-slate-300">
                     <div className="relative">
                       <span className="absolute -left-[31px] top-0.5 bg-indigo-500 w-4 h-4 rounded-full flex items-center justify-center border border-slate-950">
@@ -610,7 +610,7 @@ export const DiagnosticsTab = ({ currentAgentId, agent, config, onFixOpenClaw }:
                         <span className="px-1.5 py-0.5 rounded bg-slate-800 text-[10px] font-mono text-indigo-400">{activeInspectedLog.method}</span>
                       </h4>
                       <p className="text-slate-400 mt-1">
-                        Endpoint: <code className="text-indigo-300 font-mono">{activeInspectedLog.pathname}</code>. Initialized headers.
+                        Endpoint: <code className="text-indigo-300 font-mono">{activeInspectedLog.pathname}</code>. Captured initial headers.
                       </p>
                     </div>
 
@@ -629,16 +629,16 @@ export const DiagnosticsTab = ({ currentAgentId, agent, config, onFixOpenClaw }:
                         <span className="w-1.5 h-1.5 rounded-full bg-white"></span>
                       </span>
                       <h4 className="font-bold text-rose-400 flex items-center gap-2">
-                        3. validation result
+                        3. Validation Result
                         <span className="px-1.5 py-0.5 rounded bg-rose-950 text-[10px] text-rose-400 font-mono font-black">FAILED (HTTP {activeInspectedLog.status})</span>
                       </h4>
-                      <p className="text-slate-400 mt-1 leading-relaxed">
+                      <p className="text-slate-400 mt-1 leading-relaxed font-sans">
                         Validation rejected method {activeInspectedLog.method}. Enforced Allowed Methods on this endpoint: <code className="text-emerald-400 font-mono">GET, POST, PUT, OPTIONS</code>. Stack trace exception generated and logged.
                       </p>
                     </div>
                   </div>
 
-                  {/* Headers & body inspector */}
+                  {/* Metadata Box */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 border-t border-slate-800 pt-4">
                     <div>
                       <span className="text-[10px] uppercase font-bold text-slate-500 tracking-wider block mb-1.5">Request Headers</span>
@@ -677,7 +677,7 @@ export const DiagnosticsTab = ({ currentAgentId, agent, config, onFixOpenClaw }:
                     </div>
                   </div>
 
-                  {/* Stack trace inspector */}
+                  {/* Trace */}
                   {activeInspectedLog.stackTrace && (
                     <div className="space-y-1.5 pt-2 border-t border-slate-800">
                       <span className="text-[10px] uppercase font-bold text-red-400 tracking-wider block flex items-center gap-1.5">
@@ -689,6 +689,14 @@ export const DiagnosticsTab = ({ currentAgentId, agent, config, onFixOpenClaw }:
                       </pre>
                     </div>
                   )}
+                </div>
+              ) : (
+                <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-8 flex flex-col items-center justify-center text-center">
+                  <Cpu className="w-10 h-10 text-slate-600 mb-2 animate-pulse" />
+                  <p className="text-xs text-slate-400 font-semibold font-mono">No Failures Inspected</p>
+                  <p className="text-[10px] text-slate-500 max-w-xs mt-1 leading-relaxed">
+                    Select a row in the intercepted failures table to examine its full trace diagram, stack trace, headers, and request body payload.
+                  </p>
                 </div>
               )}
             </div>

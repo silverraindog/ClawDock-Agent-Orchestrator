@@ -1,118 +1,7 @@
 {
   "configs": {
     "hermes-agent": {
-      "agentId": "hermes-agent",
-      "version": "1.0.0",
-      "model": {
-        "provider": "custom",
-        "model": "gemma4-soul:latest",
-        "baseUrl": "http://192.168.1.49:11434",
-        "apiKey": "ollama"
-      },
-      "channels": {
-        "telegram": {
-          "enabled": true,
-          "botToken": "env:TELEGRAM_BOT_TOKEN",
-          "allowedUsers": "@developer",
-          "mode": "polling"
-        },
-        "discord": {
-          "enabled": false,
-          "botToken": "",
-          "clientId": "",
-          "guildIds": ""
-        },
-        "slack": {
-          "enabled": false,
-          "botToken": "",
-          "appToken": "",
-          "signingSecret": "",
-          "socketMode": true
-        },
-        "whatsapp": {
-          "enabled": false,
-          "sessionId": "",
-          "webhookUrl": ""
-        },
-        "matrix": {
-          "enabled": false,
-          "homeserver": "",
-          "accessToken": "",
-          "roomIds": ""
-        },
-        "webhook": {
-          "enabled": true,
-          "port": 8080,
-          "authToken": "secure_bearer_token",
-          "corsOrigin": "*"
-        }
-      },
-      "system": {
-        "preset": "engineer",
-        "systemPrompt": "You are hermes-agent, an autonomous AI assistant.",
-        "agentName": "Hermes Code Assistant",
-        "personaName": "Hermes Code Assistant",
-        "language": "en-US",
-        "autoFormatCode": true
-      },
-      "security": {
-        "sandboxMode": "docker_isolated",
-        "allowedDirectories": [
-          "/workspace",
-          "/data"
-        ],
-        "blockNetworkAccess": false,
-        "maxExecutionTimeSec": 120,
-        "requireApprovalForCommands": false,
-        "securityProfileFile": ".security.yml"
-      },
-      "storage": {
-        "memoryBackend": "everos",
-        "dbPath": "/data/everos/memories/hermes-agent",
-        "autoSummarizeInterval": 25,
-        "maxHistoryTurns": 100,
-        "vectorDbUrl": "http://everos:8080"
-      },
-      "moa": {
-        "enabled": true,
-        "aggregatorModel": "gemma4-soul:latest",
-        "proposerModels": [
-          "gemma4-soul:latest",
-          "deepseek-coder-v2:16b",
-          "qwen2-5-coder-7b-32k:latest"
-        ]
-      },
-      "providerMapping": {
-        "gemma4-soul:latest": "custom",
-        "deepseek-coder-v2:16b": "custom",
-        "qwen2-5-coder-7b-32k:latest": "custom"
-      },
-      "customEnv": {
-        "CONTAINER_MOUNT_DIR": "/workspace/hermes-agent",
-        "LOG_LEVEL": "info"
-      },
-      "fallback": {
-        "enabled": true,
-        "targetAgentId": "zeroclaw",
-        "strategy": "on_offline",
-        "latencyThresholdMs": 3000,
-        "fallbackProvider": "ollama",
-        "fallbackModel": "hermes-3-llama-3.1-8b",
-        "provider": "openrouter",
-        "model": "anthropic/claude-3.7-sonnet",
-        "apiKey": "",
-        "baseUrl": "https://openrouter.ai/api/v1",
-        "useProxy": true,
-        "target_agent_id": "zeroclaw",
-        "latency_threshold_ms": 3000,
-        "api_key": "",
-        "base_url": "https://openrouter.ai/api/v1",
-        "use_proxy": true,
-        "providerMapping": {
-          "latest": "qwen2-5-coder-7b-32k",
-          "16b": "deepseek-coder-v2"
-        }
-      }
+      "testKey": "postMapVerified"
     },
     "zeroclaw": {
       "agentId": "zeroclaw",
@@ -401,6 +290,36 @@
   "testKey": "testValue",
   "commitHistory": [
     {
+      "id": "commit-hermes-agent-1791004351575",
+      "agentId": "hermes-agent",
+      "timestamp": "2026-10-03T05:12:31.575Z",
+      "meta": {}
+    },
+    {
+      "id": "commit-hermes-agent-1791004351559",
+      "agentId": "hermes-agent",
+      "timestamp": "2026-10-03T05:12:31.559Z",
+      "meta": {}
+    },
+    {
+      "id": "commit-hermes-agent-1791004129819",
+      "agentId": "hermes-agent",
+      "timestamp": "2026-10-03T05:08:49.819Z",
+      "meta": {}
+    },
+    {
+      "id": "commit-hermes-agent-1791003845859",
+      "agentId": "hermes-agent",
+      "timestamp": "2026-10-03T05:04:05.859Z",
+      "meta": {}
+    },
+    {
+      "id": "commit-hermes-agent-1791003422487",
+      "agentId": "hermes-agent",
+      "timestamp": "2026-10-03T04:57:02.487Z",
+      "meta": {}
+    },
+    {
       "id": "commit-hermes-agent-1791003092789",
       "agentId": "hermes-agent",
       "timestamp": "2026-10-03T04:51:32.789Z",
@@ -445,7 +364,7 @@
   ],
   "lastCommitted": {
     "agentId": "hermes-agent",
-    "timestamp": "2026-10-03T04:51:32.789Z",
+    "timestamp": "2026-10-03T05:12:31.575Z",
     "meta": {}
   }
 }
