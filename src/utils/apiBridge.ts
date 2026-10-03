@@ -1879,7 +1879,7 @@ export async function commitState(
     };
 
     const res = await fetch('/api/persistence/commit', {
-      method: 'POST',
+      method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
         'Accept': 'application/json'

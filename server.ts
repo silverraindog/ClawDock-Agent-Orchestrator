@@ -2444,8 +2444,30 @@ function saveClawdockPersistence(data: Record<string, any>) {
   }
 }
 
-// Dedicated Persistence Atomic Commit Endpoint
-app.post(['/api/persistence/commit', '/api/persistence/commit/'], (req, res) => {
+// Dedicated Persistence Atomic Commit Endpoint (supports GET, POST, PUT, OPTIONS)
+app.all(['/api/persistence/commit', '/api/persistence/commit/'], (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept, Authorization');
+
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+
+  if (req.method === 'GET') {
+    try {
+      const current = loadClawdockPersistence();
+      return res.json({
+        success: true,
+        data: current,
+        lastCommitted: current.lastCommitted || null,
+        commitHistory: current.commitHistory || []
+      });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  }
+
   try {
     const { agentId, config, meta, timestamp } = req.body || {};
     const current = loadClawdockPersistence();

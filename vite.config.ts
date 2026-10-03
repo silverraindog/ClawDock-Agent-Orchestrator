@@ -2426,12 +2426,13 @@ fallback:
         }
 
         // 4. Persistence endpoint (GET, POST, PUT)
+        case '/api/persistence/commit':
         case '/api/persistence': {
           res.setHeader('Content-Type', 'application/json');
           const persistenceFile = path.join(dataDir, 'persistence.json');
 
           if (method === 'GET') {
-            console.log(`[Vite API Server] [${timestamp}] 200 OK: GET /api/persistence`);
+            console.log(`[Vite API Server] [${timestamp}] 200 OK: GET ${pathname}`);
             let data: any = {};
             try {
               if (fs.existsSync(persistenceFile)) {
@@ -2444,7 +2445,7 @@ fallback:
           if (method === 'POST' || method === 'PUT') {
             ensureDataDir();
             const body = await readRequestBody(req);
-            console.log(`[Vite API Server] [${timestamp}] 200 OK: ${method} /api/persistence - Processing persistence write`);
+            console.log(`[Vite API Server] [${timestamp}] 200 OK: ${method} ${pathname} - Processing persistence write`);
             let existing: any = {};
             try {
               if (fs.existsSync(persistenceFile)) {

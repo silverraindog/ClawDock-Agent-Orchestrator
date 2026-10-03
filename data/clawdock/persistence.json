@@ -398,5 +398,30 @@
     }
   },
   "test": "456",
-  "testKey": "testValue"
+  "testKey": "testValue",
+  "commitHistory": [
+    {
+      "id": "commit-hermes-agent-1790996965720",
+      "agentId": "hermes-agent",
+      "timestamp": "2026-10-03T03:09:25.720Z",
+      "meta": {}
+    },
+    {
+      "id": "commit-hermes-agent-1790960097504",
+      "agentId": "hermes-agent",
+      "timestamp": "2026-10-02T16:54:57.504Z",
+      "meta": {}
+    },
+    {
+      "id": "commit-hermes-agent-1790959588580",
+      "agentId": "hermes-agent",
+      "timestamp": "2026-10-02T16:46:28.581Z",
+      "meta": {}
+    }
+  ],
+  "lastCommitted": {
+    "agentId": "hermes-agent",
+    "timestamp": "2026-10-03T03:09:25.720Z",
+    "meta": {}
+  }
 }
