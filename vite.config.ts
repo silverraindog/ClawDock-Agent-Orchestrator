@@ -1335,8 +1335,8 @@ fallback:
             return true;
           }
 
-          // Strict Map-based method verification against whitelist & registered handlers
-          if (!methodMap.has(upperMethod)) {
+          // Perform explicit allowedMethods.includes validation against whitelist & registered handlers
+          if (!allowedMethods.includes(upperMethod) || !methodMap.has(upperMethod)) {
             const mismatchErrorMsg = `[Router Validation Mismatch Error] HTTP method mismatch on endpoint ${pathname}. Invoked Method: ${upperMethod}. Registered & Allowed Methods for this pattern: ${allowedMethods.join(', ')}`;
             console.error(mismatchErrorMsg);
 
