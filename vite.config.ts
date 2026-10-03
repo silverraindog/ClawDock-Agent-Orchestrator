@@ -1318,8 +1318,43 @@ fallback:
       this.routes.push({ pattern, methodMap, allowedMethods });
     }
 
+    private async validateMethod(upperMethod: string, route: RegisteredRoute, context: { req: any; res: any; pathname: string }): Promise<boolean> {
+      const { req, res, pathname } = context;
+      const { methodMap, allowedMethods } = route;
+
+      if (!allowedMethods.includes(upperMethod) || !methodMap.has(upperMethod)) {
+        const mismatchErrorMsg = `[Router Validation Mismatch Error] HTTP method mismatch on endpoint ${pathname}. Invoked Method: ${upperMethod}. Registered & Allowed Methods for this pattern: ${allowedMethods.join(', ')}`;
+        console.error(mismatchErrorMsg);
+
+        // Asynchronously capture request body payload for diagnostics
+        try {
+          req.bodyPayload = await readRequestBody(req);
+        } catch (pErr) {
+          console.warn('[Vite API Server] Failed to read body for 405 logging:', pErr);
+        }
+
+        // Generate full stack trace for request interceptor
+        const stackTrace = new Error(mismatchErrorMsg).stack || '';
+
+        res.statusCode = 405;
+        res.setHeader('Content-Type', 'application/json');
+        res.setHeader('Allow', allowedMethods.join(', '));
+        res.end(JSON.stringify({
+          error: 'Method Not Allowed',
+          method: upperMethod,
+          pathname,
+          allowedMethods,
+          stackTrace,
+          summary: `Endpoint mismatch: method '${upperMethod}' is not allowed on route '${pathname}'. Allowed methods: ${allowedMethods.join(', ')}`,
+          timestamp: new Date().toISOString()
+        }));
+        return false;
+      }
+      return true;
+    }
+
     public async handle(context: { req: any; res: any; pathname: string; method: string; parsedUrl: URL; timestamp: string }): Promise<boolean> {
-      const { req, pathname, method, res } = context;
+      const { pathname, method, res } = context;
       const upperMethod = (method || 'GET').toUpperCase();
 
       for (const route of this.routes) {
@@ -1335,32 +1370,9 @@ fallback:
             return true;
           }
 
-          // Perform explicit allowedMethods.includes validation against whitelist & registered handlers
-          if (!allowedMethods.includes(upperMethod) || !methodMap.has(upperMethod)) {
-            const mismatchErrorMsg = `[Router Validation Mismatch Error] HTTP method mismatch on endpoint ${pathname}. Invoked Method: ${upperMethod}. Registered & Allowed Methods for this pattern: ${allowedMethods.join(', ')}`;
-            console.error(mismatchErrorMsg);
-
-            // Asynchronously capture request body payload for diagnostics
-            try {
-              req.bodyPayload = await readRequestBody(req);
-            } catch (pErr) {
-              console.warn('[Vite API Server] Failed to read body for 405 logging:', pErr);
-            }
-
-            // Generate full stack trace for request interceptor
-            const stackTrace = new Error(mismatchErrorMsg).stack || '';
-
-            res.statusCode = 405;
-            res.setHeader('Content-Type', 'application/json');
-            res.setHeader('Allow', allowedMethods.join(', '));
-            res.end(JSON.stringify({
-              error: 'Method Not Allowed',
-              method: upperMethod,
-              pathname,
-              allowedMethods,
-              stackTrace,
-              timestamp: new Date().toISOString()
-            }));
+          // Perform explicit validateMethod check against whitelist & registered handlers
+          const isValid = await this.validateMethod(upperMethod, route, context);
+          if (!isValid) {
             return true;
           }
 
