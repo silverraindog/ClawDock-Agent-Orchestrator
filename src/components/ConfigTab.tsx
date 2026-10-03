@@ -1961,8 +1961,25 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
               {/* Model Dropdown */}
               <div className="space-y-2">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                  <label className="block text-xs font-semibold text-slate-200">
+                  <label className="block text-xs font-semibold text-slate-200 flex items-center gap-1.5">
                     Model Checkpoint (Dropdown)
+                    <div className="relative group cursor-help inline-flex items-center">
+                      <Info className="w-3.5 h-3.5 text-indigo-400 hover:text-indigo-300 transition-colors" />
+                      <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 hidden group-hover:block w-72 p-3 bg-slate-950 text-slate-200 text-xs font-sans rounded-xl shadow-2xl border border-indigo-500/30 z-50 text-left leading-relaxed">
+                        <div className="font-bold text-indigo-300 pb-1 border-b border-slate-800 mb-1.5 flex items-center justify-between">
+                          <span>Model Specification &amp; Registry</span>
+                          <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${modelVerificationStatus === 'verified' ? 'bg-emerald-950 text-emerald-300' : 'bg-amber-950 text-amber-300'}`}>
+                            {modelVerificationStatus === 'verified' ? 'Verified' : 'Unverified'}
+                          </span>
+                        </div>
+                        <div className="space-y-1 text-[11px] text-slate-300">
+                          <div><strong className="text-slate-400">Model:</strong> <span className="font-mono text-white">{config.model.model || 'None'}</span></div>
+                          <div><strong className="text-slate-400">Provider:</strong> <span className="font-mono text-indigo-300 uppercase">{config.model.provider}</span></div>
+                          <div><strong className="text-slate-400">Context Window:</strong> <span className="font-mono text-emerald-300">{(config.model.contextWindow || 65536).toLocaleString()} tokens</span></div>
+                          <div><strong className="text-slate-400">Compatibility Status:</strong> <span className={`font-mono ${modelVerificationStatus === 'verified' ? 'text-emerald-400' : 'text-amber-400'}`}>{modelVerificationStatus === 'verified' ? 'Verified via /api/proxy/models registry' : 'Custom / Unverified in Proxy Registry'}</span></div>
+                        </div>
+                      </div>
+                    </div>
                   </label>
                   <div className="flex items-center gap-1.5 flex-wrap">
                     <button

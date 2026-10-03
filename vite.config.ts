@@ -2113,8 +2113,9 @@ fallback:
         {
           pattern: /^\/api\/agents\/([^/]+)\/version(\/)?$/i,
           allowedMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-          handler: async () => {
+          handler: async ({ pathname, res, timestamp }) => {
             res.setHeader('Content-Type', 'application/json');
+            res.statusCode = 200;
             const match = pathname.match(/^\/api\/agents\/([^/]+)\/version(\/)?$/i);
             const agentId = match ? match[1] : 'hermes-agent';
             const st = agentStates[agentId] || { status: 'running', version: 'v1.0.0', dockerImage: `clawdock-${agentId}:latest` };
@@ -2124,7 +2125,7 @@ fallback:
               version: st.version || 'v1.0.0',
               dockerImage: st.dockerImage || `clawdock-${agentId}:latest`,
               status: st.status || 'running',
-              timestamp
+              timestamp: timestamp || new Date().toISOString()
             }));
           }
         },
@@ -2433,7 +2434,7 @@ fallback:
         {
           pattern: /^\/api\/(?:agents?|agent)(?:\/([^/]+))?\/(stats|resources|metrics)(\/)?$/i,
           allowedMethods: ['GET', 'POST', 'PUT', 'OPTIONS', 'HEAD'],
-          handler: async () => {
+          handler: async ({ pathname, res, parsedUrl, method }) => {
             res.setHeader('Content-Type', 'application/json');
             res.setHeader('Access-Control-Allow-Origin', '*');
             res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS, HEAD');
@@ -2444,6 +2445,7 @@ fallback:
               return res.end(JSON.stringify({ success: true }));
             }
 
+            res.statusCode = 200;
             const match = pathname.match(/^\/api\/(?:agents?|agent)(?:\/([^/]+))?\/(stats|resources|metrics)(\/)?$/i) ||
                           pathname.match(/^\/api\/agents\/([^/]+)\/(stats|resources|metrics)(\/)?$/i) ||
                           pathname.match(/^\/api\/(stats|metrics)(\/)?$/i);
