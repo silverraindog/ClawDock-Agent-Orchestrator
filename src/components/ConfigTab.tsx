@@ -762,6 +762,46 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
     };
   }, [config.model.provider, onChangeConfig]);
 
+  // Model verification state against /api/proxy/models registry
+  const [modelVerificationStatus, setModelVerificationStatus] = useState<'checking' | 'verified' | 'warning'>('checking');
+  const [proxyRegistryModels, setProxyRegistryModels] = useState<string[]>([]);
+
+  useEffect(() => {
+    let isMounted = true;
+    const verifyModelAgainstRegistry = async () => {
+      setModelVerificationStatus('checking');
+      try {
+        const res = await fetch('/api/proxy/models');
+        if (!res.ok) throw new Error('Proxy registry request failed');
+        const data = await res.json();
+        const registryList = data.models || data.data || [];
+        const modelNames = registryList.map((m: any) => typeof m === 'string' ? m : (m.value || m.name || m.model || '')).filter(Boolean);
+        
+        if (isMounted) {
+          setProxyRegistryModels(modelNames);
+          const currentModel = config.model.model || '';
+          const rawProviderList = fetchedModelsMap[config.model.provider] || MODEL_OPTIONS[config.model.provider] || DEFAULT_PROVIDER_MODELS[config.model.provider] || [];
+          const allKnownModels = [
+            ...modelNames,
+            ...(rawProviderList.map(m => m.value))
+          ];
+          const isVerified = allKnownModels.some(m => m.toLowerCase() === currentModel.toLowerCase() || currentModel.toLowerCase().includes(m.toLowerCase()) || m.toLowerCase().includes(currentModel.toLowerCase()));
+          
+          setModelVerificationStatus(isVerified ? 'verified' : 'warning');
+        }
+      } catch {
+        if (isMounted) {
+          const rawProviderList = fetchedModelsMap[config.model.provider] || MODEL_OPTIONS[config.model.provider] || DEFAULT_PROVIDER_MODELS[config.model.provider] || [];
+          const isVerified = rawProviderList.some(m => m.value.toLowerCase() === (config.model.model || '').toLowerCase());
+          setModelVerificationStatus(isVerified ? 'verified' : 'warning');
+        }
+      }
+    };
+
+    verifyModelAgainstRegistry();
+    return () => { isMounted = false; };
+  }, [config.model.model, config.model.provider, fetchedModelsMap]);
+
   const getContextSizeVal = (modelValue: string, label: string): number => {
     const str = (modelValue + ' ' + label).toLowerCase();
     if (str.includes('200k') || str.includes('claude-3-7') || str.includes('claude-3-5')) return 200000;
@@ -2233,6 +2273,68 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
                     </button>
                   </div>
                 )}
+
+                {/* Discovered Models Suggestion Dropdown (Triggered from /api/agents/:id/models) */}
+                {Array.isArray((window as any).agentDiscoveredModels) && (window as any).agentDiscoveredModels.length > 0 && (
+                  <div className="p-3 bg-indigo-950/35 border border-indigo-500/30 rounded-xl space-y-2 mb-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-indigo-300 flex items-center gap-1.5 font-mono">
+                        <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+                        Discovered Models from /api/agents/{agentId}/models:
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {((window as any).agentDiscoveredModels).map((m: any, idx: number) => {
+                        const mName = typeof m === 'string' ? m : (m.value || m.name || m.model || '');
+                        const isCurrent = mName === config.model.model;
+                        if (!mName) return null;
+                        return (
+                          <button
+                            key={idx}
+                            type="button"
+                            onClick={() => {
+                              onChangeConfig({
+                                ...config,
+                                model: { ...config.model, model: mName }
+                              });
+                            }}
+                            className={`px-2.5 py-1 rounded-lg text-xs font-mono transition-all flex items-center gap-1 ${
+                              isCurrent 
+                                ? 'bg-emerald-950 text-emerald-300 border border-emerald-500/30 font-bold' 
+                                : 'bg-slate-900 hover:bg-indigo-900/50 text-slate-200 border border-slate-700'
+                            }`}
+                          >
+                            <span>{mName}</span>
+                            {isCurrent && <Check className="w-3 h-3 text-emerald-400" />}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Model Verification Indicator Badge */}
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-[11px] font-semibold text-slate-400">Model Verification Status</span>
+                  <div>
+                    {modelVerificationStatus === 'checking' ? (
+                      <span className="px-2.5 py-0.5 rounded-md bg-slate-800 text-slate-400 text-[10px] font-mono flex items-center gap-1 animate-pulse">
+                        <RefreshCw className="w-2.5 h-2.5 animate-spin" />
+                        Verifying against registry...
+                      </span>
+                    ) : modelVerificationStatus === 'verified' ? (
+                      <span className="px-2.5 py-0.5 rounded-md bg-emerald-950 text-emerald-400 border border-emerald-500/30 text-[10px] font-mono font-bold flex items-center gap-1">
+                        <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                        Verified in /api/proxy/models
+                      </span>
+                    ) : (
+                      <span className="px-2.5 py-0.5 rounded-md bg-amber-950 text-amber-400 border border-amber-500/30 text-[10px] font-mono font-bold flex items-center gap-1" title="Model not found in proxy registry. May require custom manual override.">
+                        <AlertTriangle className="w-3 h-3 text-amber-400" />
+                        Warning: Unverified Model
+                      </span>
+                    )}
+                  </div>
+                </div>
 
                 {/* Main Searchable Dropdown */}
                 <div className="relative">
