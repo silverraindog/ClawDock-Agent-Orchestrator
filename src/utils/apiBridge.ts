@@ -1860,32 +1860,60 @@ export async function executeAgentCommand(
  * Explicitly commits the final configuration state and metadata to the backend persistence layer
  * via POST /api/persistence/commit to guarantee backend storage atomicity.
  */
+/**
+ * Helper to wrap fetch requests with exponential backoff for 405 or 5xx errors.
+ */
+export async function withRetry<T>(
+  fn: () => Promise<Response>,
+  retries: number = 3,
+  delay: number = 1000
+): Promise<Response> {
+  let lastRes: Response;
+  for (let i = 0; i < retries; i++) {
+    try {
+      const res = await fn();
+      lastRes = res;
+      // If successful or not a retryable error, return
+      if (res.ok || (res.status !== 405 && (res.status < 500 || res.status > 599))) {
+        return res;
+      }
+      console.warn(`[withRetry] Attempt ${i + 1} failed with status ${res.status}. Retrying in ${delay}ms...`);
+    } catch (err) {
+      console.error(`[withRetry] Attempt ${i + 1} failed with error:`, err);
+    }
+    await new Promise(resolve => setTimeout(resolve, delay));
+    delay *= 2; // Exponential backoff
+  }
+  return lastRes!;
+}
+
 export async function commitState(
   agentId: AgentId | string,
   config: any,
   meta: Record<string, any> = {}
 ): Promise<{ success: boolean; data?: any; error?: string; timestamp: string }> {
   const timestamp = new Date().toISOString();
-  try {
-    const payload = {
-      agentId,
-      config,
-      timestamp,
-      meta: {
-        committedAt: timestamp,
-        source: 'handleSaveConfig',
-        ...meta
-      }
-    };
+  
+  const payload = {
+    agentId,
+    config,
+    timestamp,
+    meta: {
+      committedAt: timestamp,
+      source: 'handleSaveConfig',
+      ...meta
+    }
+  };
 
-    const res = await fetch('/api/persistence/commit', {
+  try {
+    const res = await withRetry(async () => await fetch('/api/persistence/commit', {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
         'Accept': 'application/json'
       },
       body: JSON.stringify(payload)
-    });
+    }));
 
     if (res.ok) {
       const result = await res.json();
@@ -1895,13 +1923,12 @@ export async function commitState(
         timestamp
       };
     } else {
+      console.error(`[commitState] Failed to commit state for agent "${agentId}": HTTP ${res.status} ${res.statusText}. Allowed methods: ${res.headers.get('Allow') || 'Unknown'}`);
+      
       // Fallback to /api/persistence if specific commit subroute is unreachable
       const fallbackRes = await fetch('/api/persistence', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        },
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
         body: JSON.stringify({
           data: {
             configs: { [agentId]: config },

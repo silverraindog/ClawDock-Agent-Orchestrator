@@ -1301,6 +1301,15 @@ fallback:
       // Comprehensive logging for all incoming API requests (Method + URL)
       console.log(`[Vite API Server] [${timestamp}] ${method} ${pathname} (Query: ${parsedUrl.search})`);
 
+      // NEW DEBUG LOG
+      // Find all routes that match this pathname
+      const matchingRoutes = dynamicRouteMappings.filter(r => r.pattern.test(pathname));
+      if (matchingRoutes.length === 0) {
+        console.log(`[Vite API Server] Debug: No route matched for ${pathname}`);
+      } else {
+        console.log(`[Vite API Server] Debug: ${matchingRoutes.length} routes matched for ${pathname}`);
+      }
+
       // Set CORS headers for all responses
       res.setHeader('Access-Control-Allow-Origin', '*');
       res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
@@ -1736,6 +1745,15 @@ fallback:
           }
         },
         {
+          pattern: /^\/api\/diagnostics\/clear(\/)?$/i,
+          methods: ['POST', 'OPTIONS'],
+          handler: async () => {
+            res.setHeader('Content-Type', 'application/json');
+            serverRequestLogs = [];
+            return res.end(JSON.stringify({ success: true, message: 'Logs cleared' }));
+          }
+        },
+        {
           pattern: /^\/api\/agents\/all\/config(s)?(\/)?$/i,
           methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
           handler: async () => {
@@ -2069,7 +2087,7 @@ fallback:
         },
         // Resource monitoring stats endpoint for agents: /api/agents/:id/stats (and aliases resources/metrics)
         {
-          pattern: /^\/api\/(?:agents?|agent)(?:\/([^/]+))?\/(stats|resources|metrics)(\/)?$|^\/api\/(stats|metrics)(\/)?$/i,
+          pattern: /^\/api\/(?:agents?|agent)(?:\/([^/]+))?\/(stats|resources|metrics)(\/)?$/i,
           methods: ['GET', 'POST', 'PUT', 'OPTIONS', 'HEAD'],
           handler: async () => {
             res.setHeader('Content-Type', 'application/json');
@@ -2091,6 +2109,7 @@ fallback:
               : (parsedUrl.searchParams.get('agentId') || parsedUrl.searchParams.get('agent') || 'hermes-agent');
 
             const payload = buildAgentStatsPayload(agentId);
+            console.log(`[Vite API Server] Debug: stats payload for ${agentId}:`, payload);
             return res.end(JSON.stringify(payload, null, 2));
           }
         },
