@@ -24,7 +24,12 @@ export interface ServerRequestLog {
  * Window-accessible hook to read serverRequestLogs state from the backend
  */
 export function useServerRequestLogs() {
-  const [serverRequestLogs, setServerRequestLogs] = useState<ServerRequestLog[]>([]);
+  const [serverRequestLogs, setServerRequestLogs] = useState<ServerRequestLog[]>(() => {
+    if (typeof window !== 'undefined' && Array.isArray((window as any).serverRequestLogs)) {
+      return (window as any).serverRequestLogs;
+    }
+    return [];
+  });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -40,6 +45,7 @@ export function useServerRequestLogs() {
       if (typeof window !== 'undefined') {
         (window as any).serverRequestLogs = logs;
         (window as any).__SERVER_REQUEST_LOGS__ = logs;
+        window.dispatchEvent(new CustomEvent('serverRequestLogsUpdated', { detail: logs }));
       }
     } catch (err: any) {
       setError(err?.message || 'Failed to fetch server request logs');
@@ -55,6 +61,7 @@ export function useServerRequestLogs() {
       if (typeof window !== 'undefined') {
         (window as any).serverRequestLogs = [];
         (window as any).__SERVER_REQUEST_LOGS__ = [];
+        window.dispatchEvent(new CustomEvent('serverRequestLogsUpdated', { detail: [] }));
       }
     } catch (err: any) {
       setError(err?.message || 'Failed to clear logs');
@@ -92,11 +99,33 @@ export const APIRequestInterceptor: React.FC<{ currentAgentId?: string }> = ({ c
   const { serverRequestLogs, loading, error, refresh, clearLogs } = useServerRequestLogs();
   const [inspectModalLog, setInspectModalLog] = useState<ServerRequestLog | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const [windowLogs, setWindowLogs] = useState<ServerRequestLog[]>(() => {
+    if (typeof window !== 'undefined' && Array.isArray((window as any).serverRequestLogs)) {
+      return (window as any).serverRequestLogs;
+    }
+    return [];
+  });
+
+  // Keep windowLogs in sync with window.serverRequestLogs
+  useEffect(() => {
+    const handleSync = () => {
+      if (typeof window !== 'undefined' && Array.isArray((window as any).serverRequestLogs)) {
+        setWindowLogs([...(window as any).serverRequestLogs]);
+      }
+    };
+    handleSync();
+    const interval = setInterval(handleSync, 1000);
+    window.addEventListener('serverRequestLogsUpdated', handleSync);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('serverRequestLogsUpdated', handleSync);
+    };
+  }, []);
 
   // Directly read serverRequestLogs from window object as specified
-  const logsFromWindow: ServerRequestLog[] = (typeof window !== 'undefined' && Array.isArray((window as any).serverRequestLogs))
+  const logsFromWindow: ServerRequestLog[] = (typeof window !== 'undefined' && Array.isArray((window as any).serverRequestLogs) && (window as any).serverRequestLogs.length > 0)
     ? (window as any).serverRequestLogs
-    : serverRequestLogs;
+    : (windowLogs.length > 0 ? windowLogs : serverRequestLogs);
 
   // Filter specifically for 405 Method Not Allowed or 500 status codes
   const failedRequests = logsFromWindow.filter(
@@ -327,13 +356,15 @@ export const APIRequestInterceptor: React.FC<{ currentAgentId?: string }> = ({ c
                   <th className="px-4 py-3 font-semibold">Request URL</th>
                   <th className="px-4 py-3 font-semibold">Method</th>
                   <th className="px-4 py-3 font-semibold">Status</th>
+                  <th className="px-4 py-3 font-semibold">Headers</th>
+                  <th className="px-4 py-3 font-semibold">Payload</th>
                   <th className="px-4 py-3 font-semibold text-right">Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/40">
                 {failedRequests.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="text-center py-10 text-slate-500 text-xs italic">
+                    <td colSpan={7} className="text-center py-10 text-slate-500 text-xs italic">
                       No 405 Method Not Allowed or 500 Server Error responses captured.
                       Use the test probe on the left to simulate a request.
                     </td>
@@ -347,7 +378,7 @@ export const APIRequestInterceptor: React.FC<{ currentAgentId?: string }> = ({ c
                         <td className="px-4 py-3 text-[11px] text-slate-400 whitespace-nowrap">
                           {new Date(log.timestamp).toLocaleTimeString([], { hour12: false })}
                         </td>
-                        <td className="px-4 py-3 text-slate-200 font-medium truncate max-w-xs sm:max-w-sm" title={log.url}>
+                        <td className="px-4 py-3 text-slate-200 font-medium truncate max-w-[130px]" title={log.url}>
                           {log.pathname || log.url}
                         </td>
                         <td className="px-4 py-3">
@@ -369,7 +400,13 @@ export const APIRequestInterceptor: React.FC<{ currentAgentId?: string }> = ({ c
                             {log.status === 405 ? '405 Not Allowed' : `${log.status} Error`}
                           </span>
                         </td>
-                        <td className="px-4 py-3 text-right">
+                        <td className="px-4 py-3 max-w-[140px] truncate text-[10px] text-slate-400 font-mono" title={JSON.stringify(log.requestHeaders || {})}>
+                          {log.requestHeaders ? Object.entries(log.requestHeaders).slice(0, 2).map(([k, v]) => `${k}: ${v}`).join(', ') : 'none'}
+                        </td>
+                        <td className="px-4 py-3 max-w-[140px] truncate text-[10px] text-indigo-300 font-mono" title={JSON.stringify(log.payload || '')}>
+                          {log.payload ? JSON.stringify(log.payload) : 'none'}
+                        </td>
+                        <td className="px-4 py-3 text-right whitespace-nowrap">
                           <button
                             onClick={() => setInspectModalLog(log)}
                             className="px-3 py-1 text-xs font-semibold rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white transition-all shadow flex items-center gap-1.5 ml-auto"

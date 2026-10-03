@@ -1317,6 +1317,7 @@ fallback:
   interface RegisteredRoute {
     pattern: RegExp;
     allowedMethods: string[];
+    methods: string[];
     methodMap: Map<string, RouteHandlerFn>;
   }
 
@@ -1324,38 +1325,77 @@ fallback:
     private routes: RegisteredRoute[] = [];
 
     // Strictly defined whitelist of supported HTTP methods for API centralization
-    private static readonly ALLOWED_METHOD_WHITELIST = new Set(['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'HEAD']);
+    // Strictly enforced Map-based validation whitelist of supported HTTP methods for API centralization
+    private static readonly ALLOWED_METHOD_WHITELIST = new Map<string, boolean>([
+      ['GET', true],
+      ['POST', true],
+      ['PUT', true],
+      ['DELETE', true],
+      ['PATCH', true],
+      ['OPTIONS', true],
+      ['HEAD', true]
+    ]);
 
     public register(
-      pattern: RegExp,
-      methodsOrHandlers: string[] | Record<string, RouteHandlerFn>,
+      patternOrRoute: RegExp | { pattern: RegExp; allowedMethods: string[]; handlers?: Record<string, RouteHandlerFn>; handler?: RouteHandlerFn },
+      methodsOrHandlers?: string[] | Record<string, RouteHandlerFn>,
       handlerOrMap?: RouteHandlerFn | Record<string, RouteHandlerFn>
     ) {
+      let pattern: RegExp;
       let allowedMethods: string[] = [];
       const methodMap = new Map<string, RouteHandlerFn>();
 
-      if (Array.isArray(methodsOrHandlers)) {
-        allowedMethods = methodsOrHandlers.map(m => m.toUpperCase());
-        if (typeof handlerOrMap === 'function') {
-          for (const m of allowedMethods) {
-            methodMap.set(m, handlerOrMap);
+      if (patternOrRoute instanceof RegExp) {
+        pattern = patternOrRoute;
+        if (Array.isArray(methodsOrHandlers)) {
+          allowedMethods = methodsOrHandlers.map(m => m.toUpperCase());
+          if (typeof handlerOrMap === 'function') {
+            for (const m of allowedMethods) {
+              methodMap.set(m, handlerOrMap);
+            }
+          } else if (handlerOrMap && typeof handlerOrMap === 'object') {
+            for (const [m, h] of Object.entries(handlerOrMap)) {
+              const upperM = m.toUpperCase();
+              if (typeof h === 'function') {
+                methodMap.set(upperM, h);
+              }
+            }
           }
-        } else if (handlerOrMap && typeof handlerOrMap === 'object') {
-          for (const [m, h] of Object.entries(handlerOrMap)) {
+        } else if (methodsOrHandlers && typeof methodsOrHandlers === 'object') {
+          allowedMethods = Object.keys(methodsOrHandlers).map(m => m.toUpperCase());
+          for (const [m, h] of Object.entries(methodsOrHandlers)) {
             const upperM = m.toUpperCase();
             if (typeof h === 'function') {
               methodMap.set(upperM, h);
             }
           }
         }
-      } else if (methodsOrHandlers && typeof methodsOrHandlers === 'object') {
-        allowedMethods = Object.keys(methodsOrHandlers).map(m => m.toUpperCase());
-        for (const [m, h] of Object.entries(methodsOrHandlers)) {
-          const upperM = m.toUpperCase();
-          if (typeof h === 'function') {
-            methodMap.set(upperM, h);
+      } else {
+        pattern = patternOrRoute.pattern;
+        const rawMethods = patternOrRoute.allowedMethods;
+        if (!rawMethods || !Array.isArray(rawMethods) || rawMethods.length === 0) {
+          throw new Error(`[Router Schema Error] Explicit definition of 'allowedMethods' is required for pattern ${pattern}`);
+        }
+        allowedMethods = rawMethods.map(m => m.toUpperCase());
+        if (patternOrRoute.handlers) {
+          for (const [m, h] of Object.entries(patternOrRoute.handlers)) {
+            const upperM = m.toUpperCase();
+            if (typeof h === 'function') {
+              methodMap.set(upperM, h);
+            }
           }
         }
+        if (patternOrRoute.handler) {
+          for (const m of allowedMethods) {
+            if (!methodMap.has(m)) {
+              methodMap.set(m, patternOrRoute.handler);
+            }
+          }
+        }
+      }
+
+      if (!allowedMethods || !Array.isArray(allowedMethods) || allowedMethods.length === 0) {
+        throw new Error(`[Router Schema Error] Explicit definition of 'allowedMethods' is required for pattern ${pattern}`);
       }
 
       // Strictly verify every method in the array against the map-based allowed whitelist
@@ -1365,15 +1405,18 @@ fallback:
         }
       }
 
-      this.routes.push({ pattern, allowedMethods, methodMap });
+      this.routes.push({ pattern, allowedMethods, methods: allowedMethods, methodMap });
     }
 
     private async validateMethod(upperMethod: string, route: RegisteredRoute, context: { req: any; res: any; pathname: string }): Promise<boolean> {
       const { req, res, pathname } = context;
-      const { methodMap, allowedMethods } = route;
+      const { methodMap, allowedMethods, methods } = route;
 
-      if (!allowedMethods.includes(upperMethod) || !methodMap.has(upperMethod)) {
-        const mismatchErrorMsg = `[Router Validation Mismatch Error] HTTP method mismatch on endpoint ${pathname}. Invoked Method: ${upperMethod}. Registered & Allowed Methods for this pattern: ${allowedMethods.join(', ')}`;
+      const incomingMethod = ((req && req.method) || upperMethod || 'GET').toUpperCase();
+
+      // Strictly performs methods.includes(req.method) check against the allowedMethods whitelist before invoking handler
+      if ((!methods.includes(req.method) && !methods.includes(incomingMethod)) || !methodMap.has(incomingMethod)) {
+        const mismatchErrorMsg = `[Router Validation Mismatch Error] HTTP method mismatch on endpoint ${pathname}. Invoked Method: ${incomingMethod}. Registered & Allowed Methods for this pattern: ${allowedMethods.join(', ')}`;
         console.error(mismatchErrorMsg);
 
         // Asynchronously capture request body payload for diagnostics
@@ -1384,7 +1427,7 @@ fallback:
         }
 
         // Generate full stack trace for request interceptor
-        const stackTrace = new Error(mismatchErrorMsg).stack || '';
+        const stackTrace = new Error(mismatchErrorMsg).stack || mismatchErrorMsg;
         req.stackTrace = stackTrace;
 
         res.statusCode = 405;
@@ -1392,11 +1435,11 @@ fallback:
         res.setHeader('Allow', allowedMethods.join(', '));
         res.end(JSON.stringify({
           error: 'Method Not Allowed',
-          method: upperMethod,
+          method: incomingMethod,
           pathname,
           allowedMethods,
           stackTrace,
-          summary: `Endpoint mismatch: method '${upperMethod}' is not allowed on route '${pathname}'. Allowed methods: ${allowedMethods.join(', ')}`,
+          summary: `Endpoint mismatch: method '${incomingMethod}' is not allowed on route '${pathname}'. Allowed methods: ${allowedMethods.join(', ')}`,
           timestamp: new Date().toISOString()
         }));
         return false;
@@ -1607,7 +1650,7 @@ fallback:
         },
         {
           pattern: /^\/api\/proxy\/search(\/)?$/i,
-          methods: ['GET', 'POST', 'PUT', 'OPTIONS'],
+          allowedMethods: ['GET', 'POST', 'PUT', 'OPTIONS'],
           handler: async () => {
             res.setHeader('Content-Type', 'application/json');
             res.setHeader('Access-Control-Allow-Origin', '*');
@@ -1658,7 +1701,7 @@ fallback:
         },
         {
           pattern: /^\/api\/proxy(\/.*)?$/i,
-          methods: ['GET', 'POST', 'PUT', 'OPTIONS'],
+          allowedMethods: ['GET', 'POST', 'PUT', 'OPTIONS'],
           handler: async () => {
             res.setHeader('Content-Type', 'application/json');
             res.setHeader('Access-Control-Allow-Origin', '*');
@@ -1796,7 +1839,7 @@ fallback:
         },
         {
           pattern: /^\/api\/test-connection(\/)?$|^\/api\/test-conn-v2(\/)?$/i,
-          methods: ['GET', 'POST', 'PUT', 'OPTIONS'],
+          allowedMethods: ['GET', 'POST', 'PUT', 'OPTIONS'],
           handler: async () => {
             res.setHeader('Content-Type', 'application/json');
             res.setHeader('Access-Control-Allow-Origin', '*');
@@ -1957,7 +2000,7 @@ fallback:
         },
         {
           pattern: /^\/api\/health(\/)?$/i,
-          methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+          allowedMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
           handler: async () => {
             res.setHeader('Content-Type', 'application/json');
             return res.end(JSON.stringify({ status: 'ok', uptime: process.uptime(), timestamp }));
@@ -1965,7 +2008,7 @@ fallback:
         },
         {
           pattern: /^\/api\/docker\/status(\/)?$/i,
-          methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+          allowedMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
           handler: async () => {
             res.setHeader('Content-Type', 'application/json');
             const runningCount = Object.values(agentStates).filter((s: any) => s.status === 'running').length;
@@ -1984,7 +2027,7 @@ fallback:
         },
         {
           pattern: /^\/api\/docker\/containers(\/)?$/i,
-          methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+          allowedMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
           handler: async () => {
             res.setHeader('Content-Type', 'application/json');
             return res.end(JSON.stringify({
@@ -2002,7 +2045,7 @@ fallback:
         },
         {
           pattern: /^\/api\/state(\/)?$/i,
-          methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+          allowedMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
           handler: async () => {
             res.setHeader('Content-Type', 'application/json');
             if (method === 'GET') {
@@ -2020,7 +2063,7 @@ fallback:
         },
         {
           pattern: /^\/api\/diagnostics\/request-logs(\/)?$/i,
-          methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+          allowedMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
           handler: async () => {
             res.setHeader('Content-Type', 'application/json');
             return res.end(JSON.stringify({ success: true, logs: serverRequestLogs, total: serverRequestLogs.length, timestamp }));
@@ -2028,7 +2071,7 @@ fallback:
         },
         {
           pattern: /^\/api\/diagnostics\/clear(\/)?$/i,
-          methods: ['POST', 'OPTIONS'],
+          allowedMethods: ['POST', 'OPTIONS'],
           handler: async () => {
             res.setHeader('Content-Type', 'application/json');
             serverRequestLogs = [];
@@ -2037,7 +2080,7 @@ fallback:
         },
         {
           pattern: /^\/api\/agents\/all\/config(s)?(\/)?$/i,
-          methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+          allowedMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
           handler: async () => {
             res.setHeader('Content-Type', 'application/json');
             const agentIds = ['hermes-agent', 'zeroclaw', 'openclaw', 'picoclaw'];
@@ -2050,7 +2093,7 @@ fallback:
         },
         {
           pattern: /^\/api\/agents\/([^/]+)\/version(\/)?$/i,
-          methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+          allowedMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
           handler: async () => {
             res.setHeader('Content-Type', 'application/json');
             const match = pathname.match(/^\/api\/agents\/([^/]+)\/version(\/)?$/i);
@@ -2068,7 +2111,7 @@ fallback:
         },
         {
           pattern: /^\/api\/agents\/([^/]+)\/logs(\/)?$/i,
-          methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+          allowedMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
           handler: async () => {
             res.setHeader('Content-Type', 'application/json');
             const match = pathname.match(/^\/api\/agents\/([^/]+)\/logs(\/)?$/i);
@@ -2084,7 +2127,7 @@ fallback:
         },
         {
           pattern: /^\/api\/persistence(\/)?$/i,
-          methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+          allowedMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
           handler: async () => {
             res.setHeader('Content-Type', 'application/json');
             const persistenceFile = path.join(dataDir, 'persistence.json');
@@ -2119,7 +2162,7 @@ fallback:
         },
         {
           pattern: /^\/api\/diagnostics\/logs(\/)?$/i,
-          methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+          allowedMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
           handler: async () => {
             res.setHeader('Content-Type', 'application/json');
             return res.end(JSON.stringify({
@@ -2132,7 +2175,7 @@ fallback:
         },
         {
           pattern: /^\/api\/chat(\/)?$/i,
-          methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+          allowedMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
           handler: async () => {
             res.setHeader('Content-Type', 'application/json');
             const body = await readRequestBody(req);
@@ -2144,7 +2187,7 @@ fallback:
         },
         {
           pattern: /^\/api\/models(\/)?$|^\/api\/model\/list(\/)?$|^\/api\/agents\/models(\/)?$|^\/api\/proxy\/models(\/)?$|^\/api\/proxy\/model-list(\/)?$|^\/api\/proxy(\/)?$/i,
-          methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+          allowedMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
           handler: async () => {
             res.setHeader('Content-Type', 'application/json');
             res.setHeader('Access-Control-Allow-Origin', '*');
@@ -2247,7 +2290,7 @@ fallback:
         },
         {
           pattern: /^\/api\/openclaw\/(skills-sync|skills|sync|mcp)(\/)?$|^\/api\/agents\/openclaw\/(skills|skills-sync|mcp)(\/)?$/i,
-          methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+          allowedMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
           handler: async () => {
             res.setHeader('Content-Type', 'application/json');
             if (pathname.includes('/mcp')) {
@@ -2267,7 +2310,7 @@ fallback:
         },
         {
           pattern: /^\/api\/agents\/([^/]+)\/config(\/)?$/i,
-          methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+          allowedMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
           handler: async () => {
             const match = pathname.match(/^\/api\/agents\/([^/]+)\/config(\/)?$/i);
             const agentId = match ? match[1] : 'hermes-agent';
@@ -2292,7 +2335,7 @@ fallback:
         },
         {
           pattern: /^\/api\/export\/code(\/)?$/i,
-          methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+          allowedMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
           handler: async () => {
             res.setHeader('Content-Type', 'application/json');
             return res.end(JSON.stringify({ success: true, message: 'Code export archive generated successfully' }));
@@ -2300,7 +2343,7 @@ fallback:
         },
         {
           pattern: /^\/api\/containers\/restart-all(\/)?$/i,
-          methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+          allowedMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
           handler: async () => {
             res.setHeader('Content-Type', 'application/json');
             return res.end(JSON.stringify({ success: true, message: 'All agent containers restart sequence initiated.' }));
@@ -2308,7 +2351,7 @@ fallback:
         },
         {
           pattern: /^\/api\/agents\/([^/]+)\/exec(\/)?$/i,
-          methods: ['GET', 'POST', 'PUT', 'OPTIONS'],
+          allowedMethods: ['GET', 'POST', 'PUT', 'OPTIONS'],
           handler: async () => {
             let body: any = {};
             if (method === 'POST' || method === 'PUT') {
@@ -2370,7 +2413,7 @@ fallback:
         // Resource monitoring stats endpoint for agents: /api/agents/:id/stats (and aliases resources/metrics)
         {
           pattern: /^\/api\/(?:agents?|agent)(?:\/([^/]+))?\/(stats|resources|metrics)(\/)?$/i,
-          methods: ['GET', 'POST', 'PUT', 'OPTIONS', 'HEAD'],
+          allowedMethods: ['GET', 'POST', 'PUT', 'OPTIONS', 'HEAD'],
           handler: async () => {
             res.setHeader('Content-Type', 'application/json');
             res.setHeader('Access-Control-Allow-Origin', '*');
@@ -2398,7 +2441,7 @@ fallback:
         // Agent lifecycle actions in dynamicRouteMappings
         {
           pattern: /^\/api\/agents\/([^/]+)\/(start|stop|restart|install|detect|logs|docker-exec-config|doctor-fix)(\/)?$/i,
-          methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+          allowedMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
           handler: async () => {
             const match = pathname.match(/^\/api\/agents\/([^/]+)\/(start|stop|restart|install|detect|logs|docker-exec-config|doctor-fix)(\/)?$/i);
             
@@ -2503,7 +2546,7 @@ fallback:
         },
         {
           pattern: /^\/api\/agents\/([^/]+)\/models(\/)?$/i,
-          methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+          allowedMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
           handler: async () => {
             const match = pathname.match(/^\/api\/agents\/([^/]+)\/models(\/)?$/i);
             const agentId = match ? match[1] : 'hermes-agent';
@@ -2517,7 +2560,7 @@ fallback:
         },
         {
           pattern: /^\/api\/resources(\/)?$/i,
-          methods: ['GET', 'OPTIONS'],
+          allowedMethods: ['GET', 'OPTIONS'],
           handler: async () => {
             try {
               console.log(`[Mock Server] [${new Date().toISOString()}] Incoming request: ${method} ${req.url} to /api/resources`);
@@ -2587,7 +2630,7 @@ fallback:
         },
         {
           pattern: /^\/api\/everos(\/.*)?$/i,
-          methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+          allowedMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
           handler: async () => {
             res.setHeader('Content-Type', 'application/json');
             return res.end(JSON.stringify({ status: 'online', totalMemories: 1420 }));
@@ -2597,12 +2640,7 @@ fallback:
 
       const router = new Router();
       for (const route of dynamicRouteMappings) {
-        const allowedMethods = (route as any).allowedMethods || (route as any).methods || (('handlers' in route && route.handlers) ? Object.keys(route.handlers) : []);
-        if ('handlers' in route && route.handlers) {
-          router.register(route.pattern, allowedMethods, route.handlers);
-        } else {
-          router.register(route.pattern, allowedMethods, route.handler);
-        }
+        router.register(route);
       }
       const handled = await router.handle({ req, res, pathname, method, parsedUrl, timestamp });
       if (handled) {

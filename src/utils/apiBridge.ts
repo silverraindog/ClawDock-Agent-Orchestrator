@@ -1906,7 +1906,7 @@ export async function commitState(
   };
 
   try {
-    const res = await withRetry(async () => await fetch('/api/persistence/commit', {
+    let res = await withRetry(async () => await fetch('/api/persistence/commit', {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
@@ -1914,6 +1914,19 @@ export async function commitState(
       },
       body: JSON.stringify(payload)
     }));
+
+    // If PUT returns 405 Method Not Allowed, immediately retry with POST /api/persistence/commit
+    if (res.status === 405) {
+      console.warn(`[commitState] PUT returned 405 on /api/persistence/commit. Retrying with POST...`);
+      res = await fetch('/api/persistence/commit', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify(payload)
+      });
+    }
 
     if (res.ok) {
       const result = await res.json();

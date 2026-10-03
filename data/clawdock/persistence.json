@@ -1,7 +1,7 @@
 {
   "configs": {
     "hermes-agent": {
-      "status": "active"
+      "verified": true
     },
     "zeroclaw": {
       "agentId": "zeroclaw",
@@ -192,103 +192,70 @@
       }
     },
     "picoclaw": {
-      "agentId": "picoclaw",
-      "version": "1.0.0",
-      "model": {
-        "provider": "ollama",
-        "model": "qwen2.5-coder:7b",
-        "apiKey": "",
-        "temperature": 0.4,
-        "reasoningEffort": "high",
-        "maxTokens": 4096,
-        "contextWindow": 128000,
-        "topP": 0.95
-      },
-      "channels": {
-        "telegram": {
-          "enabled": true,
-          "botToken": "env:TELEGRAM_BOT_TOKEN",
-          "allowedUsers": "@developer",
-          "mode": "polling"
-        },
-        "discord": {
-          "enabled": false,
-          "botToken": "",
-          "clientId": "",
-          "guildIds": ""
-        },
-        "slack": {
-          "enabled": false,
-          "botToken": "",
-          "appToken": "",
-          "signingSecret": "",
-          "socketMode": true
-        },
-        "whatsapp": {
-          "enabled": false,
-          "sessionId": "",
-          "webhookUrl": ""
-        },
-        "matrix": {
-          "enabled": false,
-          "homeserver": "",
-          "accessToken": "",
-          "roomIds": ""
-        },
-        "webhook": {
-          "enabled": true,
-          "port": 8080,
-          "authToken": "secure_bearer_token",
-          "corsOrigin": "*"
-        }
-      },
-      "system": {
-        "preset": "edge_assistant",
-        "systemPrompt": "You are PicoClaw by Sipeed. You run on lightweight edge hardware like RISC-V and ARM boards. Be smart, snappy, and hardware-friendly.",
-        "agentName": "PicoClaw Go",
-        "personaName": "PicoClaw Go",
-        "language": "en-US",
-        "autoFormatCode": true
-      },
-      "security": {
-        "sandboxMode": "host_restricted",
-        "allowedDirectories": [
-          "/workspace",
-          "/data"
-        ],
-        "blockNetworkAccess": false,
-        "maxExecutionTimeSec": 120,
-        "requireApprovalForCommands": false,
-        "securityProfileFile": ".security.yml"
-      },
-      "storage": {
-        "memoryBackend": "everos",
-        "dbPath": "/data/everos/memories/picoclaw",
-        "autoSummarizeInterval": 25,
-        "maxHistoryTurns": 100,
-        "vectorDbUrl": "http://everos:8080"
-      },
-      "moa": {
-        "enabled": false,
-        "proposerModels": [
-          "claude-3-7-sonnet",
-          "deepseek-r1",
-          "gpt-4o"
-        ],
-        "aggregatorModel": "qwen2.5-coder:7b",
-        "rounds": 2,
-        "temperatureSpread": 0.3,
-        "consensusThreshold": 0.85
-      },
-      "customEnv": {
-        "CONTAINER_MOUNT_DIR": "/workspace/picoclaw",
-        "LOG_LEVEL": "info"
-      }
+      "test": true
     }
   },
   "test": "456",
   "testKey": "testValue",
   "commitHistory": [
+    {
+      "id": "commit-hermes-agent-1791018770526",
+      "agentId": "hermes-agent",
+      "timestamp": "2026-10-03T09:12:50.526Z",
+      "meta": {}
+    },
+    {
+      "id": "commit-hermes-agent-1791018725313",
+      "agentId": "hermes-agent",
+      "timestamp": "2026-10-03T09:12:05.313Z",
+      "meta": {}
+    },
+    {
+      "id": "commit-hermes-agent-1791018721371",
+      "agentId": "hermes-agent",
+      "timestamp": "2026-10-03T09:12:01.371Z",
+      "meta": {}
+    },
+    {
+      "id": "commit-picoclaw-1791018555365",
+      "agentId": "picoclaw",
+      "timestamp": "2026-10-03T09:09:15.365Z",
+      "meta": {
+        "author": "test"
+      }
+    },
+    {
+      "id": "commit-hermes-agent-1791018555346",
+      "agentId": "hermes-agent",
+      "timestamp": "2026-10-03T09:09:15.346Z",
+      "meta": {
+        "author": "test"
+      }
+    },
+    {
+      "id": "commit-hermes-agent-1791018311589",
+      "agentId": "hermes-agent",
+      "timestamp": "2026-10-03T09:05:11.589Z",
+      "meta": {}
+    },
+    {
+      "id": "commit-hermes-agent-1791018311572",
+      "agentId": "hermes-agent",
+      "timestamp": "2026-10-03T09:05:11.572Z",
+      "meta": {}
+    },
+    {
+      "id": "commit-hermes-agent-1791018209539",
+      "agentId": "hermes-agent",
+      "timestamp": "2026-10-03T09:03:29.539Z",
+      "meta": {}
+    },
+    {
+      "id": "commit-hermes-agent-1791018209520",
+      "agentId": "hermes-agent",
+      "timestamp": "2026-10-03T09:03:29.520Z",
+      "meta": {}
+    },
     {
       "id": "commit-hermes-agent-1791018023413",
       "agentId": "hermes-agent",
@@ -460,7 +427,7 @@
   ],
   "lastCommitted": {
     "agentId": "hermes-agent",
-    "timestamp": "2026-10-03T09:00:23.413Z",
+    "timestamp": "2026-10-03T09:12:50.526Z",
     "meta": {}
   }
 }
