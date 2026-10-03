@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { RefreshCw, Terminal, AlertTriangle, AlertCircle, Clock, ChevronDown, ChevronUp, Copy, Check, Activity, Info, ShieldAlert, Cpu, Play, Eye, ListFilter } from 'lucide-react';
+import { RefreshCw, Terminal, AlertTriangle, AlertCircle, Clock, ChevronDown, ChevronUp, Copy, Check, Activity, Info, ShieldAlert } from 'lucide-react';
+import { RequestInterceptor } from './RequestInterceptor';
+import { initGlobalRequestInterceptor } from '../utils/requestInterceptorStore';
 
 export const DiagnosticsTab = ({ currentAgentId, agent, config, onFixOpenClaw }: { currentAgentId: string, agent: any, config: any, onFixOpenClaw: any }) => {
   const [logs, setLogs] = useState<any[]>([]);
@@ -10,13 +12,9 @@ export const DiagnosticsTab = ({ currentAgentId, agent, config, onFixOpenClaw }:
   const [expandedLogId, setExpandedExpandedLogId] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
-  // Interceptor sub-tab selected failed request id
-  const [selectedFailedLogId, setSelectedFailedLogId] = useState<string | null>(null);
-
-  // Test suite states
-  const [testMethod, setTestMethod] = useState<string>('DELETE');
-  const [testSending, setTestSending] = useState(false);
-  const [testResult, setTestResult] = useState<any>(null);
+  useEffect(() => {
+    initGlobalRequestInterceptor();
+  }, []);
 
   useEffect(() => {
     localStorage.setItem('verboseLogging', String(verboseLogging));
@@ -59,49 +57,11 @@ export const DiagnosticsTab = ({ currentAgentId, agent, config, onFixOpenClaw }:
     setTimeout(() => setCopiedId(null), 1500);
   };
 
-  // Trigger test request
-  const handleSendTestRequest = async () => {
-    setTestSending(true);
-    setTestResult(null);
-    try {
-      const res = await fetch('/api/persistence/commit', {
-        method: testMethod,
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Request-Interceptor-Test': 'true'
-        },
-        body: testMethod !== 'GET' ? JSON.stringify({
-          agentId: currentAgentId,
-          testTimestamp: new Date().toISOString(),
-          context: 'Clawdock Interceptor Diagnostics Suite'
-        }) : undefined
-      });
-
-      const data = await res.json().catch(() => null);
-      setTestResult({
-        status: res.status,
-        statusText: res.statusText,
-        headers: Object.fromEntries(res.headers.entries()),
-        payload: data
-      });
-      fetchLogs(); // sync logs instantly
-    } catch (err: any) {
-      setTestResult({
-        error: err.message || 'Connection failed'
-      });
-    } finally {
-      setTestSending(false);
-    }
-  };
-
   // Filter logs for Latency & Errors view (405, 500, or exceptionally high latency > 200ms)
   const errorLogs = logs.filter(log => log.status === 405 || log.status >= 500 || log.durationMs > 200);
 
   // Filter logs specifically for failed request interceptor (405 or 500 status codes)
   const failedLogs = logs.filter(log => log.status === 405 || log.status >= 500);
-
-  // Determine active inspected log
-  const activeInspectedLog = failedLogs.find(log => log.id === selectedFailedLogId) || failedLogs[0];
 
   return (
     <div className="space-y-4 p-6">
@@ -427,281 +387,7 @@ export const DiagnosticsTab = ({ currentAgentId, agent, config, onFixOpenClaw }:
         </div>
       ) : (
         /* Real-time API Request Interceptor View */
-        <div className="space-y-6">
-          {/* Tool explanation */}
-          <div className="p-4 bg-slate-900 border border-slate-800 rounded-2xl flex flex-col md:flex-row gap-4 items-start md:items-center justify-between">
-            <div className="flex gap-3 text-xs max-w-2xl">
-              <ShieldAlert className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
-              <div>
-                <span className="font-bold text-slate-200 block mb-1 text-sm">Real-time API Request Interceptor & Trace Capture</span>
-                <p className="text-slate-400 leading-relaxed text-xs">
-                  This interface captures, registers, and decodes any HTTP transaction returning a <strong>405 Method Not Allowed</strong> or <strong>500 Server Error</strong>, specifically targeting the `/api/persistence/commit` route.
-                </p>
-              </div>
-            </div>
-            
-            <div className="bg-slate-950/60 p-2.5 rounded-xl border border-slate-800 shrink-0 text-center min-w-[140px]">
-              <span className="text-[10px] uppercase font-bold text-slate-500 block mb-0.5">Strict Router Schema</span>
-              <span className="text-xs font-mono text-emerald-400 font-black">ACTIVE</span>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            {/* Column 1: Test Suite Controller (col-span-3) */}
-            <div className="lg:col-span-3 bg-slate-900/60 border border-slate-800 rounded-2xl p-4 space-y-4 shadow-xl">
-              <h3 className="text-xs font-bold text-slate-200 uppercase tracking-wider flex items-center gap-2 border-b border-slate-800 pb-3">
-                <Play className="w-4 h-4 text-emerald-400" />
-                Trigger Method Test
-              </h3>
-
-              <div className="space-y-3">
-                <div>
-                  <label className="text-[11px] font-bold text-slate-400 block mb-1">HTTP Method Probe</label>
-                  <div className="grid grid-cols-5 gap-1">
-                    {['GET', 'POST', 'PUT', 'DELETE', 'PATCH'].map((m) => (
-                      <button
-                        key={m}
-                        onClick={() => setTestMethod(m)}
-                        className={`py-2 text-[10px] font-mono font-black rounded-lg border transition-all ${
-                          testMethod === m
-                            ? m === 'DELETE' || m === 'PATCH'
-                              ? 'bg-red-500/10 border-red-500 text-red-400'
-                              : 'bg-emerald-500/10 border-emerald-500 text-emerald-400'
-                            : 'bg-slate-950/50 border-slate-800 text-slate-400 hover:bg-slate-800'
-                        }`}
-                      >
-                        {m}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div>
-                  <label className="text-[11px] font-bold text-slate-400 block mb-1">Target Route</label>
-                  <input
-                    type="text"
-                    readOnly
-                    value="/api/persistence/commit"
-                    className="w-full bg-slate-950 text-xs font-mono text-indigo-300 p-2.5 rounded-xl border border-slate-800 outline-none"
-                  />
-                </div>
-
-                <button
-                  onClick={handleSendTestRequest}
-                  disabled={testSending}
-                  className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-xs font-bold text-white transition-all flex items-center justify-center gap-2 disabled:opacity-50"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${testSending ? 'animate-spin' : ''}`} />
-                  Transmit Method Probe
-                </button>
-              </div>
-
-              {testResult && (
-                <div className="space-y-3 pt-2">
-                  <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block border-t border-slate-800 pt-3">Probe Output</h4>
-                  <div className="p-3 bg-slate-950 border border-slate-800 rounded-xl space-y-2">
-                    <div className="flex items-center justify-between text-[11px]">
-                      <span className="text-slate-500 font-mono">Response Code</span>
-                      <span className={`font-mono font-bold ${testResult.status === 405 ? 'text-amber-400' : testResult.status >= 400 ? 'text-rose-400' : 'text-emerald-400'}`}>
-                        {testResult.status} {testResult.statusText}
-                      </span>
-                    </div>
-
-                    {testResult.payload && (
-                      <div className="space-y-1">
-                        <span className="text-[9px] font-bold text-slate-500 uppercase block">Response JSON</span>
-                        <pre className="p-2 rounded bg-slate-900 text-[10px] text-slate-300 font-mono overflow-auto max-h-32">
-                          {JSON.stringify(testResult.payload, null, 2)}
-                        </pre>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Column 2: Intercepted 405 Method Mismatch Table & Lifecycle Inspector (col-span-9) */}
-            <div className="lg:col-span-9 space-y-4">
-              {/* The Intercepted Failed Requests Table */}
-              <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-4 shadow-xl space-y-3">
-                <h3 className="text-xs font-bold text-slate-200 uppercase tracking-wider flex items-center gap-2 border-b border-slate-800 pb-3">
-                  <ListFilter className="w-4 h-4 text-amber-500" />
-                  Intercepted Failures Logs Table (405 / 500)
-                </h3>
-
-                <div className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/40">
-                  <table className="w-full text-left text-xs text-slate-300 border-collapse font-mono">
-                    <thead className="bg-slate-800/80 uppercase text-[9px] tracking-wider text-slate-400 border-b border-slate-800">
-                      <tr>
-                        <th className="px-4 py-2.5 font-semibold">Timestamp</th>
-                        <th className="px-4 py-2.5 font-semibold">Method</th>
-                        <th className="px-4 py-2.5 font-semibold">Pathname</th>
-                        <th className="px-4 py-2.5 font-semibold">Status</th>
-                        <th className="px-4 py-2.5 font-semibold">Allowed Methods Whitelist</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-800/40">
-                      {failedLogs.length === 0 ? (
-                        <tr>
-                          <td colSpan={5} className="text-center py-8 text-slate-500 text-xs italic">
-                            No active 405 or 500 logs recorded. Invoke a DELETE probe to populate.
-                          </td>
-                        </tr>
-                      ) : (
-                        failedLogs.map((log) => {
-                          const isSelected = activeInspectedLog?.id === log.id;
-                          const is500 = log.status >= 500;
-                          return (
-                            <tr
-                              key={log.id}
-                              onClick={() => setSelectedFailedLogId(log.id)}
-                              className={`cursor-pointer transition-all hover:bg-slate-800/30 ${
-                                isSelected 
-                                  ? is500 
-                                    ? 'bg-rose-950/30 text-rose-300' 
-                                    : 'bg-amber-950/30 text-amber-300' 
-                                  : ''
-                              }`}
-                            >
-                              <td className="px-4 py-2.5 text-[11px] text-slate-400">
-                                {new Date(log.timestamp).toLocaleTimeString([], { hour12: false })}
-                              </td>
-                              <td className="px-4 py-2.5">
-                                <span className="px-1.5 py-0.5 rounded text-[10px] bg-slate-800 font-bold text-slate-300">
-                                  {log.method}
-                                </span>
-                              </td>
-                              <td className="px-4 py-2.5 text-xs text-slate-200 font-semibold truncate max-w-xs">
-                                {log.pathname}
-                              </td>
-                              <td className="px-4 py-2.5 font-bold">
-                                <span className={is500 ? 'text-rose-500' : 'text-amber-500'}>
-                                  {log.status}
-                                </span>
-                              </td>
-                              <td className="px-4 py-2.5 text-emerald-400 text-[11px]">
-                                {log.status === 405 ? 'GET, POST, PUT, OPTIONS' : 'Unified'}
-                              </td>
-                            </tr>
-                          );
-                        })
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-              {/* The Details Inspector */}
-              {activeInspectedLog ? (
-                <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-5 space-y-4 shadow-xl">
-                  <div className="flex items-center justify-between text-xs text-slate-400 bg-slate-950/40 p-2.5 rounded-xl border border-slate-800">
-                    <span className="font-mono text-[11px]">inspectedId: <strong className="text-slate-300">{activeInspectedLog.id}</strong></span>
-                    <span className="font-mono text-[11px] text-indigo-400">Duration: <strong>{activeInspectedLog.durationMs}ms</strong></span>
-                  </div>
-
-                  {/* Timeline Map */}
-                  <div className="relative border-l-2 border-indigo-500/20 ml-3 pl-6 space-y-5 text-xs text-slate-300">
-                    <div className="relative">
-                      <span className="absolute -left-[31px] top-0.5 bg-indigo-500 w-4 h-4 rounded-full flex items-center justify-center border border-slate-950">
-                        <span className="w-1.5 h-1.5 rounded-full bg-white"></span>
-                      </span>
-                      <h4 className="font-bold text-slate-100 flex items-center gap-2">
-                        1. Client API Call Received
-                        <span className="px-1.5 py-0.5 rounded bg-slate-800 text-[10px] font-mono text-indigo-400">{activeInspectedLog.method}</span>
-                      </h4>
-                      <p className="text-slate-400 mt-1">
-                        Endpoint: <code className="text-indigo-300 font-mono">{activeInspectedLog.pathname}</code>. Captured initial headers.
-                      </p>
-                    </div>
-
-                    <div className="relative">
-                      <span className="absolute -left-[31px] top-0.5 bg-indigo-500 w-4 h-4 rounded-full flex items-center justify-center border border-slate-950">
-                        <span className="w-1.5 h-1.5 rounded-full bg-white"></span>
-                      </span>
-                      <h4 className="font-bold text-slate-100">2. Enforced Method Validation Check</h4>
-                      <p className="text-slate-400 mt-1 leading-relaxed">
-                        Evaluated request method <code className="text-indigo-400 font-mono">{activeInspectedLog.method}</code> against configured handlers. Route pattern: <code className="text-slate-300 font-mono">/^\/api\/persistence\/commit(\/)?$/i</code>.
-                      </p>
-                    </div>
-
-                    <div className="relative">
-                      <span className="absolute -left-[31px] top-0.5 bg-rose-500 w-4 h-4 rounded-full flex items-center justify-center border border-slate-950 animate-pulse">
-                        <span className="w-1.5 h-1.5 rounded-full bg-white"></span>
-                      </span>
-                      <h4 className="font-bold text-rose-400 flex items-center gap-2">
-                        3. Validation Result
-                        <span className="px-1.5 py-0.5 rounded bg-rose-950 text-[10px] text-rose-400 font-mono font-black">FAILED (HTTP {activeInspectedLog.status})</span>
-                      </h4>
-                      <p className="text-slate-400 mt-1 leading-relaxed font-sans">
-                        Validation rejected method {activeInspectedLog.method}. Enforced Allowed Methods on this endpoint: <code className="text-emerald-400 font-mono">GET, POST, PUT, OPTIONS</code>. Stack trace exception generated and logged.
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Metadata Box */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 border-t border-slate-800 pt-4">
-                    <div>
-                      <span className="text-[10px] uppercase font-bold text-slate-500 tracking-wider block mb-1.5">Request Headers</span>
-                      <pre className="p-3 rounded-xl bg-slate-950 text-[10px] text-slate-400 font-mono overflow-auto max-h-36 border border-slate-800">
-                        {JSON.stringify(activeInspectedLog.requestHeaders || { 'Content-Type': 'application/json' }, null, 2)}
-                      </pre>
-                    </div>
-
-                    <div>
-                      <div className="flex items-center justify-between mb-1.5">
-                        <span className="text-[10px] uppercase font-bold text-slate-500 tracking-wider block">Request Body Payload</span>
-                        {activeInspectedLog.payload && (
-                          <button
-                            onClick={() => handleCopy(activeInspectedLog.id, activeInspectedLog.payload)}
-                            className="text-[10px] text-indigo-400 hover:text-indigo-300 flex items-center gap-1 transition-colors"
-                          >
-                            {copiedId === activeInspectedLog.id ? (
-                              <>
-                                <Check className="w-3 h-3 text-emerald-400" />
-                                Copied
-                              </>
-                            ) : (
-                              <>
-                                <Copy className="w-3 h-3" />
-                                Copy
-                              </>
-                            )}
-                          </button>
-                        )}
-                      </div>
-                      <pre className="p-3 rounded-xl bg-slate-950 text-[10px] text-indigo-200 font-mono overflow-auto max-h-36 border border-slate-800">
-                        {activeInspectedLog.payload 
-                          ? JSON.stringify(activeInspectedLog.payload, null, 2)
-                          : '// Empty request body (no payload captured)'}
-                      </pre>
-                    </div>
-                  </div>
-
-                  {/* Trace */}
-                  {activeInspectedLog.stackTrace && (
-                    <div className="space-y-1.5 pt-2 border-t border-slate-800">
-                      <span className="text-[10px] uppercase font-bold text-red-400 tracking-wider block flex items-center gap-1.5">
-                        <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"></span>
-                        Captured Exception Stack Trace
-                      </span>
-                      <pre className="p-3.5 rounded-xl bg-red-950/20 text-[10px] text-red-300 font-mono overflow-auto max-h-40 border border-red-900/30 whitespace-pre-wrap leading-relaxed">
-                        {activeInspectedLog.stackTrace}
-                      </pre>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-8 flex flex-col items-center justify-center text-center">
-                  <Cpu className="w-10 h-10 text-slate-600 mb-2 animate-pulse" />
-                  <p className="text-xs text-slate-400 font-semibold font-mono">No Failures Inspected</p>
-                  <p className="text-[10px] text-slate-500 max-w-xs mt-1 leading-relaxed">
-                    Select a row in the intercepted failures table to examine its full trace diagram, stack trace, headers, and request body payload.
-                  </p>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
+        <RequestInterceptor currentAgentId={currentAgentId} />
       )}
     </div>
   );
