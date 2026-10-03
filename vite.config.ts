@@ -11,14 +11,23 @@ function readRequestBody(req: any): Promise<any> {
       body += chunk;
     });
     req.on('end', () => {
-      if (!body) return resolve({});
+      if (!body) {
+        req.bodyPayload = {};
+        return resolve({});
+      }
       try {
-        resolve(JSON.parse(body));
+        const parsed = JSON.parse(body);
+        req.bodyPayload = parsed;
+        resolve(parsed);
       } catch {
+        req.bodyPayload = { raw: body };
         resolve({ raw: body });
       }
     });
-    req.on('error', () => resolve({}));
+    req.on('error', () => {
+      req.bodyPayload = {};
+      resolve({});
+    });
   });
 }
 
@@ -104,6 +113,8 @@ function apiServerPlugin(): Plugin {
     status: number;
     durationMs: number;
     clientIp: string;
+    payload?: any;
+    requestHeaders?: any;
   }
 
   let serverRequestLogs: ServerRequestLog[] = [];
@@ -1264,6 +1275,92 @@ fallback:
     };
   }
 
+  class ApiRouter {
+    private routes: Array<{
+      pattern: RegExp;
+      handlers: Record<string, (context: { req: any; res: any; pathname: string; method: string; parsedUrl: URL; timestamp: string }) => Promise<any>>;
+    }> = [];
+
+    // Strictly defined list of supported HTTP methods for API centralization
+    private static readonly SUPPORTED_METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'HEAD'];
+
+    public register(pattern: RegExp, methodsOrHandlers: string[] | Record<string, any>, handler?: any) {
+      const handlers: Record<string, any> = {};
+
+      if (Array.isArray(methodsOrHandlers)) {
+        // Enforce method validation on array declaration
+        for (const m of methodsOrHandlers) {
+          const upperM = m.toUpperCase();
+          if (!ApiRouter.SUPPORTED_METHODS.includes(upperM)) {
+            throw new Error(`[Router Schema Error] Unsupported HTTP method "${upperM}" for pattern ${pattern}`);
+          }
+          handlers[upperM] = handler;
+        }
+      } else {
+        // Enforce strict method validation on direct mapping schema
+        for (const [m, h] of Object.entries(methodsOrHandlers)) {
+          const upperM = m.toUpperCase();
+          if (!ApiRouter.SUPPORTED_METHODS.includes(upperM)) {
+            throw new Error(`[Router Schema Error] Unsupported HTTP method "${upperM}" for pattern ${pattern}`);
+          }
+          handlers[upperM] = h;
+        }
+      }
+
+      this.routes.push({ pattern, handlers });
+    }
+
+    public async handle(context: { req: any; res: any; pathname: string; method: string; parsedUrl: URL; timestamp: string }): Promise<boolean> {
+      const { req, pathname, method, res } = context;
+      for (const route of this.routes) {
+        if (route.pattern.test(pathname)) {
+          const allowedMethods = Object.keys(route.handlers);
+          
+          if (method === 'OPTIONS') {
+            res.statusCode = 200;
+            res.setHeader('Content-Type', 'application/json');
+            res.setHeader('Allow', allowedMethods.join(', '));
+            res.end(JSON.stringify({ success: true, allowedMethods }));
+            return true;
+          }
+
+          const targetHandler = route.handlers[method];
+          if (!targetHandler) {
+            console.warn(`[Vite API Server] 405 Method Not Allowed: ${method} ${pathname}`);
+            console.warn(`[Vite API Server] Allowed methods: ${allowedMethods.join(', ')}`);
+            
+            // Read body to capture payload for debugging
+            try {
+              req.bodyPayload = await readRequestBody(req);
+            } catch (pErr) {
+              console.warn('[Vite API Server] Failed to read body for 405 logging:', pErr);
+            }
+
+            // Generate full stack trace for request interceptor
+            const stackTrace = new Error(`HTTP 405 Method Interceptor: Method '${method}' not allowed on route '${pathname}'`).stack || '';
+
+            res.statusCode = 405;
+            res.setHeader('Content-Type', 'application/json');
+            res.setHeader('Allow', allowedMethods.join(', '));
+            res.end(JSON.stringify({ 
+              error: 'Method Not Allowed', 
+              method, 
+              pathname, 
+              allowedMethods,
+              stackTrace,
+              timestamp: new Date().toISOString()
+            }));
+            return true;
+          }
+
+          await targetHandler(context);
+          return true;
+        }
+      }
+      return false;
+    }
+  }
+
   function createApiHandler() {
     return async (req: any, res: any, next: any) => {
       if (!req.url || !req.url.startsWith('/api/')) {
@@ -1292,7 +1389,9 @@ fallback:
             pathname,
             status: res.statusCode || 200,
             durationMs,
-            clientIp: req.socket?.remoteAddress || '127.0.0.1'
+            clientIp: req.socket?.remoteAddress || '127.0.0.1',
+            payload: req.bodyPayload || null,
+            requestHeaders: req.headers || null
           });
         }
         return originalEnd.apply(res, args);
@@ -1316,6 +1415,119 @@ fallback:
 
       // Dynamic Route Mapping Object mapping regex patterns to supported methods and handlers
       const dynamicRouteMappings = [
+        {
+          pattern: /^\/api\/persistence\/commit(\/)?$/i,
+          handlers: {
+            GET: async () => {
+              res.setHeader('Content-Type', 'application/json');
+              const persistenceFile = path.join(dataDir, 'persistence.json');
+              let current: any = {};
+              try {
+                if (fs.existsSync(persistenceFile)) {
+                  current = JSON.parse(fs.readFileSync(persistenceFile, 'utf8'));
+                }
+              } catch {}
+              return res.end(JSON.stringify({
+                success: true,
+                data: current,
+                lastCommitted: current.lastCommitted || null,
+                commitHistory: current.commitHistory || []
+              }));
+            },
+            POST: async () => {
+              ensureDataDir();
+              const persistenceFile = path.join(dataDir, 'persistence.json');
+              const body = await readRequestBody(req);
+              const { agentId, config, meta, timestamp } = body || {};
+              let current: any = {};
+              try {
+                if (fs.existsSync(persistenceFile)) {
+                  current = JSON.parse(fs.readFileSync(persistenceFile, 'utf8'));
+                }
+              } catch {}
+
+              if (!current.configs) current.configs = {};
+              if (agentId && config) {
+                current.configs[agentId] = config;
+              }
+
+              if (!current.commitHistory) current.commitHistory = [];
+              current.commitHistory.unshift({
+                id: `commit-${agentId || 'global'}-${Date.now()}`,
+                agentId,
+                timestamp: timestamp || new Date().toISOString(),
+                meta: meta || {}
+              });
+              if (current.commitHistory.length > 50) {
+                current.commitHistory = current.commitHistory.slice(0, 50);
+              }
+
+              current.lastCommitted = {
+                agentId,
+                timestamp: timestamp || new Date().toISOString(),
+                meta: meta || {}
+              };
+
+              try {
+                fs.writeFileSync(persistenceFile, JSON.stringify(current, null, 2), 'utf8');
+              } catch {}
+
+              return res.end(JSON.stringify({
+                success: true,
+                committed: true,
+                agentId,
+                timestamp: timestamp || new Date().toISOString(),
+                data: current
+              }));
+            },
+            PUT: async () => {
+              ensureDataDir();
+              const persistenceFile = path.join(dataDir, 'persistence.json');
+              const body = await readRequestBody(req);
+              const { agentId, config, meta, timestamp } = body || {};
+              let current: any = {};
+              try {
+                if (fs.existsSync(persistenceFile)) {
+                  current = JSON.parse(fs.readFileSync(persistenceFile, 'utf8'));
+                }
+              } catch {}
+
+              if (!current.configs) current.configs = {};
+              if (agentId && config) {
+                current.configs[agentId] = config;
+              }
+
+              if (!current.commitHistory) current.commitHistory = [];
+              current.commitHistory.unshift({
+                id: `commit-${agentId || 'global'}-${Date.now()}`,
+                agentId,
+                timestamp: timestamp || new Date().toISOString(),
+                meta: meta || {}
+              });
+              if (current.commitHistory.length > 50) {
+                current.commitHistory = current.commitHistory.slice(0, 50);
+              }
+
+              current.lastCommitted = {
+                agentId,
+                timestamp: timestamp || new Date().toISOString(),
+                meta: meta || {}
+              };
+
+              try {
+                fs.writeFileSync(persistenceFile, JSON.stringify(current, null, 2), 'utf8');
+              } catch {}
+
+              return res.end(JSON.stringify({
+                success: true,
+                committed: true,
+                agentId,
+                timestamp: timestamp || new Date().toISOString(),
+                data: current
+              }));
+            }
+          }
+        },
         {
           pattern: /^\/api\/proxy\/search(\/)?$/i,
           methods: ['GET', 'POST', 'PUT', 'OPTIONS'],
@@ -2306,25 +2518,13 @@ fallback:
         },
       ];
 
+      const router = new ApiRouter();
       for (const route of dynamicRouteMappings) {
-        if (route.pattern.test(pathname)) {
-          // Check if method is allowed
-          if (route.methods && !route.methods.includes(method) && method !== 'OPTIONS') {
-            console.warn(`[Vite API Server] 405 Method Not Allowed: ${method} ${pathname}`);
-            console.warn(`[Vite API Server] Allowed for this route: ${route.methods.join(', ')}`);
-            console.warn(`[Vite API Server] Request Headers:`, JSON.stringify(req.headers, null, 2));
-            res.statusCode = 405;
-            res.setHeader('Content-Type', 'application/json');
-            return res.end(JSON.stringify({ 
-              error: 'Method Not Allowed', 
-              method, 
-              pathname, 
-              allowedMethods: route.methods,
-              timestamp: new Date().toISOString()
-            }));
-          }
-          return await route.handler();
-        }
+        router.register(route.pattern, route.methods, route.handler);
+      }
+      const handled = await router.handle({ req, res, pathname, method, parsedUrl, timestamp });
+      if (handled) {
+        return;
       }
 
       // Centralized Request Router using switch statement

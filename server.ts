@@ -2450,6 +2450,19 @@ app.all(['/api/persistence/commit', '/api/persistence/commit/'], (req, res) => {
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept, Authorization');
 
+  if (req.method !== 'GET' && req.method !== 'POST' && req.method !== 'PUT' && req.method !== 'OPTIONS') {
+    res.setHeader('Allow', 'GET, POST, PUT, OPTIONS');
+    const stackTrace = new Error(`HTTP 405 Method Interceptor: Method '${req.method}' not allowed on route '/api/persistence/commit'`).stack || '';
+    return res.status(405).json({
+      error: 'Method Not Allowed',
+      method: req.method,
+      pathname: '/api/persistence/commit',
+      allowedMethods: ['GET', 'POST', 'PUT', 'OPTIONS'],
+      stackTrace,
+      timestamp: new Date().toISOString()
+    });
+  }
+
   if (req.method === 'OPTIONS') {
     return res.sendStatus(200);
   }

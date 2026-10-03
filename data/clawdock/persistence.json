@@ -401,6 +401,30 @@
   "testKey": "testValue",
   "commitHistory": [
     {
+      "id": "commit-hermes-agent-1791003092789",
+      "agentId": "hermes-agent",
+      "timestamp": "2026-10-03T04:51:32.789Z",
+      "meta": {}
+    },
+    {
+      "id": "commit-hermes-agent-1791002587227",
+      "agentId": "hermes-agent",
+      "timestamp": "2026-10-03T04:43:07.227Z",
+      "meta": {}
+    },
+    {
+      "id": "commit-hermes-agent-1791000424308",
+      "agentId": "hermes-agent",
+      "timestamp": "2026-10-03T04:07:04.308Z",
+      "meta": {}
+    },
+    {
+      "id": "commit-hermes-agent-1791000362276",
+      "agentId": "hermes-agent",
+      "timestamp": "2026-10-03T04:06:02.276Z",
+      "meta": {}
+    },
+    {
       "id": "commit-hermes-agent-1790996965720",
       "agentId": "hermes-agent",
       "timestamp": "2026-10-03T03:09:25.720Z",
@@ -421,7 +445,7 @@
   ],
   "lastCommitted": {
     "agentId": "hermes-agent",
-    "timestamp": "2026-10-03T03:09:25.720Z",
+    "timestamp": "2026-10-03T04:51:32.789Z",
     "meta": {}
   }
 }
