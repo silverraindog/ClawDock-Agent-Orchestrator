@@ -219,6 +219,18 @@ export interface MCPServerConfig {
   category: string;
   status: 'connected' | 'disconnected' | 'testing';
   toolsProvided: string[];
+  vendor?: string;
+  isOfficial?: boolean;
+  packageOrRepo?: string;
+  sourceUrl?: string;
+  docsUrl?: string;
+  envRequirements?: {
+    name: string;
+    description: string;
+    placeholder?: string;
+    required?: boolean;
+    defaultValue?: string;
+  }[];
 }
 
 export interface DiscoveredContainer {

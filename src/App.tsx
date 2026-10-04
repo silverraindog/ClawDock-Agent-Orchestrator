@@ -1151,10 +1151,17 @@ export default function App() {
     const STATIC_OLLAMA_ENDPOINT = 'http://192.168.1.49:11434';
 
     // Sanitize baseUrl to prevent '11434host:11434' style corruption
-    const sanitize = (url: string) => {
-      if (!url) return STATIC_OLLAMA_ENDPOINT;
-      let clean = sanitizeConfigString(url);
-      if (!clean.startsWith('http')) clean = 'http://' + clean;
+    const sanitize = (url: string | undefined, provider: string) => {
+      if (!url || !url.trim()) {
+        if (provider === 'ollama' || provider === 'custom') {
+          return STATIC_OLLAMA_ENDPOINT;
+        }
+        return '';
+      }
+      let clean = sanitizeConfigString(url.trim());
+      if (!clean.startsWith('http://') && !clean.startsWith('https://')) {
+        clean = 'http://' + clean;
+      }
       return clean;
     };
 
@@ -1166,11 +1173,13 @@ export default function App() {
     };
     
     // Sanitize config in place
-    currentConfig.model.baseUrl = sanitize(currentConfig.model.baseUrl);
-    currentConfig.fallback.baseUrl = sanitize(currentConfig.fallback.baseUrl);
+    currentConfig.model.baseUrl = sanitize(currentConfig.model.baseUrl, currentConfig.model.provider);
+    if (currentConfig.fallback) {
+      currentConfig.fallback.baseUrl = sanitize(currentConfig.fallback.baseUrl, currentConfig.fallback.provider);
+    }
 
     try {
-      // Client-side validation: Ensure model is selected and exists in catalog or is valid custom model string
+      // 1. Validation: Ensure model name is provided
       if (!currentConfig.model || !currentConfig.model.model || currentConfig.model.model.trim() === '') {
         addToast(
           'error',
@@ -1181,7 +1190,7 @@ export default function App() {
         return;
       }
 
-      // Client-side catalog validation against /api/proxy/models
+      // 2. Non-blocking model catalog check (health verification / advisory)
       try {
         const modelValidation = await validateModelAgainstCatalog(
           currentConfig.model.model,
@@ -1189,19 +1198,13 @@ export default function App() {
           currentConfig.model.provider
         );
         if (!modelValidation.isValid) {
-          addToast(
-            'error',
-            'Model Catalog Mismatch',
-            modelValidation.message || 'Selected model not found in catalog.'
-          );
-          setIsSavingConfig(false);
-          return;
+          console.info('[handleSaveConfig] Model catalog advisory:', modelValidation.message);
         }
       } catch (valErr) {
-        console.warn('[handleSaveConfig] Model catalog validation warning:', valErr);
+        console.warn('[handleSaveConfig] Model catalog validation advisory warning:', valErr);
       }
 
-      // Pre-save check when saving directly to agent: verify container is running
+      // 3. Pre-save check when saving directly to agent: verify container state
       let containerIsRunning = true;
       let detectData: any = null;
       if (restartContainer) {
@@ -1234,17 +1237,18 @@ export default function App() {
         }
       }
 
-      // Ensure main model, fallback, and MOA configurations are saved and mapped to local static IP
+      // 4. Normalize model, fallback, and MOA configurations
+      const isLocalOrCustom = currentConfig.model.provider === 'ollama' || currentConfig.model.provider === 'custom';
       let normalizedConfig = {
         ...currentConfig,
-        model: currentConfig.model || {},
+        model: {
+          ...currentConfig.model,
+          baseUrl: currentConfig.model.baseUrl || (isLocalOrCustom ? STATIC_OLLAMA_ENDPOINT : '')
+        },
         fallback: currentConfig.fallback || {},
         moa: currentConfig.moa || {}
       };
 
-      const STATIC_OLLAMA_ENDPOINT = 'http://192.168.1.49:11434';
-
-      // Explicitly enforce the static IP 192.168.1.49 for all MOA proposer endpoints during config saving
       if (!normalizedConfig.moa.proposerEndpoints) {
         normalizedConfig.moa.proposerEndpoints = {};
       }
@@ -1255,72 +1259,61 @@ export default function App() {
         normalizedConfig.moa.providerMapping = {};
       }
 
-      // Populate known provider alias endpoints with static IP
+      // Populate default endpoints for local providers
       normalizedConfig.moa.providerEndpoints['local-ollama'] = STATIC_OLLAMA_ENDPOINT;
       normalizedConfig.moa.providerEndpoints['ollama'] = STATIC_OLLAMA_ENDPOINT;
       normalizedConfig.moa.providerEndpoints['custom'] = STATIC_OLLAMA_ENDPOINT;
-      normalizedConfig.moa.providerEndpoints['custom:ollama'] = STATIC_OLLAMA_ENDPOINT;
-      normalizedConfig.moa.providerEndpoints['moa'] = STATIC_OLLAMA_ENDPOINT;
 
-      // Ensure model baseUrl does not use moa://local or mock http://local
-      if (!normalizedConfig.model.baseUrl || normalizedConfig.model.baseUrl === 'moa://local' || normalizedConfig.model.baseUrl === 'http://local' || normalizedConfig.model.baseUrl === 'http://local:11434') {
-        normalizedConfig.model.baseUrl = STATIC_OLLAMA_ENDPOINT;
-      }
-      if (normalizedConfig.fallback?.baseUrl === 'moa://local' || normalizedConfig.fallback?.baseUrl === 'http://local' || normalizedConfig.fallback?.baseUrl === 'http://local:11434') {
-        normalizedConfig.fallback.baseUrl = STATIC_OLLAMA_ENDPOINT;
-      }
-
-      delete normalizedConfig.moa.providerMapping['latest'];
-      delete normalizedConfig.moa.providerMapping['16b'];
-
+      // Aggregator model resolution
       const currentAgg = normalizedConfig.moa.aggregatorModel || normalizedConfig.model.model || 'gemma4-soul:latest';
-      let cleanAgg = (typeof currentAgg === 'string' && currentAgg !== 'default' && currentAgg) ? currentAgg : (typeof currentAgg === 'object' && currentAgg.model ? currentAgg.model : (normalizedConfig.model.model || 'gemma4-soul:latest'));
+      let cleanAgg = (typeof currentAgg === 'string' && currentAgg !== 'default' && currentAgg) 
+        ? currentAgg 
+        : (typeof currentAgg === 'object' && (currentAgg as any).model ? (currentAgg as any).model : (normalizedConfig.model.model || 'gemma4-soul:latest'));
       if (cleanAgg === 'latest') cleanAgg = 'gemma4-soul:latest';
       if (cleanAgg === '16b') cleanAgg = 'deepseek-coder-v2:16b';
       normalizedConfig.moa.aggregatorModel = cleanAgg;
 
-      normalizedConfig.moa.providerMapping[cleanAgg] = 'custom';
-      normalizedConfig.moa.providerEndpoints[cleanAgg] = STATIC_OLLAMA_ENDPOINT;
-
-      if (!normalizedConfig.moa.proposerModels || normalizedConfig.moa.proposerModels.length === 0) {
-        normalizedConfig.moa.proposerModels = ['gemma4-soul:latest', 'deepseek-coder-v2:16b', 'qwen2-5-coder-7b-32k:latest'];
+      // Map aggregator provider appropriately
+      const aggProv = normalizedConfig.model.provider || (cleanAgg.includes('claude') ? 'anthropic' : cleanAgg.includes('gpt') ? 'openai' : 'custom');
+      normalizedConfig.moa.providerMapping[cleanAgg] = aggProv;
+      if (aggProv === 'custom' || aggProv === 'ollama') {
+        normalizedConfig.moa.providerEndpoints[cleanAgg] = normalizedConfig.model.baseUrl || STATIC_OLLAMA_ENDPOINT;
       }
 
-      // Explicitly map all proposer models to static IP endpoints
+      // Ensure proposers list is present and clean
+      if (!normalizedConfig.moa.proposerModels || normalizedConfig.moa.proposerModels.length === 0) {
+        normalizedConfig.moa.proposerModels = [cleanAgg, 'deepseek-coder-v2:16b', 'qwen2.5-coder:7b'].filter((v, i, a) => a.indexOf(v) === i);
+      }
+
+      // Map proposer models to providers & endpoints
       normalizedConfig.moa.proposerModels = normalizedConfig.moa.proposerModels.map((proposer: any) => {
         let propName = typeof proposer === 'string' ? proposer : (proposer?.model || proposer?.name);
         if (propName === 'latest') propName = 'gemma4-soul:latest';
         if (propName === '16b') propName = 'deepseek-coder-v2:16b';
         if (propName) {
-          normalizedConfig.moa.providerMapping[propName] = 'custom';
-          normalizedConfig.moa.proposerEndpoints[propName] = STATIC_OLLAMA_ENDPOINT;
-          normalizedConfig.moa.providerEndpoints[propName] = STATIC_OLLAMA_ENDPOINT;
+          const propProv = propName.includes('claude') 
+            ? 'anthropic' 
+            : propName.includes('gpt') 
+            ? 'openai' 
+            : propName.includes('gemini') 
+            ? 'gemini' 
+            : 'custom';
+
+          normalizedConfig.moa.providerMapping[propName] = propProv;
+          if (propProv === 'custom' || propProv === 'ollama') {
+            normalizedConfig.moa.proposerEndpoints[propName] = STATIC_OLLAMA_ENDPOINT;
+            normalizedConfig.moa.providerEndpoints[propName] = STATIC_OLLAMA_ENDPOINT;
+          }
         }
         return propName;
       }).filter(Boolean);
 
-      // Force any existing keys in proposerEndpoints to static IP
-      Object.keys(normalizedConfig.moa.proposerEndpoints).forEach(key => {
-        normalizedConfig.moa.proposerEndpoints[key] = STATIC_OLLAMA_ENDPOINT;
-      });
-
-      // Force any existing mock local endpoints in providerEndpoints to static IP
-      Object.keys(normalizedConfig.moa.providerEndpoints).forEach(key => {
-        const val = normalizedConfig.moa.providerEndpoints[key];
-        if (val === 'moa://local' || val === 'http://local' || val === 'http://local:11434') {
-          normalizedConfig.moa.providerEndpoints[key] = STATIC_OLLAMA_ENDPOINT;
-        }
-      });
-
+      // Merge provider mappings
       normalizedConfig.providerMapping = { ...(normalizedConfig.providerMapping || {}), ...normalizedConfig.moa.providerMapping };
       delete normalizedConfig.providerMapping['latest'];
       delete normalizedConfig.providerMapping['16b'];
 
-      // Sanitize JSON representation of normalizedConfig without corrupting localhost
-      const configJsonBeforeSanitize = JSON.stringify(normalizedConfig, null, 2);
-      console.group('%c[handleSaveConfig] MOA Static IP & Endpoint Sanitization Audit', 'color: #38bdf8; font-weight: bold;');
-      console.log('[handleSaveConfig] Config JSON BEFORE sanitization:\n', configJsonBeforeSanitize);
-      
+      // Sanitize JSON representation of normalizedConfig
       let sanitizedConfigJson = JSON.stringify(normalizedConfig);
       sanitizedConfigJson = sanitizeJsonEndpoints(sanitizedConfigJson);
       normalizedConfig = JSON.parse(sanitizedConfigJson);
@@ -1859,8 +1852,30 @@ export default function App() {
 
   // Add custom MCP Server
   const handleAddCustomMCPServer = (newServer: MCPServerConfig) => {
-    setMcpServers(prev => [newServer, ...prev]);
+    setMcpServers(prev => {
+      const exists = prev.find(m => m.id === newServer.id);
+      if (exists) {
+        return prev.map(m => m.id === newServer.id ? newServer : m);
+      }
+      return [newServer, ...prev];
+    });
     addToast('success', 'MCP Server Registered', `Added "${newServer.name}" to active registry.`);
+  };
+
+  // Delete MCP Server
+  const handleDeleteMCPServer = (serverId: string) => {
+    setMcpServers(prev => prev.filter(m => m.id !== serverId));
+    addToast('info', 'MCP Server Removed', 'Server deregistered from active agent.');
+  };
+
+  // Batch Add / Install MCP Servers (e.g. from JSON import or bulk official catalog)
+  const handleBatchAddMCPServers = (newServers: MCPServerConfig[]) => {
+    setMcpServers(prev => {
+      const existingIds = new Set(prev.map(s => s.id));
+      const filtered = newServers.filter(s => !existingIds.has(s.id));
+      return [...filtered, ...prev];
+    });
+    addToast('success', 'MCP Servers Installed', `${newServers.length} servers configured.`);
   };
 
   // Sync OpenClaw Remote Skills & MCP from https://openclawvps.io/skills
@@ -2816,8 +2831,11 @@ export default function App() {
               onToggleServer={handleToggleMCPServer}
               onTestServer={handleTestMCPServer}
               onAddCustomServer={handleAddCustomMCPServer}
+              onDeleteServer={handleDeleteMCPServer}
+              onBatchAddServers={handleBatchAddMCPServers}
               onSyncOpenClawRemote={handleSyncOpenClawRemote}
               isSyncingRemote={isSyncingRemote}
+              selectedAgentId={selectedAgentId}
             />
           )}
 

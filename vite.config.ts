@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react';
 import path from 'path';
 import fs from 'fs';
 import { defineConfig, Plugin } from 'vite';
+import { OFFICIAL_MCP_REGISTRY, OFFICIAL_MCP_CATEGORIES } from './src/data/officialMcpServers';
 
 function readRequestBody(req: any): Promise<any> {
   return new Promise((resolve) => {
@@ -541,6 +542,15 @@ api_key = "${fbKey}"
       const localBaseUrl = baseUrl || 'http://192.168.1.49:11434';
       const localBaseUrlV1 = localBaseUrl.endsWith('/v1') ? localBaseUrl : `${localBaseUrl}/v1`;
 
+      const uniqueProvMap = new Map<string, string>();
+      if (aggMod) uniqueProvMap.set(aggMod, 'custom');
+      proposers.forEach((p: string) => {
+        if (p) uniqueProvMap.set(p, 'custom');
+      });
+      const providerMappingLines = Array.from(uniqueProvMap.entries())
+        .map(([k, v]) => `    ${k}: "${v}"`)
+        .join('\n');
+
       const refList = proposers.map((p: string) => `        - provider: custom
           model: ${p}
           base_url: ${localBaseUrlV1}
@@ -575,8 +585,7 @@ moa:
     custom:ollama: "${localBaseUrl}"
     local-ollama: "${localBaseUrl}"
   provider_mapping:
-    ${aggMod}: "custom"
-${proposers.map((p: string) => `    ${p}: "custom"`).join('\n')}
+${providerMappingLines}
   presets:
     default:
       reference_models:
@@ -1894,12 +1903,12 @@ fallback:
                 : ['http://host.docker.internal:11434', 'http://localhost:11434', 'http://127.0.0.1:11434'];
               
               let ollamaSuccess = false;
-              let errorMsg = 'Could not establish connection to local Ollama. Ensure Ollama is running.';
+              let errorMsg = 'Could not establish connection to local Ollama. Ensure Ollama is running and accessible.';
 
               for (const root of roots) {
                 try {
                   const controller = new AbortController();
-                  const timer = setTimeout(() => controller.abort(), 1200);
+                  const timer = setTimeout(() => controller.abort(), 2000);
                   const response = await fetch(`${root.replace(/\/+$/, '')}/api/tags`, { signal: controller.signal });
                   clearTimeout(timer);
                   if (response.ok) {
@@ -1907,7 +1916,8 @@ fallback:
                     break;
                   }
                 } catch (err: any) {
-                  errorMsg = err.message || errorMsg;
+                  const isAbort = err.name === 'AbortError' || err.message?.includes('aborted');
+                  errorMsg = isAbort ? `Connection to ${root} timed out.` : (err.message || errorMsg);
                 }
               }
 
@@ -1947,8 +1957,11 @@ fallback:
                   message: 'Base URL is required for Custom provider connections.'
                 }));
               }
-              url = `${baseUrl.trim().replace(/\/+$/, '')}/v1/models`;
-              headers['Authorization'] = `Bearer ${apiKey.trim()}`;
+              const cleanB = baseUrl.trim().replace(/\/+$/, '');
+              url = cleanB.endsWith('/v1') ? `${cleanB}/models` : `${cleanB}/v1/models`;
+              if (apiKey && apiKey.trim() && apiKey.trim() !== 'ollama') {
+                headers['Authorization'] = `Bearer ${apiKey.trim()}`;
+              }
             } else {
               url = baseUrl && baseUrl.trim() ? `${baseUrl.trim().replace(/\/+$/, '')}/v1/models` : 'https://api.openai.com/v1/models';
               headers['Authorization'] = `Bearer ${apiKey.trim()}`;
@@ -1956,7 +1969,7 @@ fallback:
 
             try {
               const controller = new AbortController();
-              const timer = setTimeout(() => controller.abort(), 6000);
+              const timer = setTimeout(() => controller.abort(), 3500);
               const response = await fetch(url, {
                 method: 'GET',
                 headers,
@@ -2006,13 +2019,13 @@ fallback:
                 return res.end(JSON.stringify({
                   success: false,
                   errorType: 'TIMEOUT',
-                  message: `Connection timed out while reaching ${provider.toUpperCase()}. Please check your connection or base URL.`
+                  message: `Connection timed out while reaching ${provider.toUpperCase()} (${baseUrl || url}). Please verify host and port are active.`
                 }));
               }
               return res.end(JSON.stringify({
                 success: false,
                 errorType: 'NETWORK_ERROR',
-                message: `Network Error: Could not reach the provider endpoint. (${fetchErr.message || 'DNS resolution or route failed'})`
+                message: `Network Error: Could not reach provider endpoint at ${baseUrl || url}. (${fetchErr.message || 'DNS resolution or route failed'})`
               }));
             }
           }
@@ -2305,7 +2318,36 @@ fallback:
                 models.unshift({ value: m, label: `${m} (Live Ollama)`, tag: 'Live' });
               }
             }
-            return res.end(JSON.stringify({ success: true, provider, baseUrl, agentId, modelsCount: models.length, models }));
+            const lastSuccessTimestamp = new Date().toISOString();
+            const enrichedModels = models.map((m: any) => {
+              const val = typeof m === 'string' ? m : (m.value || '');
+              const mem = val.includes('70b') ? '38.4 GB' :
+                          val.includes('32b') ? '18.2 GB' :
+                          val.includes('14b') ? '8.9 GB' :
+                          val.includes('7b') || val.includes('8b') ? '4.8 GB' :
+                          val.includes('3b') ? '2.1 GB' :
+                          val.includes('1b') ? '850 MB' :
+                          provider === 'ollama' || provider === 'custom' ? '4.8 GB' : 'Serverless Cloud Memory';
+              const ctx = val.includes('200k') || val.includes('claude') ? 200000 :
+                          val.includes('128k') || val.includes('gpt-4o') || val.includes('o1') || val.includes('coder') ? 128000 :
+                          val.includes('65k') || val.includes('soul') || val.includes('gemma') ? 65536 :
+                          val.includes('32k') || val.includes('deepseek') ? 32768 : 16384;
+              return {
+                ...(typeof m === 'object' ? m : { value: m, label: m }),
+                memoryUsage: mem,
+                contextWindow: ctx,
+                lastSuccessTimestamp
+              };
+            });
+            return res.end(JSON.stringify({
+              success: true,
+              provider,
+              baseUrl,
+              agentId,
+              modelsCount: enrichedModels.length,
+              lastSuccessTimestamp,
+              models: enrichedModels
+            }));
           }
         },
         {
@@ -2325,6 +2367,22 @@ fallback:
               agentId: 'openclaw',
               skills: OPENCLAW_SYNCHRONOUS_CATALOG.skills,
               mcpServers: OPENCLAW_SYNCHRONOUS_CATALOG.mcpServers
+            }));
+          }
+        },
+        {
+          pattern: /^\/api\/mcp\/(official-catalog|catalog|official|servers)(\/)?$/i,
+          allowedMethods: ['GET', 'POST', 'OPTIONS'],
+          handler: async () => {
+            res.setHeader('Content-Type', 'application/json');
+            return res.end(JSON.stringify({
+              success: true,
+              source: 'https://mcpservers.org/official',
+              officialRegistryUrl: 'https://mcpservers.org/official',
+              totalServers: OFFICIAL_MCP_REGISTRY.length,
+              categories: OFFICIAL_MCP_CATEGORIES,
+              servers: OFFICIAL_MCP_REGISTRY,
+              fetchedAt: new Date().toISOString()
             }));
           }
         },

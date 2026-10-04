@@ -439,7 +439,7 @@ export function parseNativeConfigToSchema(
   } else {
     // 3. YAML Parsing
     try {
-      const parsedYaml = YAML.parse(nativeContent);
+      const parsedYaml = YAML.parse(nativeContent, { uniqueKeys: false });
       if (parsedYaml && typeof parsedYaml === 'object') {
         if (parsedYaml.agent_name || parsedYaml.agentName) {
           parsedAgentName = parsedYaml.agent_name || parsedYaml.agentName;
@@ -819,8 +819,9 @@ export function enhanceConfigWithNative(
     baseMerged.moa.proposerModels = [baseMerged.model.model || 'gemma4-soul:latest', 'deepseek-coder-v2:16b', 'qwen2-5-coder-7b-32k:latest'];
   }
 
-  // Enforce MOA aggregator and proposer endpoints are resolved to local static IP 192.168.1.49 instead of moa://local or openrouter
-  if (agentId === 'hermes-agent' || isLocal || baseMerged.model.baseUrl?.includes('192.168.1.49') || baseMerged.model.provider === 'custom') {
+  // Enforce MOA aggregator and proposer endpoints are resolved to local static IP 192.168.1.49 only for local ollama / custom edge deployments
+  const isTargetLocal = isLocal || baseMerged.model.provider === 'ollama' || (baseMerged.model.provider === 'custom' && (!baseMerged.model.baseUrl || baseMerged.model.baseUrl.includes('192.168.1.49')));
+  if (isTargetLocal) {
     if (!baseMerged.model.baseUrl) {
       baseMerged.model.baseUrl = 'http://192.168.1.49:11434';
     }
@@ -1301,12 +1302,14 @@ export function generateHermesYaml(cfg: any): string {
   const rawModel = m?.default || m?.model || 'gemma4-soul:latest';
   const model = (rawModel === 'default' || rawModel === 'latest') ? 'gemma4-soul:latest' : rawModel;
   const rawProvider = m?.provider || 'custom';
-  const isOllamaLocal = rawProvider === 'ollama' || rawProvider === 'custom' || m?.baseUrl?.includes('192.168.1.49') || m?.baseUrl === 'http://192.168.1.49:11434' || !m?.baseUrl;
-  const finalProvider = isOllamaLocal ? 'custom' : rawProvider;
+  const isOllamaLocal = rawProvider === 'ollama' || (rawProvider === 'custom' && (m?.baseUrl?.includes('192.168.1.49') || m?.baseUrl === 'http://192.168.1.49:11434'));
+  const finalProvider = isOllamaLocal ? 'custom' : (rawProvider || 'custom');
   const finalApiKey = isOllamaLocal ? (m?.apiKey || 'ollama') : (m?.apiKey || '');
   const rawBaseUrl = m?.baseUrl || (isOllamaLocal ? 'http://192.168.1.49:11434' : '');
-  const finalBaseUrl = rawBaseUrl || 'http://192.168.1.49:11434';
-  const finalBaseUrlV1 = rawBaseUrl ? (rawBaseUrl.endsWith('/v1') ? rawBaseUrl : rawBaseUrl + '/v1') : 'http://192.168.1.49:11434/v1';
+  const finalBaseUrl = rawBaseUrl || (isOllamaLocal ? 'http://192.168.1.49:11434' : '');
+  const finalBaseUrlV1 = rawBaseUrl 
+    ? (rawBaseUrl.endsWith('/v1') ? rawBaseUrl : rawBaseUrl + '/v1') 
+    : (isOllamaLocal ? 'http://192.168.1.49:11434/v1' : '');
 
   // Proposer / Reference model resolution
   const rawProposers = (moa?.proposerModels && moa.proposerModels.length > 0)
@@ -1404,6 +1407,21 @@ export function generateHermesYaml(cfg: any): string {
   const fbApiKey = fb?.apiKey || '';
   const fbBaseUrl = fb?.baseUrl || 'https://openrouter.ai/api/v1';
 
+  const uniqueMappings = new Map<string, string>();
+  if (aggModel) {
+    uniqueMappings.set(aggModel, aggProv);
+  }
+  rawProposers.forEach((p: any) => {
+    const pName = typeof p === 'string' ? (p === 'latest' ? 'gemma4-soul:latest' : p === '16b' ? 'deepseek-coder-v2:16b' : p) : p?.model || p?.name;
+    if (pName) {
+      const pProv = parseModelAndProvider(pName, providerMapping, 'gemma4-soul:latest').provider;
+      uniqueMappings.set(pName, pProv);
+    }
+  });
+  const providerMappingLines = Array.from(uniqueMappings.entries())
+    .map(([k, v]) => `    ${k}: "${v}"`)
+    .join('\n');
+
   return `version: "1.0.0"
 agent_id: "${cfg?.agentId || 'hermes-agent'}"
 agent_name: "${sys?.agentName || 'Hermes Code Assistant'}"
@@ -1413,15 +1431,15 @@ system_prompt: "${(sys?.systemPrompt || 'You are hermes-agent, an autonomous AI 
 
 model:
   provider: ${finalProvider}
-  apiKey: ${finalApiKey}
+  apiKey: "${(finalApiKey || '').replace(/"/g, '\\"')}"
   temperature: ${m?.temperature ?? 0.3}
-  reasoningEffort: ${m?.reasoningEffort || 'high'}
+  reasoningEffort: "${m?.reasoningEffort || 'high'}"
   maxTokens: ${m?.maxTokens ?? 8192}
   contextWindow: ${m?.contextWindow ?? 200000}
-  baseUrl: ${finalBaseUrl}
+  baseUrl: "${finalBaseUrl}"
   topP: ${m?.topP ?? 0.95}
-  default: ${model}
-  base_url: ${finalBaseUrlV1}
+  default: "${model}"
+  base_url: "${finalBaseUrlV1}"
 
 web:
   backend: ${web?.backend || 'exa'}
@@ -1478,12 +1496,7 @@ moa:
     local-ollama: "${finalBaseUrl}"
     openrouter: "https://openrouter.ai/api/v1"
   provider_mapping:
-    ${aggModel}: "${aggProv}"
-${rawProposers.map((p: any) => {
-  const pName = typeof p === 'string' ? (p === 'latest' ? 'gemma4-soul:latest' : p === '16b' ? 'deepseek-coder-v2:16b' : p) : p.model || p.name;
-  const pProv = parseModelAndProvider(pName, providerMapping, 'gemma4-soul:latest').provider;
-  return `    ${pName}: "${pProv}"`;
-}).join('\n')}
+${providerMappingLines}
   presets:
     default:
       reference_models:

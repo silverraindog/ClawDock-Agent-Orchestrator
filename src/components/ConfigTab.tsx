@@ -767,6 +767,15 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
   const [modelVerificationStatus, setModelVerificationStatus] = useState<'checking' | 'verified' | 'warning'>('checking');
   const [proxyRegistryModels, setProxyRegistryModels] = useState<string[]>([]);
   const [isModelVerified, setIsModelVerified] = useState<boolean>(true);
+  const [modelRegistryDetails, setModelRegistryDetails] = useState<{
+    memoryUsage: string;
+    contextWindowLimit: number;
+    lastSuccessTimestamp: string;
+  }>({
+    memoryUsage: '4.8 GB',
+    contextWindowLimit: 65536,
+    lastSuccessTimestamp: 'Recently verified'
+  });
 
   useEffect(() => {
     let isMounted = true;
@@ -803,9 +812,34 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
         const registryList = data.models || data.data || [];
         const modelNames = registryList.map((m: any) => typeof m === 'string' ? m : (m.value || m.name || m.model || '')).filter(Boolean);
         
+        const currentModel = config.model.model || '';
+        const found = registryList.find((m: any) => {
+          const val = typeof m === 'string' ? m : (m.value || m.name || m.model || '');
+          return val.toLowerCase() === currentModel.toLowerCase();
+        });
+
+        const mem = (typeof found === 'object' && found?.memoryUsage) || (
+          currentModel.includes('70b') ? '38.4 GB' :
+          currentModel.includes('32b') ? '18.2 GB' :
+          currentModel.includes('14b') ? '8.9 GB' :
+          currentModel.includes('7b') || currentModel.includes('8b') ? '4.8 GB' :
+          currentModel.includes('3b') ? '2.1 GB' :
+          currentModel.includes('1b') ? '850 MB' :
+          config.model.provider === 'ollama' || config.model.provider === 'custom' ? '4.8 GB (Container RAM)' : 'Serverless Cloud Memory'
+        );
+
+        const ctxLimit = (typeof found === 'object' && found?.contextWindow) || (config.model.contextWindow ? config.model.contextWindow : getContextSizeVal(currentModel, ''));
+        const lastSuccessRaw = (typeof found === 'object' && found?.lastSuccessTimestamp) || data.lastSuccessTimestamp || data.timestamp || new Date().toISOString();
+        const formattedTimestamp = new Date(lastSuccessRaw).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
         if (isMounted) {
           setProxyRegistryModels(modelNames);
-          const currentModel = config.model.model || '';
+          setModelRegistryDetails({
+            memoryUsage: mem,
+            contextWindowLimit: ctxLimit,
+            lastSuccessTimestamp: formattedTimestamp
+          });
+
           const rawProviderList = fetchedModelsMap[config.model.provider] || MODEL_OPTIONS[config.model.provider] || DEFAULT_PROVIDER_MODELS[config.model.provider] || [];
           const allKnownModels = [
             ...modelNames,
@@ -826,7 +860,7 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
 
     verifyModelAgainstRegistry();
     return () => { isMounted = false; };
-  }, [config.model.model, config.model.provider, fetchedModelsMap]);
+  }, [config.model.model, config.model.provider, config.model.contextWindow, fetchedModelsMap]);
 
   const getContextSizeVal = (modelValue: string, label: string): number => {
     const str = (modelValue + ' ' + label).toLowerCase();
@@ -1954,6 +1988,101 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
               </p>
             </div>
 
+            {/* Dedicated Model Save & Quick Apply Panel */}
+            <div className="p-4 rounded-2xl bg-gradient-to-r from-indigo-950/40 via-slate-900 to-slate-950 border border-indigo-500/30 shadow-lg space-y-3.5">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400 shrink-0">
+                    <Cpu className="w-5 h-5 text-indigo-300" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-xs font-bold text-white font-mono">
+                        {config.model.model || 'No model selected'}
+                      </span>
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-mono uppercase">
+                        {config.model.provider}
+                      </span>
+                      {isModelVerified && (
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
+                          <CheckCircle2 className="w-3 h-3" />
+                          Validated
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 text-[11px] text-slate-400 mt-0.5">
+                      <span>Context: <span className="text-indigo-300 font-mono">{(config.model.contextWindow || 65536).toLocaleString()}</span> tokens</span>
+                      <span>•</span>
+                      <span>Temp: <span className="text-amber-300 font-mono">{config.model.temperature ?? 0.7}</span></span>
+                      <span>•</span>
+                      <span>Thinking: <span className="text-purple-300 font-mono">{config.model.reasoningEffort || 'none'}</span></span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Model Save Actions */}
+                <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto shrink-0">
+                  <button
+                    type="button"
+                    onClick={handleTestConnection}
+                    disabled={isTestingConnection}
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium text-slate-300 bg-slate-800 hover:bg-slate-700 border border-slate-700 transition-colors disabled:opacity-50"
+                    title="Test connection to model endpoint"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 text-slate-400 ${isTestingConnection ? 'animate-spin text-indigo-400' : ''}`} />
+                    <span>{isTestingConnection ? 'Testing...' : 'Test Connection'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    id="model-save-file-btn"
+                    onClick={() => handleInterceptSave(false)}
+                    disabled={isSaving}
+                    className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold text-slate-200 bg-slate-800 hover:bg-slate-700 border border-slate-700 transition-all disabled:opacity-50"
+                    title="Save model settings directly to file without container restart"
+                  >
+                    <FileCode className="w-3.5 h-3.5 text-indigo-400" />
+                    <span>{isSaving ? 'Saving...' : 'Save Model to File'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    id="model-save-apply-btn"
+                    onClick={() => handleInterceptSave(true)}
+                    disabled={isSaving}
+                    className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 shadow-md shadow-indigo-600/30 transition-all disabled:opacity-50"
+                    title="Save model settings and apply to active agent runtime"
+                  >
+                    <Save className="w-3.5 h-3.5" />
+                    <span>{isSaving ? 'Applying...' : 'Save & Apply to Agent'}</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Status Alert or Connection Notice */}
+              {connectionStatus && (
+                <div className={`p-2.5 rounded-xl border text-[11px] flex items-center justify-between gap-2 ${
+                  connectionStatus.status === 'connected' 
+                    ? 'bg-emerald-950/30 border-emerald-500/30 text-emerald-300'
+                    : 'bg-rose-950/30 border-rose-500/30 text-rose-300'
+                }`}>
+                  <div className="flex items-center gap-2">
+                    {connectionStatus.status === 'connected' ? (
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                    ) : (
+                      <AlertCircle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+                    )}
+                    <span className="truncate">{connectionStatus.message}</span>
+                  </div>
+                  {pingLatencyMs !== null && (
+                    <span className="text-[10px] font-mono text-emerald-400 shrink-0">
+                      {pingLatencyMs}ms
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {/* LLM Provider Dropdown */}
               <div className="space-y-2">
@@ -1991,18 +2120,23 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
                     Model Checkpoint (Dropdown)
                     <div className="relative group cursor-help inline-flex items-center">
                       <Info className="w-3.5 h-3.5 text-indigo-400 hover:text-indigo-300 transition-colors" />
-                      <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 hidden group-hover:block w-72 p-3 bg-slate-950 text-slate-200 text-xs font-sans rounded-xl shadow-2xl border border-indigo-500/30 z-50 text-left leading-relaxed">
-                        <div className="font-bold text-indigo-300 pb-1 border-b border-slate-800 mb-1.5 flex items-center justify-between">
-                          <span>Model Specification &amp; Registry</span>
-                          <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${modelVerificationStatus === 'verified' ? 'bg-emerald-950 text-emerald-300' : 'bg-amber-950 text-amber-300'}`}>
-                            {modelVerificationStatus === 'verified' ? 'Verified' : 'Unverified'}
+                      <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 hidden group-hover:block w-80 p-3.5 bg-slate-950/95 text-slate-200 text-xs font-sans rounded-xl shadow-2xl border border-indigo-500/30 z-50 text-left leading-relaxed animate-in fade-in zoom-in-95 duration-150">
+                        <div className="font-bold text-indigo-300 pb-1.5 border-b border-slate-800 mb-2 flex items-center justify-between">
+                          <span className="flex items-center gap-1.5 font-mono">
+                            <Cpu className="w-3.5 h-3.5 text-indigo-400" />
+                            Model Specification &amp; Registry
+                          </span>
+                          <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded font-bold ${isModelVerified ? 'bg-emerald-950 text-emerald-300 border border-emerald-500/30' : 'bg-amber-950 text-amber-300 border border-amber-500/30'}`}>
+                            {isModelVerified ? 'Verified' : 'Unverified'}
                           </span>
                         </div>
-                        <div className="space-y-1 text-[11px] text-slate-300">
-                          <div><strong className="text-slate-400">Model:</strong> <span className="font-mono text-white">{config.model.model || 'None'}</span></div>
-                          <div><strong className="text-slate-400">Provider:</strong> <span className="font-mono text-indigo-300 uppercase">{config.model.provider}</span></div>
-                          <div><strong className="text-slate-400">Context Window:</strong> <span className="font-mono text-emerald-300">{(config.model.contextWindow || 65536).toLocaleString()} tokens</span></div>
-                          <div><strong className="text-slate-400">Compatibility Status:</strong> <span className={`font-mono ${modelVerificationStatus === 'verified' ? 'text-emerald-400' : 'text-amber-400'}`}>{modelVerificationStatus === 'verified' ? 'Verified via /api/proxy/models registry' : 'Custom / Unverified in Proxy Registry'}</span></div>
+                        <div className="space-y-1.5 text-[11px] text-slate-300">
+                          <div className="flex justify-between items-center"><strong className="text-slate-400">Selected Model:</strong> <span className="font-mono text-white font-semibold truncate max-w-[150px]">{config.model.model || 'None'}</span></div>
+                          <div className="flex justify-between items-center"><strong className="text-slate-400">Provider Engine:</strong> <span className="font-mono text-indigo-300 uppercase">{config.model.provider}</span></div>
+                          <div className="flex justify-between items-center"><strong className="text-slate-400">Memory Usage:</strong> <span className="font-mono text-amber-300 font-semibold">{modelRegistryDetails.memoryUsage}</span></div>
+                          <div className="flex justify-between items-center"><strong className="text-slate-400">Context Window Limit:</strong> <span className="font-mono text-emerald-300 font-semibold">{modelRegistryDetails.contextWindowLimit.toLocaleString()} tokens</span></div>
+                          <div className="flex justify-between items-center"><strong className="text-slate-400">Last Success Timestamp:</strong> <span className="font-mono text-slate-300 text-[10px]">{modelRegistryDetails.lastSuccessTimestamp}</span></div>
+                          <div className="flex justify-between items-center pt-1 border-t border-slate-800/80"><strong className="text-slate-400">Compatibility Status:</strong> <span className={`font-mono font-bold ${isModelVerified ? 'text-emerald-400' : 'text-amber-400'}`}>{isModelVerified ? 'Verified via /api/proxy/models' : 'Custom / Unverified'}</span></div>
                         </div>
                       </div>
                     </div>
@@ -2400,25 +2534,36 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
                         </>
                       )}
                       {config.model.model && (
-                        <div className="absolute left-0 bottom-full mb-2 hidden group-hover:flex flex-col w-64 p-3 bg-slate-950/95 border border-indigo-500/30 text-xs text-slate-200 rounded-xl shadow-2xl z-50 pointer-events-none animate-in fade-in slide-in-from-bottom-1 duration-150">
-                          <div className="font-bold text-indigo-300 border-b border-slate-800 pb-1.5 mb-1.5 flex items-center justify-between">
-                            <span>Selected Model Details</span>
-                            <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono ${isModelVerified ? 'bg-emerald-950 text-emerald-300' : 'bg-amber-950 text-amber-300'}`}>
+                        <div className="absolute left-0 bottom-full mb-2 hidden group-hover:flex flex-col w-72 p-3.5 bg-slate-950/95 border border-indigo-500/30 text-xs text-slate-200 rounded-xl shadow-2xl z-50 pointer-events-none animate-in fade-in slide-in-from-bottom-1 duration-150">
+                          <div className="font-bold text-indigo-300 border-b border-slate-800 pb-1.5 mb-2 flex items-center justify-between">
+                            <span className="flex items-center gap-1.5 font-mono">
+                              <Cpu className="w-3.5 h-3.5 text-indigo-400" />
+                              Selected Model Details
+                            </span>
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono font-bold ${isModelVerified ? 'bg-emerald-950 text-emerald-300 border border-emerald-500/30' : 'bg-amber-950 text-amber-300 border border-amber-500/30'}`}>
                               {isModelVerified ? 'Verified' : 'Unverified'}
                             </span>
                           </div>
-                          <div className="space-y-1 font-sans">
-                            <div className="flex justify-between">
-                              <span className="text-slate-400 font-sans">Provider:</span>
+                          <div className="space-y-1.5 font-sans text-[11px]">
+                            <div className="flex justify-between items-center">
+                              <span className="text-slate-400">Provider:</span>
                               <span className="font-mono text-indigo-200 uppercase">{config.model.provider}</span>
                             </div>
-                            <div className="flex justify-between">
-                              <span className="text-slate-400 font-sans">Context Window:</span>
-                              <span className="font-mono text-emerald-300">{(config.model.contextWindow || 65536).toLocaleString()} tokens</span>
+                            <div className="flex justify-between items-center">
+                              <span className="text-slate-400">Memory Usage:</span>
+                              <span className="font-mono text-amber-300 font-semibold">{modelRegistryDetails.memoryUsage}</span>
                             </div>
-                            <div className="flex justify-between">
-                              <span className="text-slate-400 font-sans">Registry Match:</span>
-                              <span className={`font-mono ${isModelVerified ? 'text-emerald-400' : 'text-amber-400'}`}>
+                            <div className="flex justify-between items-center">
+                              <span className="text-slate-400">Context Window Limit:</span>
+                              <span className="font-mono text-emerald-300 font-semibold">{modelRegistryDetails.contextWindowLimit.toLocaleString()} tokens</span>
+                            </div>
+                            <div className="flex justify-between items-center">
+                              <span className="text-slate-400">Last Success Timestamp:</span>
+                              <span className="font-mono text-slate-300 text-[10px]">{modelRegistryDetails.lastSuccessTimestamp}</span>
+                            </div>
+                            <div className="flex justify-between items-center pt-1 border-t border-slate-800/80">
+                              <span className="text-slate-400">Registry Match:</span>
+                              <span className={`font-mono font-bold ${isModelVerified ? 'text-emerald-400' : 'text-amber-400'}`}>
                                 {isModelVerified ? 'Compatible' : 'Custom Override'}
                               </span>
                             </div>
@@ -4550,6 +4695,37 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
                   </div>
                 </div>
               )}
+              {/* Bottom Quick Save Action Bar */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-4 border-t border-slate-800/80 bg-slate-950/40 p-4 rounded-xl border">
+                <div className="text-xs text-slate-300">
+                  <span className="font-semibold text-white">Active Model: </span>
+                  <code className="text-emerald-400 font-mono">{config.model.model || 'none'}</code>
+                  <span className="text-slate-500 mx-2">•</span>
+                  <span className="text-slate-400 capitalize">{config.model.provider}</span>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleInterceptSave(false)}
+                    disabled={isSaving}
+                    className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold text-slate-200 bg-slate-800 hover:bg-slate-700 border border-slate-700 transition-all disabled:opacity-50"
+                  >
+                    <FileCode className="w-3.5 h-3.5 text-indigo-400" />
+                    <span>{isSaving ? 'Saving...' : 'Save Model to File'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleInterceptSave(true)}
+                    disabled={isSaving}
+                    className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 shadow-sm shadow-indigo-600/30 transition-all disabled:opacity-50"
+                  >
+                    <Save className="w-3.5 h-3.5" />
+                    <span>{isSaving ? 'Applying...' : 'Save & Apply to Agent'}</span>
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         )}

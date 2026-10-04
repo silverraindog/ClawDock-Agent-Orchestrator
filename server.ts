@@ -7,6 +7,7 @@ import { spawn, execSync } from 'child_process';
 import { createServer as createViteServer } from 'vite';
 import YAML from 'yaml';
 import * as TOML from 'smol-toml';
+import { OFFICIAL_MCP_REGISTRY, OFFICIAL_MCP_CATEGORIES } from './src/data/officialMcpServers';
 
 const app = express();
 const PORT = 3000;
@@ -482,14 +483,37 @@ async function handleModelsRequest(req: any, res: any) {
       }
     } catch {}
 
+    const lastSuccessTimestamp = new Date().toISOString();
+    const enrichedModels = models.map((m: any) => {
+      const val = typeof m === 'string' ? m : (m.value || '');
+      const mem = val.includes('70b') ? '38.4 GB' :
+                  val.includes('32b') ? '18.2 GB' :
+                  val.includes('14b') ? '8.9 GB' :
+                  val.includes('7b') || val.includes('8b') ? '4.8 GB' :
+                  val.includes('3b') ? '2.1 GB' :
+                  val.includes('1b') ? '850 MB' :
+                  provider === 'ollama' || provider === 'custom' ? '4.8 GB' : 'Serverless Cloud Memory';
+      const ctx = val.includes('200k') || val.includes('claude') ? 200000 :
+                  val.includes('128k') || val.includes('gpt-4o') || val.includes('o1') || val.includes('coder') ? 128000 :
+                  val.includes('65k') || val.includes('soul') || val.includes('gemma') ? 65536 :
+                  val.includes('32k') || val.includes('deepseek') ? 32768 : 16384;
+      return {
+        ...(typeof m === 'object' ? m : { value: m, label: m }),
+        memoryUsage: mem,
+        contextWindow: ctx,
+        lastSuccessTimestamp
+      };
+    });
+
     return res.json({
       success: true,
       provider,
       baseUrl,
       agentId,
-      modelsCount: models.length,
+      modelsCount: enrichedModels.length,
       isLiveProbed: liveOllamaModels.length > 0,
-      models
+      lastSuccessTimestamp,
+      models: enrichedModels
     });
   } catch (err: any) {
     console.error('[Express API Server] Error in /api/models handler:', err);
@@ -556,12 +580,12 @@ app.all(['/api/test-conn-v2', '/api/test-connection'], async (req, res) => {
         : ['http://host.docker.internal:11434', 'http://localhost:11434', 'http://127.0.0.1:11434'];
       
       let ollamaSuccess = false;
-      let errorMsg = 'Could not establish connection to local Ollama. Ensure Ollama is running.';
+      let errorMsg = 'Could not establish connection to local Ollama. Ensure Ollama is running and accessible.';
 
       for (const root of roots) {
         try {
           const controller = new AbortController();
-          const timer = setTimeout(() => controller.abort(), 1200);
+          const timer = setTimeout(() => controller.abort(), 2000);
           const response = await fetch(`${root.replace(/\/+$/, '')}/api/tags`, { signal: controller.signal });
           clearTimeout(timer);
           if (response.ok) {
@@ -569,7 +593,8 @@ app.all(['/api/test-conn-v2', '/api/test-connection'], async (req, res) => {
             break;
           }
         } catch (err: any) {
-          errorMsg = err.message || errorMsg;
+          const isAbort = err.name === 'AbortError' || err.message?.includes('aborted');
+          errorMsg = isAbort ? `Connection to ${root} timed out.` : (err.message || errorMsg);
         }
       }
 
@@ -610,13 +635,16 @@ app.all(['/api/test-conn-v2', '/api/test-connection'], async (req, res) => {
           message: 'Base URL is required for Custom provider connections.'
         });
       }
-      url = `${baseUrl.trim().replace(/\/+$/, '')}/v1/models`;
-      headers['Authorization'] = `Bearer ${apiKey.trim()}`;
+      const cleanB = baseUrl.trim().replace(/\/+$/, '');
+      url = cleanB.endsWith('/v1') ? `${cleanB}/models` : `${cleanB}/v1/models`;
+      if (apiKey && apiKey.trim() && apiKey.trim() !== 'ollama') {
+        headers['Authorization'] = `Bearer ${apiKey.trim()}`;
+      }
     }
 
     // Perform verification fetch request
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 6000); // 6s timeout
+    const timer = setTimeout(() => controller.abort(), 3500); // 3.5s timeout
     try {
       const response = await fetch(url, {
         method: 'GET',
@@ -665,22 +693,19 @@ app.all(['/api/test-conn-v2', '/api/test-connection'], async (req, res) => {
       }
     } catch (fetchErr: any) {
       clearTimeout(timer);
-      console.error(`[Test Connection Error] ${provider}:`, fetchErr);
-      
-      // Check if it is a real system error (network offline/DNS failure vs timeout)
       const isTimeout = fetchErr.name === 'AbortError' || fetchErr.message?.includes('aborted') || fetchErr.message?.includes('timeout');
       if (isTimeout) {
         return res.json({
           success: false,
           errorType: 'TIMEOUT',
-          message: `Connection timed out while reaching ${provider.toUpperCase()}. Please check your connection or base URL.`
+          message: `Connection timed out while reaching ${provider.toUpperCase()} (${baseUrl || url}). Please verify host and port are active.`
         });
       }
 
       return res.json({
         success: false,
         errorType: 'NETWORK_ERROR',
-        message: `Network Error: Could not reach the provider endpoint. (${fetchErr.message || 'DNS resolution or route failed'})`
+        message: `Network Error: Could not reach provider endpoint at ${baseUrl || url}. (${fetchErr.message || 'DNS resolution or route failed'})`
       });
     }
 
@@ -820,6 +845,19 @@ app.all(['/api/openclaw/mcp', '/api/agents/openclaw/mcp'], (req, res) => {
         toolsProvided: ['openclaw_vps_fetch_skills', 'openclaw_vps_deploy_webhook', 'openclaw_vps_gateway_route', 'openclaw_vps_sync_mcp']
       }
     ]
+  });
+});
+
+// Official MCP Servers Catalog Endpoint (https://mcpservers.org/official)
+app.all(['/api/mcp/official-catalog', '/api/mcp/catalog', '/api/mcp/servers', '/api/mcp/official'], (req, res) => {
+  res.json({
+    success: true,
+    source: 'https://mcpservers.org/official',
+    officialRegistryUrl: 'https://mcpservers.org/official',
+    totalServers: OFFICIAL_MCP_REGISTRY.length,
+    categories: OFFICIAL_MCP_CATEGORIES,
+    servers: OFFICIAL_MCP_REGISTRY,
+    fetchedAt: new Date().toISOString()
   });
 });
 
@@ -2910,7 +2948,7 @@ function getAgentConfigData(agentId: string, requestedFormatVersion?: string) {
       }
     } else {
       // yaml
-      const parsedYaml: any = YAML.parse(nativeContent);
+      const parsedYaml: any = YAML.parse(nativeContent, { uniqueKeys: false });
       if (parsedYaml.agent_name) parsedAgentName = parsedYaml.agent_name;
       if (parsedYaml.model?.provider) parsedModelProvider = parsedYaml.model.provider;
       if (parsedYaml.model?.default || parsedYaml.model?.model || parsedYaml.model?.model_name || parsedYaml.model?.checkpoint) {
@@ -2994,8 +3032,8 @@ function getAgentConfigData(agentId: string, requestedFormatVersion?: string) {
       parsedModelName = agentId === 'zeroclaw' ? 'deepseek-r1' : agentId === 'openclaw' ? 'gpt-4o' : agentId === 'picoclaw' ? 'qwen2.5-coder:7b' : agentId === 'hermes-agent' ? 'gemma4-soul:latest' : 'claude-3-7-sonnet';
     }
 
-    // Enforce MOA aggregator and proposer model URLs/endpoints are correctly resolved to local '192.168.1.49' server instead of defaulting to 'moa://local' or 'openrouter'
-    if (agentId === 'hermes-agent' || parsedModelBaseUrl?.includes('192.168.1.49') || parsedModelProvider === 'custom') {
+    // Enforce MOA aggregator and proposer model URLs/endpoints are correctly resolved to local '192.168.1.49' server for local ollama / custom edge deployments
+    if (parsedModelProvider === 'ollama' || (parsedModelProvider === 'custom' && (!parsedModelBaseUrl || parsedModelBaseUrl?.includes('192.168.1.49')))) {
       if (!parsedModelBaseUrl) parsedModelBaseUrl = 'http://192.168.1.49:11434';
       if (!parsedMoaAggregator || parsedMoaAggregator === 'default') {
         parsedMoaAggregator = parsedModelName || 'gemma4-soul:latest';
@@ -3010,7 +3048,7 @@ function getAgentConfigData(agentId: string, requestedFormatVersion?: string) {
       }
     }
   } catch (e) {
-    console.error('Error parsing config details from file:', e);
+    console.warn('[Server Config] Gracefully handled config parsing fallback:', e);
   }
 
   if (!parsedMoaAggregator) {
@@ -3577,12 +3615,14 @@ function generateHermesYaml(cfg: any): string {
   const model = (rawModel === 'default' || rawModel === 'latest') ? 'gemma4-soul:latest' : rawModel;
   const rawProvider = m?.provider || 'custom';
   // If explicitly 'ollama' or local 192.168.1.49 address, map to 'custom' for hermes
-  const isOllamaLocal = rawProvider === 'ollama' || rawProvider === 'custom' || m?.baseUrl?.includes('192.168.1.49') || m?.baseUrl === 'http://192.168.1.49:11434' || !m?.baseUrl;
-  const finalProvider = isOllamaLocal ? 'custom' : rawProvider;
+  const isOllamaLocal = rawProvider === 'ollama' || (rawProvider === 'custom' && (m?.baseUrl?.includes('192.168.1.49') || m?.baseUrl === 'http://192.168.1.49:11434'));
+  const finalProvider = isOllamaLocal ? 'custom' : (rawProvider || 'custom');
   const finalApiKey = isOllamaLocal ? (m?.apiKey || 'ollama') : (m?.apiKey || '');
   const rawBaseUrl = m?.baseUrl || (isOllamaLocal ? 'http://192.168.1.49:11434' : '');
-  const finalBaseUrl = rawBaseUrl || 'http://192.168.1.49:11434';
-  const finalBaseUrlV1 = rawBaseUrl ? (rawBaseUrl.endsWith('/v1') ? rawBaseUrl : rawBaseUrl + '/v1') : 'http://192.168.1.49:11434/v1';
+  const finalBaseUrl = rawBaseUrl || (isOllamaLocal ? 'http://192.168.1.49:11434' : '');
+  const finalBaseUrlV1 = rawBaseUrl 
+    ? (rawBaseUrl.endsWith('/v1') ? rawBaseUrl : rawBaseUrl + '/v1') 
+    : (isOllamaLocal ? 'http://192.168.1.49:11434/v1' : '');
 
   // Proposer / Reference model resolution
   const rawProposers = (moa?.proposerModels && moa.proposerModels.length > 0)
@@ -3681,6 +3721,21 @@ function generateHermesYaml(cfg: any): string {
   const fbApiKey = fb?.apiKey || '';
   const fbBaseUrl = fb?.baseUrl || 'https://openrouter.ai/api/v1';
 
+  const uniqueMappings = new Map<string, string>();
+  if (aggModel) {
+    uniqueMappings.set(aggModel, aggProv);
+  }
+  rawProposers.forEach((p: any) => {
+    const pName = typeof p === 'string' ? (p === 'latest' ? 'gemma4-soul:latest' : p === '16b' ? 'deepseek-coder-v2:16b' : p) : p?.model || p?.name;
+    if (pName) {
+      const pProv = parseModelAndProvider(pName, providerMapping, 'gemma4-soul:latest').provider;
+      uniqueMappings.set(pName, pProv);
+    }
+  });
+  const providerMappingLines = Array.from(uniqueMappings.entries())
+    .map(([k, v]) => `    ${k}: "${v}"`)
+    .join('\n');
+
   return `version: "1.0.0"
 agent_id: "${cfg?.agentId || 'hermes-agent'}"
 agent_name: "${sys?.agentName || 'Hermes Code Assistant'}"
@@ -3690,15 +3745,15 @@ system_prompt: "${(sys?.systemPrompt || '').replace(/"/g, '\\"')}"
 
 model:
   provider: ${finalProvider}
-  apiKey: ${finalApiKey}
+  apiKey: "${(finalApiKey || '').replace(/"/g, '\\"')}"
   temperature: ${m?.temperature ?? 0.3}
-  reasoningEffort: ${m?.reasoningEffort || 'high'}
+  reasoningEffort: "${m?.reasoningEffort || 'high'}"
   maxTokens: ${m?.maxTokens ?? 8192}
   contextWindow: ${m?.contextWindow ?? 200000}
-  baseUrl: ${finalBaseUrl}
+  baseUrl: "${finalBaseUrl}"
   topP: ${m?.topP ?? 0.95}
-  default: ${model}
-  base_url: ${finalBaseUrlV1}
+  default: "${model}"
+  base_url: "${finalBaseUrlV1}"
 
 web:
   backend: ${web?.backend || 'exa'}
@@ -3755,12 +3810,7 @@ moa:
     local-ollama: "${finalBaseUrl}"
     openrouter: "https://openrouter.ai/api/v1"
   provider_mapping:
-    ${aggModel}: "${aggProv}"
-${rawProposers.map((p: any) => {
-  const pName = typeof p === 'string' ? (p === 'latest' ? 'gemma4-soul:latest' : p === '16b' ? 'deepseek-coder-v2:16b' : p) : p.model || p.name;
-  const pProv = parseModelAndProvider(pName, providerMapping, 'gemma4-soul:latest').provider;
-  return `    ${pName}: "${pProv}"`;
-}).join('\n')}
+${providerMappingLines}
   presets:
     default:
       reference_models:

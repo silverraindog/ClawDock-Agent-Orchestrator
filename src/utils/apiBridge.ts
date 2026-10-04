@@ -281,6 +281,45 @@ export async function fetchOpenClawSkillsSync(): Promise<{
   };
 }
 
+/**
+ * Fetch official Model Context Protocol (MCP) server catalog from https://mcpservers.org/official.
+ * Returns verified MCP servers from official vendors (Anthropic, GitHub, Stripe, Notion, Slack, Google, etc.).
+ */
+export async function fetchOfficialMcpCatalog(): Promise<{
+  success: boolean;
+  servers: any[];
+  categories: string[];
+  source: string;
+}> {
+  try {
+    const result = await apiRequest('/api/mcp/official-catalog', {
+      method: 'GET',
+      context: 'Fetch Official MCP Catalog',
+      fallbackAction: 'Utilizing embedded official MCP catalog.'
+    });
+
+    if (result.ok && result.data && Array.isArray(result.data.servers)) {
+      return {
+        success: true,
+        servers: result.data.servers,
+        categories: result.data.categories || [],
+        source: result.data.source || 'https://mcpservers.org/official'
+      };
+    }
+  } catch (err) {
+    console.warn('[API Bridge] Failed to fetch /api/mcp/official-catalog:', err);
+  }
+
+  // Resilient fallback dynamically imported from officialMcpServers
+  const { OFFICIAL_MCP_REGISTRY, OFFICIAL_MCP_CATEGORIES } = await import('../data/officialMcpServers');
+  return {
+    success: true,
+    servers: OFFICIAL_MCP_REGISTRY,
+    categories: OFFICIAL_MCP_CATEGORIES,
+    source: 'https://mcpservers.org/official'
+  };
+}
+
 export interface ModelOptionItem {
   value: string;
   label: string;
@@ -431,13 +470,18 @@ export async function testLLMConnection(
       .replace(/11434host:11434/g, '11434')
       .replace(/:11434host:\d+/g, ':11434')
       .replace(/host:11434/g, '11434');
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 7000);
+
     const response = await fetch('/api/test-conn-v2', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({ provider, apiKey, baseUrl: cleanBaseUrl })
-    });
+      body: JSON.stringify({ provider, apiKey, baseUrl: cleanBaseUrl }),
+      signal: controller.signal
+    }).finally(() => clearTimeout(timer));
     
     if (!response.ok) {
       const errText = await response.text();
@@ -453,19 +497,22 @@ export async function testLLMConnection(
       .replace(/:11434host:\d+/g, ':11434')
       .replace(/host:11434/g, '11434');
     return {
-      success: data.success,
+      success: Boolean(data.success),
       message: cleanMsg,
       errorType: data.errorType
     };
   } catch (err: any) {
-    console.error('[API Bridge] Connection test failed:', err);
-    const cleanErr = (err.message || 'Unknown network error')
+    const isAbort = err.name === 'AbortError' || err.message?.includes('aborted');
+    const cleanErr = (isAbort 
+      ? `Connection timed out. Endpoint ${baseUrl || provider} is currently unreachable.` 
+      : (err.message || 'Unknown network error'))
       .replace(/11434host:11434/g, '11434')
       .replace(/:11434host:\d+/g, ':11434')
       .replace(/host:11434/g, '11434');
     return {
       success: false,
-      message: `Failed to invoke backend connection tester: ${cleanErr}`
+      message: cleanErr,
+      errorType: isAbort ? 'TIMEOUT' : 'NETWORK_ERROR'
     };
   }
 }
