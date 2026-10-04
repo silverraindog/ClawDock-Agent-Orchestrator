@@ -61,6 +61,7 @@ import {
 import { MODEL_OPTIONS, DEFAULT_CONFIGS, DEFAULT_NATIVE_FILES, INITIAL_AGENTS } from '../data/defaults';
 import { AgentFallbackSettings } from './AgentFallbackSettings';
 export { AgentFallbackSettings } from './AgentFallbackSettings';
+import { validateModelAgainstCatalog } from '../utils/modelValidation';
 import { 
   fetchAgentLiveConfig, 
   saveAgentConfigToBackend, 
@@ -765,6 +766,31 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
   // Model verification state against /api/proxy/models registry
   const [modelVerificationStatus, setModelVerificationStatus] = useState<'checking' | 'verified' | 'warning'>('checking');
   const [proxyRegistryModels, setProxyRegistryModels] = useState<string[]>([]);
+  const [isModelVerified, setIsModelVerified] = useState<boolean>(true);
+
+  useEffect(() => {
+    let isMounted = true;
+    const runValidation = async () => {
+      try {
+        const currentConfig = config;
+        const result = await validateModelAgainstCatalog(
+          currentConfig.model.model,
+          currentConfig.model.baseUrl
+        );
+        if (isMounted) {
+          setIsModelVerified(result.isValid);
+        }
+      } catch {
+        if (isMounted) {
+          setIsModelVerified(false);
+        }
+      }
+    };
+    runValidation();
+    return () => {
+      isMounted = false;
+    };
+  }, [config.model.model, config.model.baseUrl]);
 
   useEffect(() => {
     let isMounted = true;
@@ -2334,15 +2360,10 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
                 <div className="flex items-center justify-between mb-1.5">
                   <span className="text-[11px] font-semibold text-slate-400">Model Verification Status</span>
                   <div>
-                    {modelVerificationStatus === 'checking' ? (
-                      <span className="px-2.5 py-0.5 rounded-md bg-slate-800 text-slate-400 text-[10px] font-mono flex items-center gap-1 animate-pulse">
-                        <RefreshCw className="w-2.5 h-2.5 animate-spin" />
-                        Verifying against registry...
-                      </span>
-                    ) : modelVerificationStatus === 'verified' ? (
+                    {isModelVerified ? (
                       <span className="px-2.5 py-0.5 rounded-md bg-emerald-950 text-emerald-400 border border-emerald-500/30 text-[10px] font-mono font-bold flex items-center gap-1">
                         <CheckCircle2 className="w-3 h-3 text-emerald-400" />
-                        Verified in /api/proxy/models
+                        Verified in Catalog
                       </span>
                     ) : (
                       <span className="px-2.5 py-0.5 rounded-md bg-amber-950 text-amber-400 border border-amber-500/30 text-[10px] font-mono font-bold flex items-center gap-1" title="Model not found in proxy registry. May require custom manual override.">
@@ -2360,9 +2381,50 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
                     onClick={() => setIsModelDropdownOpen(!isModelDropdownOpen)}
                     className="w-full cursor-pointer flex items-center justify-between px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-750 border border-slate-700 text-slate-100 text-xs transition-colors pr-10 font-mono select-none"
                   >
-                    <span className="truncate flex items-center gap-2">
+                    <span className="truncate flex items-center gap-2 relative group">
                       <Cpu className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
-                      {config.model.model || 'Select Model...'}
+                      <span className="truncate hover:text-indigo-300 transition-colors mr-1">
+                        {config.model.model || 'Select Model...'}
+                      </span>
+                      {config.model.model && (
+                        <>
+                          {isModelVerified ? (
+                            <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-[9px] font-mono font-bold uppercase shrink-0">
+                              Verified
+                            </span>
+                          ) : (
+                            <span className="px-1.5 py-0.5 rounded bg-amber-500/10 border border-amber-500/30 text-amber-400 text-[9px] font-mono font-bold uppercase shrink-0">
+                              Warning
+                            </span>
+                          )}
+                        </>
+                      )}
+                      {config.model.model && (
+                        <div className="absolute left-0 bottom-full mb-2 hidden group-hover:flex flex-col w-64 p-3 bg-slate-950/95 border border-indigo-500/30 text-xs text-slate-200 rounded-xl shadow-2xl z-50 pointer-events-none animate-in fade-in slide-in-from-bottom-1 duration-150">
+                          <div className="font-bold text-indigo-300 border-b border-slate-800 pb-1.5 mb-1.5 flex items-center justify-between">
+                            <span>Selected Model Details</span>
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono ${isModelVerified ? 'bg-emerald-950 text-emerald-300' : 'bg-amber-950 text-amber-300'}`}>
+                              {isModelVerified ? 'Verified' : 'Unverified'}
+                            </span>
+                          </div>
+                          <div className="space-y-1 font-sans">
+                            <div className="flex justify-between">
+                              <span className="text-slate-400 font-sans">Provider:</span>
+                              <span className="font-mono text-indigo-200 uppercase">{config.model.provider}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-slate-400 font-sans">Context Window:</span>
+                              <span className="font-mono text-emerald-300">{(config.model.contextWindow || 65536).toLocaleString()} tokens</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-slate-400 font-sans">Registry Match:</span>
+                              <span className={`font-mono ${isModelVerified ? 'text-emerald-400' : 'text-amber-400'}`}>
+                                {isModelVerified ? 'Compatible' : 'Custom Override'}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
                     </span>
                     <ChevronDown className={`w-4 h-4 text-slate-400 absolute right-3 top-3 transition-transform ${isModelDropdownOpen ? 'rotate-180' : ''}`} />
                   </div>

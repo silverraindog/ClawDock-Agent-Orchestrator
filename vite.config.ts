@@ -2112,7 +2112,7 @@ fallback:
         },
         {
           pattern: /^\/api\/agents\/([^/]+)\/version(\/)?$/i,
-          allowedMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+          allowedMethods: ['GET', 'OPTIONS'],
           handler: async ({ pathname, res, timestamp }) => {
             res.setHeader('Content-Type', 'application/json');
             res.statusCode = 200;
