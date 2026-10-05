@@ -307,6 +307,27 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
   const [connectivityErrorReason, setConnectivityErrorReason] = useState<string>('');
   const [isRevalidatingPrimary, setIsRevalidatingPrimary] = useState<boolean>(false);
   const [primaryRevalidationMessage, setPrimaryRevalidationMessage] = useState<{ text: string; type: 'success' | 'error' | 'info' } | null>(null);
+  const [isTestingConnection, setIsTestingConnection] = useState<boolean>(false);
+
+  const handleTestConnection = async () => {
+    setIsTestingConnection(true);
+    try {
+      const result = await testLLMConnection(
+        config.model.provider,
+        config.model.apiKey || '',
+        config.model.baseUrl || ''
+      );
+      if (result.success) {
+        setIsModelVerified(true);
+      } else {
+        setIsModelVerified(false);
+      }
+    } catch {
+      setIsModelVerified(false);
+    } finally {
+      setIsTestingConnection(false);
+    }
+  };
 
   const currentAgent = allAgents?.find(a => a.id === agentId);
 
