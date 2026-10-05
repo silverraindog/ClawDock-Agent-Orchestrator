@@ -331,6 +331,20 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
 
   const currentAgent = allAgents?.find(a => a.id === agentId);
 
+  const connectionStatus = isTestingConnection ? {
+    status: 'testing' as const,
+    message: 'Testing connection to model endpoint...'
+  } : isModelVerified ? {
+    status: 'connected' as const,
+    message: `Connected successfully to ${config.model.provider.toUpperCase()} (${config.model.model || 'model'})`
+  } : modelConnectivityStatus === 'available' ? {
+    status: 'connected' as const,
+    message: `Endpoint active and responding (${modelConnectivityLatency ?? 12}ms)`
+  } : modelConnectivityStatus === 'unreachable' ? {
+    status: 'error' as const,
+    message: connectivityErrorReason || 'Endpoint unreachable or connection refused.'
+  } : null;
+
   // Dedicated check for whether the agent is running on its fallback configuration
   // Fallback is only actively running when fallback is enabled AND the primary provider is unreachable/degraded
   const isRunningOnFallback = Boolean(
