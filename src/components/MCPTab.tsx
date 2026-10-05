@@ -830,7 +830,7 @@ export const MCPTab: React.FC<MCPTabProps> = ({
               )}
             </div>
 
-            {/* Official Servers Grid */}
+            {/* Official Servers Grouped by OFFICIAL_MCP_CATEGORIES */}
             {filteredCatalog.length === 0 ? (
               <div className="p-10 text-center border border-dashed border-slate-800 rounded-2xl bg-slate-950/40 space-y-3">
                 <ShieldCheck className="w-8 h-8 text-slate-600 mx-auto" />
@@ -858,195 +858,269 @@ export const MCPTab: React.FC<MCPTabProps> = ({
                 )}
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {filteredCatalog.map((server) => {
-                  const isInstalled = isServerInstalled(server);
-                  const installedConfig = getInstalledServerConfig(server);
+              <div className="space-y-10">
+                {/* Category Quick Navigation Bar for Large Catalogs */}
+                <div className="p-3 bg-slate-950/80 border border-slate-800/80 rounded-xl flex items-center gap-2 overflow-x-auto scrollbar-none shadow-sm">
+                  <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider shrink-0 px-1">
+                    Jump to Category:
+                  </span>
+                  {OFFICIAL_MCP_CATEGORIES.filter(cat => cat !== 'All').map((cat) => {
+                    const count = catalogServers.filter(s => (s.category || 'Other') === cat).length;
+                    if (count === 0) return null;
+                    return (
+                      <a
+                        key={cat}
+                        href={`#mcp-cat-section-${cat.toLowerCase().replace(/[^a-z0-9]/g, '-')}`}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          setSelectedCategory(cat);
+                          const el = document.getElementById(`mcp-cat-section-${cat.toLowerCase().replace(/[^a-z0-9]/g, '-')}`);
+                          if (el) el.scrollIntoView({ behavior: 'smooth' });
+                        }}
+                        className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium whitespace-nowrap transition-all border ${
+                          selectedCategory === cat
+                            ? 'bg-indigo-600 text-white border-indigo-500 shadow-sm'
+                            : 'bg-slate-900 text-slate-300 hover:text-white hover:bg-slate-800 border-slate-800'
+                        }`}
+                      >
+                        {renderCategoryIcon(cat)}
+                        <span>{cat}</span>
+                        <span className="text-[10px] font-mono px-1 rounded bg-slate-950/60 text-slate-400">
+                          {count}
+                        </span>
+                      </a>
+                    );
+                  })}
+                  {selectedCategory !== 'All' && (
+                    <button
+                      onClick={() => setSelectedCategory('All')}
+                      className="ml-auto text-xs text-indigo-400 hover:text-indigo-300 underline shrink-0 px-2"
+                    >
+                      Show All Categories
+                    </button>
+                  )}
+                </div>
+
+                {/* Grouped Category Sections using OFFICIAL_MCP_CATEGORIES mapping */}
+                {OFFICIAL_MCP_CATEGORIES.filter(cat => cat !== 'All').map((category) => {
+                  const servers = filteredCatalog.filter(server => {
+                    const sCat = server.category || 'Other';
+                    return sCat === category;
+                  });
+
+                  if (servers.length === 0) return null;
 
                   return (
-                    <div
-                      key={server.id}
-                      className={`bg-slate-950 border rounded-2xl p-5 flex flex-col justify-between transition-all group ${
-                        isInstalled
-                          ? 'border-emerald-500/40 bg-gradient-to-b from-slate-950 to-emerald-950/10'
-                          : 'border-slate-800 hover:border-slate-700 bg-slate-950/80'
-                      }`}
+                    <div 
+                      key={category} 
+                      id={`mcp-cat-section-${category.toLowerCase().replace(/[^a-z0-9]/g, '-')}`}
+                      className="space-y-4 pt-2 scroll-mt-6"
                     >
-                      <div className="space-y-3.5">
-                        {/* Server Card Header */}
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="flex items-center gap-3">
-                            <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 border ${
-                              isInstalled 
-                                ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' 
-                                : 'bg-indigo-500/10 border-indigo-500/20 text-indigo-400'
-                            }`}>
-                              {server.category.includes('Database') ? (
-                                <Database className="w-5 h-5" />
-                              ) : server.category.includes('Web') ? (
-                                <Globe className="w-5 h-5" />
-                              ) : server.category.includes('Cloud') ? (
-                                <Cpu className="w-5 h-5" />
-                              ) : (
-                                <Terminal className="w-5 h-5" />
-                              )}
-                            </div>
-                            <div>
-                              <div className="flex items-center gap-1.5 flex-wrap">
-                                <h3 className="text-sm font-bold text-white group-hover:text-indigo-300 transition-colors">
-                                  {server.name}
-                                </h3>
-                                <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded text-[10px] font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-                                  <ShieldCheck className="w-3 h-3 text-indigo-400" />
-                                  Official
-                                </span>
-                              </div>
-                              <div className="flex items-center gap-2 mt-0.5 text-[11px] text-slate-400">
-                                <span className="font-medium text-slate-300">{server.vendor}</span>
-                                <span>•</span>
-                                <span className="text-slate-500">{server.category}</span>
-                              </div>
-                            </div>
+                      <div className="flex items-center justify-between border-b border-slate-800 pb-2.5">
+                        <h3 className="text-sm font-bold text-white flex items-center gap-2.5">
+                          <div className="w-7 h-7 rounded-lg bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400">
+                            {renderCategoryIcon(category)}
                           </div>
-
-                          {/* Installed State Indicator */}
-                          {isInstalled && (
-                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 shrink-0">
-                              <CheckCircle2 className="w-3 h-3" />
-                              Installed in mcpServers
-                            </span>
-                          )}
-                        </div>
-
-                        <p className="text-xs text-slate-400 leading-relaxed line-clamp-2">
-                          {server.description}
-                        </p>
-
-                        {/* Package Command Snippet */}
-                        <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800/80 font-mono text-[11px] text-indigo-300 flex items-center justify-between gap-2">
-                          <div className="truncate">
-                            <span className="text-slate-500">$ </span>
-                            <span className="text-amber-300">{server.command}</span>
-                            <span className="text-slate-300"> {server.args?.join(' ')}</span>
-                          </div>
-                          <button
-                            onClick={() => copyToClipboard(`${server.command} ${server.args?.join(' ')}`, server.id)}
-                            className="text-slate-500 hover:text-slate-300 p-1 shrink-0"
-                            title="Copy install command"
-                          >
-                            {copiedId === server.id ? (
-                              <Check className="w-3.5 h-3.5 text-emerald-400" />
-                            ) : (
-                              <Copy className="w-3.5 h-3.5" />
-                            )}
-                          </button>
-                        </div>
-
-                        {/* Tools Preview */}
-                        <div>
-                          <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5 flex items-center justify-between">
-                            <span className="flex items-center gap-1">
-                              <Wrench className="w-3 h-3 text-slate-500" />
-                              Provided Tools ({(server.toolsProvided || []).length})
-                            </span>
-                            {server.docsUrl && (
-                              <a
-                                href={server.docsUrl}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="text-indigo-400 hover:text-indigo-300 text-[10px] inline-flex items-center gap-1 normal-case font-normal"
-                              >
-                                <BookOpen className="w-2.5 h-2.5" />
-                                Docs
-                              </a>
-                            )}
-                          </div>
-                          <div className="flex flex-wrap gap-1.5">
-                            {(server.toolsProvided || []).slice(0, 5).map((tool) => (
-                              <span
-                                key={tool}
-                                className="px-2 py-0.5 rounded-md text-[10px] font-mono bg-slate-900 text-slate-300 border border-slate-800"
-                              >
-                                {tool}
-                              </span>
-                            ))}
-                            {(server.toolsProvided || []).length > 5 && (
-                              <span className="px-2 py-0.5 rounded-md text-[10px] font-mono bg-slate-900 text-slate-500 border border-slate-800">
-                                +{(server.toolsProvided.length - 5)} more
-                              </span>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* Required Env Keys Notice */}
-                        {server.envRequirements && server.envRequirements.length > 0 && (
-                          <div className="text-[11px] text-slate-400 flex items-center gap-1.5 bg-slate-900/50 p-2 rounded-lg border border-slate-800/60">
-                            <AlertCircle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                            <span className="truncate">
-                              Requires: <code className="text-amber-300 font-mono text-[10px]">{server.envRequirements.map(r => r.name).join(', ')}</code>
-                            </span>
-                          </div>
-                        )}
+                          <span>{category}</span>
+                          <span className="text-xs font-mono font-normal px-2 py-0.5 rounded-full bg-slate-900 border border-slate-800 text-slate-400">
+                            {servers.length} servers
+                          </span>
+                        </h3>
                       </div>
 
-                      {/* Bottom Action Footer */}
-                      <div className="flex items-center justify-between pt-4 mt-4 border-t border-slate-800/80">
-                        <span className="text-[11px] text-slate-400 flex items-center gap-1.5 font-mono">
-                          <span className="w-1.5 h-1.5 rounded-full bg-indigo-400" />
-                          {server.transport.toUpperCase()}
-                        </span>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {servers.map((server) => {
+                          const isInstalled = isServerInstalled(server);
+                          const installedConfig = getInstalledServerConfig(server);
 
-                        <div className="flex items-center gap-2">
-                          {isInstalled ? (
-                            <>
-                              <button
-                                onClick={() => installedConfig && onTestServer(installedConfig.id)}
-                                className="px-2.5 py-1.5 rounded-lg text-xs font-medium text-slate-300 bg-slate-900 hover:bg-slate-800 border border-slate-700 transition-colors flex items-center gap-1.5"
-                                title="Test JSON-RPC connection"
-                              >
-                                <RefreshCw className="w-3 h-3 text-slate-400" />
-                                <span>Ping</span>
-                              </button>
+                          return (
+                            <div
+                              key={server.id}
+                              className={`bg-slate-950 border rounded-2xl p-5 flex flex-col justify-between transition-all group ${
+                                isInstalled
+                                  ? 'border-emerald-500/40 bg-gradient-to-b from-slate-950 to-emerald-950/10'
+                                  : 'border-slate-800 hover:border-slate-700 bg-slate-950/80'
+                              }`}
+                            >
+                              <div className="space-y-3.5">
+                                {/* Server Card Header */}
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="flex items-center gap-3">
+                                    <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 border ${
+                                      isInstalled 
+                                        ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' 
+                                        : 'bg-indigo-500/10 border-indigo-500/20 text-indigo-400'
+                                    }`}>
+                                      {server.category?.includes('Database') ? (
+                                        <Database className="w-5 h-5" />
+                                      ) : server.category?.includes('Web') ? (
+                                        <Globe className="w-5 h-5" />
+                                      ) : server.category?.includes('Cloud') ? (
+                                        <Cpu className="w-5 h-5" />
+                                      ) : (
+                                        <Terminal className="w-5 h-5" />
+                                      )}
+                                    </div>
+                                    <div>
+                                      <div className="flex items-center gap-1.5 flex-wrap">
+                                        <h3 className="text-sm font-bold text-white group-hover:text-indigo-300 transition-colors">
+                                          {server.name}
+                                        </h3>
+                                        <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded text-[10px] font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                                          <ShieldCheck className="w-3 h-3 text-indigo-400" />
+                                          Official
+                                        </span>
+                                      </div>
+                                      <div className="flex items-center gap-2 mt-0.5 text-[11px] text-slate-400">
+                                        <span className="font-medium text-slate-300">{server.vendor}</span>
+                                        <span>•</span>
+                                        <span className="text-slate-500">{server.category}</span>
+                                      </div>
+                                    </div>
+                                  </div>
 
-                              <button
-                                onClick={() => handleOpenConfigure(server)}
-                                className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-slate-800 hover:bg-slate-700 border border-slate-700 transition-colors flex items-center gap-1.5"
-                              >
-                                <Settings2 className="w-3.5 h-3.5" />
-                                <span>Reconfigure</span>
-                              </button>
+                                  {/* Installed State Indicator */}
+                                  {isInstalled && (
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 shrink-0">
+                                      <CheckCircle2 className="w-3 h-3" />
+                                      Installed in mcpServers
+                                    </span>
+                                  )}
+                                </div>
 
-                              {onDeleteServer && installedConfig && (
-                                <button
-                                  onClick={() => onDeleteServer(installedConfig.id)}
-                                  className="p-1.5 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 border border-slate-800 hover:border-rose-500/30 transition-colors"
-                                  title="Uninstall from mcpServers state"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              )}
-                            </>
-                          ) : (
-                            <>
-                              <button
-                                onClick={() => handleOpenConfigure(server)}
-                                className="px-3 py-1.5 rounded-lg text-xs font-medium text-slate-300 bg-slate-900 hover:bg-slate-800 border border-slate-700 transition-colors"
-                              >
-                                Configure
-                              </button>
+                                <p className="text-xs text-slate-400 leading-relaxed line-clamp-2">
+                                  {server.description}
+                                </p>
 
-                              <button
-                                id={`install-mcp-${server.id}`}
-                                onClick={() => handleInstallToMcpServers(server)}
-                                className="px-3.5 py-1.5 rounded-lg text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 shadow-sm shadow-indigo-500/20 transition-all flex items-center gap-1.5"
-                                title="Install server directly into mcpServers state"
-                              >
-                                <Download className="w-3.5 h-3.5" />
-                                <span>Install to mcpServers</span>
-                              </button>
-                            </>
-                          )}
-                        </div>
+                                {/* Package Command Snippet */}
+                                <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800/80 font-mono text-[11px] text-indigo-300 flex items-center justify-between gap-2">
+                                  <div className="truncate">
+                                    <span className="text-slate-500">$ </span>
+                                    <span className="text-amber-300">{server.command}</span>
+                                    <span className="text-slate-300"> {server.args?.join(' ')}</span>
+                                  </div>
+                                  <button
+                                    onClick={() => copyToClipboard(`${server.command} ${server.args?.join(' ')}`, server.id)}
+                                    className="text-slate-500 hover:text-slate-300 p-1 shrink-0"
+                                    title="Copy install command"
+                                  >
+                                    {copiedId === server.id ? (
+                                      <Check className="w-3.5 h-3.5 text-emerald-400" />
+                                    ) : (
+                                      <Copy className="w-3.5 h-3.5" />
+                                    )}
+                                  </button>
+                                </div>
+
+                                {/* Tools Preview */}
+                                <div>
+                                  <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5 flex items-center justify-between">
+                                    <span className="flex items-center gap-1">
+                                      <Wrench className="w-3 h-3 text-slate-500" />
+                                      Provided Tools ({(server.toolsProvided || []).length})
+                                    </span>
+                                    {server.docsUrl && (
+                                      <a
+                                        href={server.docsUrl}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="text-indigo-400 hover:text-indigo-300 text-[10px] inline-flex items-center gap-1 normal-case font-normal"
+                                      >
+                                        <BookOpen className="w-2.5 h-2.5" />
+                                        Docs
+                                      </a>
+                                    )}
+                                  </div>
+                                  <div className="flex flex-wrap gap-1.5">
+                                    {(server.toolsProvided || []).slice(0, 5).map((tool) => (
+                                      <span
+                                        key={tool}
+                                        className="px-2 py-0.5 rounded-md text-[10px] font-mono bg-slate-900 text-slate-300 border border-slate-800"
+                                      >
+                                        {tool}
+                                      </span>
+                                    ))}
+                                    {(server.toolsProvided || []).length > 5 && (
+                                      <span className="px-2 py-0.5 rounded-md text-[10px] font-mono bg-slate-900 text-slate-500 border border-slate-800">
+                                        +{(server.toolsProvided.length - 5)} more
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+
+                                {/* Required Env Keys Notice */}
+                                {server.envRequirements && server.envRequirements.length > 0 && (
+                                  <div className="text-[11px] text-slate-400 flex items-center gap-1.5 bg-slate-900/50 p-2 rounded-lg border border-slate-800/60">
+                                    <AlertCircle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                                    <span className="truncate">
+                                      Requires: <code className="text-amber-300 font-mono text-[10px]">{server.envRequirements.map(r => r.name).join(', ')}</code>
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* Bottom Action Footer */}
+                              <div className="flex items-center justify-between pt-4 mt-4 border-t border-slate-800/80">
+                                <span className="text-[11px] text-slate-400 flex items-center gap-1.5 font-mono">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-indigo-400" />
+                                  {server.transport.toUpperCase()}
+                                </span>
+
+                                <div className="flex items-center gap-2">
+                                  {isInstalled ? (
+                                    <>
+                                      <button
+                                        onClick={() => installedConfig && onTestServer(installedConfig.id)}
+                                        className="px-2.5 py-1.5 rounded-lg text-xs font-medium text-slate-300 bg-slate-900 hover:bg-slate-800 border border-slate-700 transition-colors flex items-center gap-1.5"
+                                        title="Test JSON-RPC connection"
+                                      >
+                                        <RefreshCw className="w-3 h-3 text-slate-400" />
+                                        <span>Ping</span>
+                                      </button>
+
+                                      <button
+                                        onClick={() => handleOpenConfigure(server)}
+                                        className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-slate-800 hover:bg-slate-700 border border-slate-700 transition-colors flex items-center gap-1.5"
+                                      >
+                                        <Settings2 className="w-3.5 h-3.5" />
+                                        <span>Reconfigure</span>
+                                      </button>
+
+                                      {onDeleteServer && installedConfig && (
+                                        <button
+                                          onClick={() => onDeleteServer(installedConfig.id)}
+                                          className="p-1.5 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 border border-slate-800 hover:border-rose-500/30 transition-colors"
+                                          title="Uninstall from mcpServers state"
+                                        >
+                                          <Trash2 className="w-3.5 h-3.5" />
+                                        </button>
+                                      )}
+                                    </>
+                                  ) : (
+                                    <>
+                                      <button
+                                        onClick={() => handleOpenConfigure(server)}
+                                        className="px-3 py-1.5 rounded-lg text-xs font-medium text-slate-300 bg-slate-900 hover:bg-slate-800 border border-slate-700 transition-colors"
+                                      >
+                                        Configure
+                                      </button>
+
+                                      <button
+                                        id={`install-mcp-${server.id}`}
+                                        onClick={() => handleInstallToMcpServers(server)}
+                                        className="px-3.5 py-1.5 rounded-lg text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 shadow-sm shadow-indigo-500/20 transition-all flex items-center gap-1.5"
+                                        title="Install server directly into mcpServers state"
+                                      >
+                                        <Download className="w-3.5 h-3.5" />
+                                        <span>Install to mcpServers</span>
+                                      </button>
+                                    </>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
                   );
@@ -1055,8 +1129,6 @@ export const MCPTab: React.FC<MCPTabProps> = ({
             )}
           </div>
         )}
-
-        {/* ========================================================================= */}
         {/* SOURCE 1: PRIMARY SOURCE (mcpServers State)                                */}
         {/* ========================================================================= */}
         {sourceMode === 'installed' && (
