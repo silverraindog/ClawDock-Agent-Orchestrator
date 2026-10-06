@@ -316,6 +316,43 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
   const [isTestingConnection, setIsTestingConnection] = useState<boolean>(false);
   const [isModelVerified, setIsModelVerified] = useState<boolean>(true);
   const [pingLatencyMs, setPingLatencyMs] = useState<number | null>(null);
+  const [isFailoverBannerDismissed, setIsFailoverBannerDismissed] = useState<boolean>(false);
+
+  const handlePromoteFallbackToPrimary = () => {
+    const fallbackProv = config.fallback?.fallbackProvider || config.fallback?.provider || 'openrouter';
+    const fallbackMdl = config.fallback?.fallbackModel || config.fallback?.model || 'anthropic/claude-3.7-sonnet';
+    const fallbackKey = config.fallback?.apiKey || '';
+    const fallbackBase = config.fallback?.baseUrl || '';
+
+    onChangeConfig({
+      ...config,
+      model: {
+        ...config.model,
+        provider: fallbackProv,
+        model: fallbackMdl,
+        apiKey: fallbackKey || config.model.apiKey,
+        baseUrl: fallbackBase
+      },
+      fallback: {
+        ...config.fallback,
+        enabled: false
+      }
+    });
+    setModelConnectivityStatus('available');
+    setConnectivityErrorReason('');
+    setIsFailoverBannerDismissed(true);
+  };
+
+  const handleDisableFailover = () => {
+    onChangeConfig({
+      ...config,
+      fallback: {
+        ...config.fallback,
+        enabled: false
+      }
+    });
+    setIsFailoverBannerDismissed(true);
+  };
 
   const handleTestConnection = async () => {
     setIsTestingConnection(true);
@@ -367,7 +404,7 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
   // Dedicated check for whether the agent is running on its fallback configuration
   // Fallback is only actively running when fallback is enabled AND the primary provider is unreachable/degraded
   const isRunningOnFallback = Boolean(
-    config.fallback?.enabled && modelConnectivityStatus === 'unreachable'
+    config.fallback?.enabled && modelConnectivityStatus === 'unreachable' && !isFailoverBannerDismissed
   );
 
   const handleRevalidatePrimaryProvider = async () => {
@@ -1878,7 +1915,7 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
       {isRunningOnFallback && (
         <div 
           id="config-fallback-active-indicator-banner"
-          className="p-4 sm:p-5 rounded-2xl border-2 border-amber-500/50 bg-gradient-to-r from-amber-950/40 via-slate-900/90 to-amber-950/20 shadow-xl shadow-amber-950/30 space-y-3 animate-fadeIn"
+          className="p-4 sm:p-5 rounded-2xl border-2 border-amber-500/50 bg-gradient-to-r from-amber-950/40 via-slate-900/90 to-amber-950/20 shadow-xl shadow-amber-950/30 space-y-3 animate-fadeIn relative"
         >
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div className="flex items-start gap-3.5">
@@ -1897,7 +1934,7 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
                 </div>
 
                 <p className="text-xs text-slate-300 leading-relaxed">
-                  Primary provider <strong className="text-amber-300 font-mono">{config.model.provider.toUpperCase()}</strong> ({config.model.model}) is currently degraded, unauthenticated, or unreachable. Requests are actively being rerouted to fallback provider <strong className="text-emerald-300 font-mono">{(config.fallback?.fallbackProvider || config.fallback?.provider || 'ollama').toUpperCase()}</strong> ({config.fallback?.fallbackModel || config.fallback?.model || 'Local Model'}).
+                  Primary provider <strong className="text-amber-300 font-mono">{config.model.provider.toUpperCase()}</strong> ({config.model.model}) is currently degraded, unauthenticated, or unreachable. Requests are actively being rerouted to fallback provider <strong className="text-emerald-300 font-mono">{(config.fallback?.fallbackProvider || config.fallback?.provider || 'openrouter').toUpperCase()}</strong> ({config.fallback?.fallbackModel || config.fallback?.model || 'anthropic/claude-3.7-sonnet'}).
                 </p>
 
                 {connectivityErrorReason && (
@@ -1908,13 +1945,24 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
               </div>
             </div>
 
-            <div className="flex items-center gap-2.5 shrink-0 self-end md:self-center flex-wrap">
+            <div className="flex items-center gap-2 shrink-0 self-end md:self-center flex-wrap">
+              <button
+                type="button"
+                id="promote-fallback-primary-btn"
+                onClick={handlePromoteFallbackToPrimary}
+                className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs shadow-md shadow-emerald-600/20 flex items-center gap-1.5 transition-all cursor-pointer"
+                title="Make current fallback provider the new primary model"
+              >
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                <span>Use Fallback as Primary</span>
+              </button>
+
               <button
                 type="button"
                 id="revalidate-primary-provider-btn"
                 onClick={handleRevalidatePrimaryProvider}
                 disabled={isRevalidatingPrimary}
-                className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs shadow-lg shadow-amber-500/20 flex items-center gap-2 transition-all disabled:opacity-50 cursor-pointer"
+                className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs shadow-md shadow-amber-500/20 flex items-center gap-1.5 transition-all disabled:opacity-50 cursor-pointer"
                 title="Attempt live re-validation of primary LLM provider connection"
               >
                 {isRevalidatingPrimary ? (
@@ -1925,17 +1973,27 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
                 ) : (
                   <>
                     <Zap className="w-3.5 h-3.5 fill-current" />
-                    <span>Re-validate Primary Provider</span>
+                    <span>Retry Primary</span>
                   </>
                 )}
               </button>
 
               <button
                 type="button"
-                onClick={() => setActiveSection('fallback')}
-                className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium border border-slate-700 transition-colors"
+                onClick={handleDisableFailover}
+                className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-rose-950/50 hover:border-rose-700/50 text-slate-300 hover:text-rose-300 text-xs font-medium border border-slate-700 transition-colors cursor-pointer"
+                title="Turn off automatic failover routing"
               >
-                Fallback Settings
+                Disable Failover
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setIsFailoverBannerDismissed(true)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors"
+                title="Dismiss banner"
+              >
+                <X className="w-4 h-4" />
               </button>
             </div>
           </div>

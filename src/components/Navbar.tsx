@@ -92,8 +92,6 @@ interface NavbarProps {
   onOpenUpdates?: () => void;
   updates?: SystemUpdateItem[];
   onOpenMobileMenu?: () => void;
-  versionErrors?: Record<string, boolean>;
-  onResyncVersion?: (agentId: string) => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -110,9 +108,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   updatesCount,
   onOpenUpdates,
   updates,
-  onOpenMobileMenu,
-  versionErrors,
-  onResyncVersion
+  onOpenMobileMenu
 }) => {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -288,35 +284,13 @@ export const Navbar: React.FC<NavbarProps> = ({
               currentAgent?.status === 'error' || currentAgent?.status === 'restarting' ? 'bg-amber-400 animate-pulse' :
               'bg-cyan-400'
             }`} />
-            <div className="flex flex-col items-start leading-none gap-0.5">
+            <div className="flex flex-col items-start leading-none">
               <span className="font-bold text-xs sm:text-sm flex items-center gap-1.5">
                 {currentAgent?.name || selectedAgentId || 'Agent'}
-                {versionErrors?.[selectedAgentId] && <AlertTriangle className="w-3 h-3 text-amber-500" />}
-              </span>
-              <span className="text-[9px] font-mono text-indigo-400/70 font-bold uppercase tracking-tighter">
-                {currentAgent.version.startsWith('v') ? currentAgent.version : `v${currentAgent.version}`}
               </span>
             </div>
             <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform ${dropdownOpen ? 'rotate-180' : ''}`} />
           </button>
-
-          {/* Version 404 Indicator & Re-sync Button for Selected Agent */}
-          {versionErrors?.[selectedAgentId] && (
-            <div className="absolute left-0 top-full mt-1.5 z-20 flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs shadow-lg whitespace-nowrap">
-              <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping" />
-              <span className="font-mono text-[10px] font-bold">Version 404</span>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onResyncVersion?.(selectedAgentId);
-                }}
-                className="px-2 py-0.5 rounded bg-rose-600 hover:bg-rose-500 text-white font-bold text-[10px] transition-colors shadow"
-                title="Manually trigger version fetch for this agent ID"
-              >
-                Re-sync Version
-              </button>
-            </div>
-          )}
 
           {/* Dropdown Menu */}
           {dropdownOpen && (
@@ -356,18 +330,6 @@ export const Navbar: React.FC<NavbarProps> = ({
                         </p>
                         <div className="mt-1.5 flex items-center justify-between gap-2">
                           {getStatusBadge(agent.status)}
-                          {versionErrors?.[agent.id] && (
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                onResyncVersion?.(agent.id);
-                              }}
-                              className="px-2 py-0.5 rounded bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 text-[10px] font-bold transition-colors"
-                              title="Re-sync version for this agent"
-                            >
-                              Re-sync Version
-                            </button>
-                          )}
                         </div>
                       </div>
                     </button>
@@ -471,16 +433,6 @@ export const Navbar: React.FC<NavbarProps> = ({
           <Code2 className="w-3.5 h-3.5 text-indigo-400" />
           <span>Code &amp; Dockerfile</span>
         </button>
-
-        {/* Selected Agent Version Tag */}
-        <div className="hidden lg:flex items-center gap-2 px-2.5 py-1 rounded-lg bg-indigo-500/5 border border-indigo-500/10">
-          <div className="flex flex-col items-end leading-none gap-0.5">
-            <span className="text-[7px] uppercase font-bold text-slate-500 tracking-tighter">Agent Version</span>
-            <span className="text-[10px] font-mono font-bold text-indigo-400">
-              {currentAgent.version.startsWith('v') ? currentAgent.version : `v${currentAgent.version}`}
-            </span>
-          </div>
-        </div>
 
         {/* Live Container Metadata Tag (New component requested) */}
         <ContainerMetadataBadge agentId={selectedAgentId} />

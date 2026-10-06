@@ -67,8 +67,6 @@ interface DashboardTabProps {
   onApplyPresetToAgent?: (preset: ModelPresetSnapshot, targetAgentId: any) => void;
   onAddToast?: (type: 'success' | 'error' | 'info', title: string, description?: string) => void;
   onAddLog?: (log: string) => void;
-  versionErrors?: Record<string, boolean>;
-  onResyncVersion?: (agentId: string) => void;
 }
 
 // Sub-component for Agent Health real-time latency ping chart
@@ -163,9 +161,6 @@ export const AgentHealthWidget: React.FC<{
                     <div className="text-xs font-bold text-slate-200 truncate max-w-[120px]" title={agent.name}>
                       {agent.name}
                     </div>
-                    <span className="px-1 py-0.5 rounded text-[8px] font-mono font-bold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 leading-none">
-                      {agent.version.startsWith('v') ? agent.version : `v${agent.version}`}
-                    </span>
                   </div>
                   <div className="text-[9px] font-mono text-slate-500 truncate" title={agent.containerId}>
                     ID: {agent.containerId || 'detached'}
@@ -361,9 +356,6 @@ export const ResourceMonitorWidget: React.FC<{
               <div className="flex justify-between items-center text-xs font-bold text-slate-200">
                 <div className="flex items-center gap-2">
                   <span>{agent.name}</span>
-                  <span className="px-1 py-0.5 rounded text-[8px] font-mono font-bold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 leading-none">
-                    {agent.version.startsWith('v') ? agent.version : `v${agent.version}`}
-                  </span>
                 </div>
                 <span className="font-mono text-[10px] text-slate-500">{agent.containerId}</span>
               </div>
@@ -1440,9 +1432,7 @@ export const AgentControlHub: React.FC<{
   presets?: ModelPresetSnapshot[];
   onApplyPresetToAgent?: (preset: ModelPresetSnapshot, targetAgentId: any) => void;
   onAddToast?: (type: 'success' | 'error' | 'info', title: string, description?: string) => void;
-  versionErrors?: Record<string, boolean>;
-  onResyncVersion?: (agentId: string) => void;
-}> = ({ agents, onRestartAgent, selectedAgentId, onSelectAgent, presets, onApplyPresetToAgent, onAddToast, versionErrors, onResyncVersion }) => {
+}> = ({ agents, onRestartAgent, selectedAgentId, onSelectAgent, presets, onApplyPresetToAgent, onAddToast }) => {
   return (
     <div className="p-5 rounded-2xl border border-slate-800 bg-slate-900/90 space-y-4">
       <div className="flex items-center justify-between">
@@ -1480,9 +1470,6 @@ export const AgentControlHub: React.FC<{
                       {isSelected && (
                         <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 shrink-0 animate-pulse" title="Active Focus Agent" />
                       )}
-                      {versionErrors?.[ag.id] && (
-                        <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0" title="Version fetch failed (404)" />
-                      )}
                     </h4>
                     <p className="text-[9px] font-mono text-slate-500 truncate uppercase mt-0.5">
                       {ag.framework}
@@ -1517,7 +1504,7 @@ export const AgentControlHub: React.FC<{
 
               <div className="pt-2 border-t border-slate-900 flex items-center justify-between text-[10px] text-slate-500 font-mono">
                 <span>Port: {ag.defaultPort}</span>
-                <span>{ag.version.startsWith('v') ? ag.version : `v${ag.version}`}</span>
+                <span className="capitalize">{ag.status}</span>
               </div>
 
               {/* Quick Apply Preset Dropdown */}
@@ -1723,9 +1710,6 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
               </span>
               <span className="px-2.5 py-0.5 rounded text-[10px] uppercase font-mono text-indigo-300 bg-slate-950 border border-slate-800">
                 Port {agent.defaultPort}
-              </span>
-              <span className="text-xs text-slate-400">
-                v{agent.version}
               </span>
             </div>
 
@@ -1948,15 +1932,6 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
         onResyncVersion={onResyncVersion}
       />
 
-      {/* Real-time CPU & Memory Telemetry Visualization */}
-      <AgentResourceTrendChart 
-        agentId={agent?.id} 
-        agentName={agent?.name || agent?.id} 
-        status={agent?.status} 
-        onAddToast={onAddToast}
-        onAddLog={onAddLog}
-      />
-
       {/* Real-time Uptime History & Latency Trend Recharts Visualization */}
       <AgentUptimeLatencyTrendChart agent={agent} />
 
@@ -2053,9 +2028,6 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
           </div>
         </div>
       </div>
-
-      {/* System Health Status Indicator Widget */}
-      <SystemHealthStatusIndicatorWidget agent={agent} />
 
       {/* LLM Health & Provider Availability Monitor Widget */}
       <LLMHealthMonitorWidget 
