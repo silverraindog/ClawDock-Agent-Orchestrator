@@ -1564,8 +1564,12 @@ fallback:
       const dynamicRouteMappings = [
         {
           pattern: /^\/api\/persistence\/commit(\/)?$/i,
-          allowedMethods: ['GET', 'POST', 'PUT'],
+          allowedMethods: ['GET', 'POST', 'PUT', 'OPTIONS'],
           handlers: {
+            OPTIONS: async () => {
+              res.setHeader('Allow', 'GET, POST, PUT, OPTIONS');
+              return res.end(JSON.stringify({ success: true, allowedMethods: ['GET', 'POST', 'PUT', 'OPTIONS'] }));
+            },
             GET: async () => {
               res.setHeader('Content-Type', 'application/json');
               const persistenceFile = path.join(dataDir, 'persistence.json');
@@ -2490,7 +2494,7 @@ fallback:
         },
         // Resource monitoring stats endpoint for agents: /api/agents/:id/stats (and aliases resources/metrics)
         {
-          pattern: /^\/api\/(?:agents?|agent)(?:\/([^/]+))?\/(stats|resources|metrics)(\/)?$/i,
+          pattern: /^\/api\/(?:agents?|agent)(?:\/([^/]+))?\/(stats|resources|metrics)(\/)?$|^\/api\/(stats|resources|metrics)(\/)?$/i,
           allowedMethods: ['GET', 'POST', 'PUT', 'OPTIONS', 'HEAD'],
           handler: async ({ pathname, res, parsedUrl, method }) => {
             res.setHeader('Content-Type', 'application/json');
@@ -2504,11 +2508,11 @@ fallback:
             }
 
             res.statusCode = 200;
-            const match = pathname.match(/^\/api\/(?:agents?|agent)(?:\/([^/]+))?\/(stats|resources|metrics)(\/)?$/i) ||
-                          pathname.match(/^\/api\/agents\/([^/]+)\/(stats|resources|metrics)(\/)?$/i) ||
-                          pathname.match(/^\/api\/(stats|metrics)(\/)?$/i);
-            const rawId = match && match[1] ? match[1] : '';
-            const agentId = (rawId && rawId !== 'stats' && rawId !== 'resources' && rawId !== 'metrics')
+            const match = pathname.match(/^\/api\/(?:agents?|agent)\/([^/]+)\/(stats|resources|metrics)(\/)?$/i) ||
+                          pathname.match(/^\/api\/(?:agents?|agent)\/(stats|resources|metrics)(\/)?$/i) ||
+                          pathname.match(/^\/api\/(stats|resources|metrics)(\/)?$/i);
+            const rawId = match && match[1] && !['stats', 'resources', 'metrics'].includes(match[1].toLowerCase()) ? match[1] : '';
+            const agentId = (rawId && rawId !== 'undefined' && rawId !== 'null')
               ? rawId
               : (parsedUrl.searchParams.get('agentId') || parsedUrl.searchParams.get('agent') || 'hermes-agent');
 

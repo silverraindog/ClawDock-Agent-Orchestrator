@@ -1049,6 +1049,30 @@ export default function App() {
     }
   };
 
+  const handleTestConnection = async (provider?: string, apiKey?: string, baseUrl?: string) => {
+    try {
+      const activeProvider = provider || currentConfig.model.provider;
+      const activeApiKey = apiKey !== undefined ? apiKey : (currentConfig.model.apiKey || '');
+      const activeBaseUrl = baseUrl !== undefined ? baseUrl : (currentConfig.model.baseUrl || '');
+      const res = await fetch('/api/test-conn-v2', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider: activeProvider, apiKey: activeApiKey, baseUrl: activeBaseUrl })
+      });
+      const data = await res.json();
+      if (data.success) {
+        addToast('success', 'Connection Test Passed', `Successfully connected to ${activeProvider.toUpperCase()}`);
+        return { success: true, message: data.message || 'Connected successfully' };
+      } else {
+        addToast('error', 'Connection Test Failed', data.error || 'Could not connect to model endpoint');
+        return { success: false, error: data.error || 'Connection failed' };
+      }
+    } catch (err: any) {
+      addToast('error', 'Connection Test Error', err.message || 'Network error during connection test');
+      return { success: false, error: err.message };
+    }
+  };
+
   // Bind discovered host container to an agent
   const handleBindContainer = async (agentId: AgentId, container: DiscoveredContainer) => {
     try {
@@ -1297,6 +1321,8 @@ export default function App() {
             ? 'openai' 
             : propName.includes('gemini') 
             ? 'gemini' 
+            : propName.includes('ollama')
+            ? 'ollama'
             : 'custom';
 
           normalizedConfig.moa.providerMapping[propName] = propProv;
@@ -2787,6 +2813,7 @@ export default function App() {
               checkpointHistory={checkpointHistoryMap[selectedAgentId] || []}
               onRestoreSpecificCheckpoint={handleRestoreSpecificCheckpoint}
               onDeleteCheckpoint={(checkpointId) => handleDeleteCheckpoint(selectedAgentId, checkpointId)}
+              onTestConnection={handleTestConnection}
             />
           )}
 

@@ -1,150 +1,6 @@
 {
   "configs": {
-    "hermes-agent": {
-      "agentId": "hermes-agent",
-      "version": "1.0.0",
-      "model": {
-        "provider": "custom",
-        "model": "gemma4-soul:latest",
-        "apiKey": "ollama",
-        "temperature": 0.3,
-        "reasoningEffort": "high",
-        "maxTokens": 8192,
-        "contextWindow": 200000,
-        "baseUrl": "http://192.168.1.49:11434",
-        "topP": 0.95
-      },
-      "moa": {
-        "enabled": true,
-        "proposerModels": [
-          "qwen2.5-coder:7b",
-          "mistral-nemo:12b",
-          "llama3.3:8b"
-        ],
-        "aggregatorModel": "qwen2.5-coder:7b",
-        "rounds": 1,
-        "temperatureSpread": 0.3,
-        "consensusThreshold": 0.85,
-        "providerMapping": {
-          "custom:ollama:gemma4-soul:latest": "custom",
-          "custom:ollama:deepseek-coder-v2:16b": "custom",
-          "custom:ollama:qwen2-5-coder-7b-32k:latest": "custom",
-          "qwen2.5-coder:7b": "custom",
-          "mistral-nemo:12b": "custom",
-          "llama3.3:8b": "custom"
-        },
-        "providerEndpoints": {
-          "local-ollama": "http://192.168.1.49:11434",
-          "ollama": "http://192.168.1.49:11434",
-          "custom": "http://192.168.1.49:11434",
-          "custom:ollama": "http://192.168.1.49:11434",
-          "moa": "http://192.168.1.49:11434",
-          "qwen2.5-coder:7b": "http://192.168.1.49:11434",
-          "mistral-nemo:12b": "http://192.168.1.49:11434",
-          "llama3.3:8b": "http://192.168.1.49:11434"
-        },
-        "proposerEndpoints": {
-          "qwen2.5-coder:7b": "http://192.168.1.49:11434",
-          "mistral-nemo:12b": "http://192.168.1.49:11434",
-          "llama3.3:8b": "http://192.168.1.49:11434"
-        }
-      },
-      "channels": {
-        "telegram": {
-          "enabled": true,
-          "botToken": "env:TELEGRAM_BOT_TOKEN",
-          "allowedUsers": [
-            "@developer",
-            "@admin"
-          ],
-          "mode": "polling"
-        },
-        "discord": {
-          "enabled": false,
-          "botToken": "env:DISCORD_BOT_TOKEN",
-          "clientId": "env:DISCORD_CLIENT_ID",
-          "guildIds": "env:DISCORD_GUILD_ID"
-        },
-        "slack": {
-          "enabled": false,
-          "botToken": "",
-          "appToken": "",
-          "signingSecret": "",
-          "socketMode": true
-        },
-        "whatsapp": {
-          "enabled": false,
-          "sessionId": "",
-          "webhookUrl": ""
-        },
-        "matrix": {
-          "enabled": false,
-          "homeserver": "",
-          "accessToken": "",
-          "roomIds": ""
-        },
-        "webhook": {
-          "enabled": true,
-          "port": 8080,
-          "authToken": "hermes_secret_token_99",
-          "corsOrigin": "*"
-        }
-      },
-      "system": {
-        "preset": "engineer",
-        "systemPrompt": "You are Hermes Agent, a premier autonomous software engineering and problem-solving AI agent. You have direct access to workspace tools, shell execution, and persistent memory. Always structure complex tasks into clear execution steps, verify your code with tests or linters, and document non-trivial architecture decisions.",
-        "agentName": "Hermes Code Assistant",
-        "personaName": "Hermes Code Assistant",
-        "language": "en-US",
-        "autoFormatCode": true
-      },
-      "security": {
-        "sandboxMode": "docker_isolated",
-        "allowedDirectories": [
-          "/workspace",
-          "/data"
-        ],
-        "blockNetworkAccess": false,
-        "maxExecutionTimeSec": 120,
-        "requireApprovalForCommands": false,
-        "securityProfileFile": ".security.yml"
-      },
-      "storage": {
-        "memoryBackend": "everos",
-        "dbPath": "/data/everos/memories/hermes-agent",
-        "autoSummarizeInterval": 25,
-        "maxHistoryTurns": 100,
-        "vectorDbUrl": "http://everos:8080"
-      },
-      "customEnv": {
-        "HERMES_LOG_LEVEL": "INFO",
-        "PYTHONUNBUFFERED": "1",
-        "WORKSPACE_ROOT": "/workspace",
-        "CONTAINER_MOUNT_DIR": "/workspace/hermes-agent",
-        "LOG_LEVEL": "info"
-      },
-      "fallback": {
-        "enabled": true,
-        "targetAgentId": "zeroclaw",
-        "strategy": "on_offline",
-        "latencyThresholdMs": 3000,
-        "fallbackProvider": "openrouter",
-        "fallbackModel": "anthropic/claude-3.7-sonnet",
-        "provider": "openrouter",
-        "model": "anthropic/claude-3.7-sonnet",
-        "apiKey": "",
-        "baseUrl": "https://openrouter.ai/api/v1",
-        "useProxy": true
-      },
-      "providerMapping": {
-        "custom:ollama:gemma4-soul:latest": "custom",
-        "custom:ollama:deepseek-coder-v2:16b": "custom",
-        "custom:ollama:qwen2-5-coder-7b-32k:latest": "custom",
-        "qwen2.5-coder:7b": "custom",
-        "mistral-nemo:12b": "custom",
-        "llama3.3:8b": "custom"
-      }
-    },
+    "hermes-agent": {},
     "zeroclaw": {
       "agentId": "zeroclaw",
       "version": "1.0.0",
@@ -472,6 +328,18 @@
   "testKey": "testValue",
   "commitHistory": [
     {
+      "id": "commit-hermes-agent-1791260844244",
+      "agentId": "hermes-agent",
+      "timestamp": "2026-10-06T04:27:24.244Z",
+      "meta": {}
+    },
+    {
+      "id": "commit-hermes-agent-1791260803135",
+      "agentId": "hermes-agent",
+      "timestamp": "2026-10-06T04:26:43.135Z",
+      "meta": {}
+    },
+    {
       "id": "commit-hermes-agent-1791086764820",
       "agentId": "hermes-agent",
       "timestamp": "2026-10-04T04:06:04.655Z",
@@ -744,16 +612,8 @@
   ],
   "lastCommitted": {
     "agentId": "hermes-agent",
-    "timestamp": "2026-10-04T04:06:04.655Z",
-    "meta": {
-      "committedAt": "2026-10-04T04:06:04.655Z",
-      "source": "handleSaveConfig",
-      "restartContainer": false,
-      "manualNativeContent": false,
-      "model": "gemma4-soul:latest",
-      "provider": "custom",
-      "filePath": "config.yaml"
-    }
+    "timestamp": "2026-10-06T04:27:24.244Z",
+    "meta": {}
   },
   "checkpointHistory": {
     "hermes-agent": [

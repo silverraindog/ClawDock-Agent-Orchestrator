@@ -192,6 +192,7 @@ interface ConfigTabProps {
   checkpointHistory?: LastKnownGoodConfigSnapshot[];
   onRestoreSpecificCheckpoint?: (snapshot: LastKnownGoodConfigSnapshot) => void;
   onDeleteCheckpoint?: (checkpointId: string) => void;
+  onTestConnection?: (provider?: string, apiKey?: string, baseUrl?: string) => Promise<{ success: boolean; message?: string; error?: string }>;
 }
 
 type ConfigSection = 'model' | 'moa' | 'channels' | 'system' | 'security' | 'storage' | 'fallback' | 'raw' | 'checkpoints';
@@ -286,7 +287,8 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
   onSaveLastKnownGoodCheckpoint,
   checkpointHistory = [],
   onRestoreSpecificCheckpoint,
-  onDeleteCheckpoint
+  onDeleteCheckpoint,
+  onTestConnection
 }) => {
   const [rawYaml, setRawYaml] = useState(() => YAML.dump(config));
   const [yamlError, setYamlError] = useState<string | null>(null);
@@ -315,11 +317,13 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
     setIsTestingConnection(true);
     const start = performance.now();
     try {
-      const result = await testLLMConnection(
-        config.model.provider,
-        config.model.apiKey || '',
-        config.model.baseUrl || ''
-      );
+      const result = onTestConnection 
+        ? await onTestConnection(config.model.provider, config.model.apiKey || '', config.model.baseUrl || '')
+        : await testLLMConnection(
+            config.model.provider,
+            config.model.apiKey || '',
+            config.model.baseUrl || ''
+          );
       const elapsed = Math.round(performance.now() - start);
       setPingLatencyMs(elapsed);
       if (result.success) {
