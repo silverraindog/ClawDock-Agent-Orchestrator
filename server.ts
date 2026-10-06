@@ -4738,7 +4738,7 @@ function generateAgentPoint(agentId: string, status: string, customTime?: string
 }
 
 // Agent real-time CPU & Memory stats endpoint
-app.get('/api/agents/:id/stats', (req, res) => {
+app.all(['/api/agents/:id/stats', '/api/agents/:id/stats/', '/api/agents/:id/resources', '/api/agents/:id/resources/', '/api/agents/:id/metrics', '/api/agents/:id/metrics/'], (req, res) => {
   try {
     const agentId = req.params.id;
     const current = agentStates[agentId] || { status: 'stopped', containerId: '' };

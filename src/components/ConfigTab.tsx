@@ -308,15 +308,20 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
   const [isRevalidatingPrimary, setIsRevalidatingPrimary] = useState<boolean>(false);
   const [primaryRevalidationMessage, setPrimaryRevalidationMessage] = useState<{ text: string; type: 'success' | 'error' | 'info' } | null>(null);
   const [isTestingConnection, setIsTestingConnection] = useState<boolean>(false);
+  const [isModelVerified, setIsModelVerified] = useState<boolean>(true);
+  const [pingLatencyMs, setPingLatencyMs] = useState<number | null>(null);
 
   const handleTestConnection = async () => {
     setIsTestingConnection(true);
+    const start = performance.now();
     try {
       const result = await testLLMConnection(
         config.model.provider,
         config.model.apiKey || '',
         config.model.baseUrl || ''
       );
+      const elapsed = Math.round(performance.now() - start);
+      setPingLatencyMs(elapsed);
       if (result.success) {
         setIsModelVerified(true);
       } else {
@@ -729,7 +734,6 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
   const [sortByContext, setSortByContext] = useState<boolean>(false);
   const [bulkSelectMode, setBulkSelectMode] = useState<boolean>(false);
   const [selectedModelsForBulk, setSelectedModelsForBulk] = useState<string[]>([]);
-  const [pingLatencyMs, setPingLatencyMs] = useState<number | null>(null);
   const [isPinging, setIsPinging] = useState<boolean>(false);
   const [copiedModelSpec, setCopiedModelSpec] = useState<boolean>(false);
   const [secondaryTemperature, setSecondaryTemperature] = useState<number>(0.7);
@@ -801,7 +805,6 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
   // Model verification state against /api/proxy/models registry
   const [modelVerificationStatus, setModelVerificationStatus] = useState<'checking' | 'verified' | 'warning'>('checking');
   const [proxyRegistryModels, setProxyRegistryModels] = useState<string[]>([]);
-  const [isModelVerified, setIsModelVerified] = useState<boolean>(true);
   const [modelRegistryDetails, setModelRegistryDetails] = useState<{
     memoryUsage: string;
     contextWindowLimit: number;

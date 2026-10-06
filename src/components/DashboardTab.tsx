@@ -437,6 +437,7 @@ export const AgentResourceTrendChart: React.FC<AgentResourceTrendChartProps> = (
   const highUsageCyclesRef = React.useRef<number>(0);
 
   const fetchStats = React.useCallback(async () => {
+    if (!agentId || agentId === 'undefined') return;
     try {
       const res = await fetch(`/api/agents/${agentId}/stats`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -851,6 +852,7 @@ export const SystemHealthStatusIndicatorWidget: React.FC<{
   const [loading, setLoading] = React.useState(true);
 
   const fetchStats = React.useCallback(async () => {
+    if (!agent?.id || agent.id === 'undefined') return;
     try {
       const res = await fetch(`/api/agents/${agent.id}/stats`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
