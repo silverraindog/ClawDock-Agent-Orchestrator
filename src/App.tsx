@@ -168,6 +168,13 @@ export default function App() {
   const [lastCheckedUpdatesTime, setLastCheckedUpdatesTime] = useState('5 mins ago');
   const [injectionAlertsMap, setInjectionAlertsMap] = useState<Partial<Record<AgentId, InjectionStatusInfo>>>({});
   const [injectionVerboseLogsMap, setInjectionVerboseLogsMap] = useState<Partial<Record<AgentId, VerboseLogData>>>({});
+  const [connectionStatus, setConnectionStatus] = useState<{
+    status: 'testing' | 'connected' | 'error' | 'disconnected' | string;
+    message: string;
+  } | null>({
+    status: 'disconnected',
+    message: 'Not initialized'
+  });
 
   const setInjectionAlert = (agentId: AgentId, info: InjectionStatusInfo | null) => {
     setInjectionAlertsMap(prev => ({
@@ -1050,10 +1057,15 @@ export default function App() {
   };
 
   const handleTestConnection = async (provider?: string, apiKey?: string, baseUrl?: string) => {
+    const activeProvider = provider || currentConfig.model.provider;
+    const activeApiKey = apiKey !== undefined ? apiKey : (currentConfig.model.apiKey || '');
+    const activeBaseUrl = baseUrl !== undefined ? baseUrl : (currentConfig.model.baseUrl || '');
+    setConnectionStatus({
+      status: 'testing',
+      message: `Testing connection to ${activeProvider.toUpperCase()}...`
+    });
+
     try {
-      const activeProvider = provider || currentConfig.model.provider;
-      const activeApiKey = apiKey !== undefined ? apiKey : (currentConfig.model.apiKey || '');
-      const activeBaseUrl = baseUrl !== undefined ? baseUrl : (currentConfig.model.baseUrl || '');
       const res = await fetch('/api/test-conn-v2', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1061,13 +1073,25 @@ export default function App() {
       });
       const data = await res.json();
       if (data.success) {
+        setConnectionStatus({
+          status: 'connected',
+          message: data.message || `Successfully connected to ${activeProvider.toUpperCase()}`
+        });
         addToast('success', 'Connection Test Passed', `Successfully connected to ${activeProvider.toUpperCase()}`);
         return { success: true, message: data.message || 'Connected successfully' };
       } else {
+        setConnectionStatus({
+          status: 'error',
+          message: data.error || 'Could not connect to model endpoint'
+        });
         addToast('error', 'Connection Test Failed', data.error || 'Could not connect to model endpoint');
         return { success: false, error: data.error || 'Connection failed' };
       }
     } catch (err: any) {
+      setConnectionStatus({
+        status: 'error',
+        message: err.message || 'Network error during connection test'
+      });
       addToast('error', 'Connection Test Error', err.message || 'Network error during connection test');
       return { success: false, error: err.message };
     }
@@ -2814,6 +2838,8 @@ export default function App() {
               onRestoreSpecificCheckpoint={handleRestoreSpecificCheckpoint}
               onDeleteCheckpoint={(checkpointId) => handleDeleteCheckpoint(selectedAgentId, checkpointId)}
               onTestConnection={handleTestConnection}
+              handleTestConnection={handleTestConnection}
+              connectionStatus={connectionStatus}
             />
           )}
 

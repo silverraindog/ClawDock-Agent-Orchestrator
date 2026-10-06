@@ -1920,8 +1920,8 @@ export async function withRetry<T>(
     try {
       const res = await fn();
       lastRes = res;
-      // If successful or not a retryable error, return
-      if (res.ok || (res.status !== 405 && (res.status < 500 || res.status > 599))) {
+      // If successful or 405 (method fallback needed immediately) or client error, return immediately
+      if (res.ok || res.status === 405 || res.status < 500 || res.status > 599) {
         return res;
       }
       console.warn(`[withRetry] Attempt ${i + 1} failed with status ${res.status}. Retrying in ${delay}ms...`);
@@ -1954,7 +1954,7 @@ export async function commitState(
 
   try {
     let res = await withRetry(async () => await fetch('/api/persistence/commit', {
-      method: 'PUT',
+      method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Accept': 'application/json'
@@ -1962,11 +1962,11 @@ export async function commitState(
       body: JSON.stringify(payload)
     }));
 
-    // If PUT returns 405 Method Not Allowed, immediately retry with POST /api/persistence/commit
-    if (res.status === 405) {
-      console.warn(`[commitState] PUT returned 405 on /api/persistence/commit. Retrying with POST...`);
+    // If POST returns 405 Method Not Allowed, fallback to PUT /api/persistence/commit
+    if (res && res.status === 405) {
+      console.warn(`[commitState] POST returned 405 on /api/persistence/commit. Retrying with PUT...`);
       res = await fetch('/api/persistence/commit', {
-        method: 'POST',
+        method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json'

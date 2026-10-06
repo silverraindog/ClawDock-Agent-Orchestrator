@@ -6,6 +6,13 @@ import { defineConfig, Plugin } from 'vite';
 import { OFFICIAL_MCP_REGISTRY, OFFICIAL_MCP_CATEGORIES } from './src/data/officialMcpServers';
 
 function readRequestBody(req: any): Promise<any> {
+  if (req.bodyPayload !== undefined) {
+    return Promise.resolve(req.bodyPayload);
+  }
+  if (req.body !== undefined && req.body !== null && typeof req.body === 'object' && Object.keys(req.body).length > 0) {
+    req.bodyPayload = req.body;
+    return Promise.resolve(req.body);
+  }
   return new Promise((resolve) => {
     let body = '';
     req.on('data', (chunk: any) => {
@@ -1564,11 +1571,82 @@ fallback:
       const dynamicRouteMappings = [
         {
           pattern: /^\/api\/persistence\/commit(\/)?$/i,
-          allowedMethods: ['GET', 'POST', 'PUT', 'OPTIONS'],
+          allowedMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+          handler: async () => {
+            ensureDataDir();
+            const persistenceFile = path.join(dataDir, 'persistence.json');
+            res.setHeader('Content-Type', 'application/json');
+            res.setHeader('Access-Control-Allow-Origin', '*');
+            res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
+            res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept');
+
+            if (method === 'OPTIONS') {
+              res.setHeader('Allow', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
+              return res.end(JSON.stringify({ success: true, allowedMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'] }));
+            }
+
+            if (method === 'GET') {
+              let current: any = {};
+              try {
+                if (fs.existsSync(persistenceFile)) {
+                  current = JSON.parse(fs.readFileSync(persistenceFile, 'utf8'));
+                }
+              } catch {}
+              return res.end(JSON.stringify({
+                success: true,
+                data: current,
+                lastCommitted: current.lastCommitted || null,
+                commitHistory: current.commitHistory || []
+              }));
+            }
+
+            const body = await readRequestBody(req);
+            const { agentId, config, meta, timestamp } = body || {};
+            let current: any = {};
+            try {
+              if (fs.existsSync(persistenceFile)) {
+                current = JSON.parse(fs.readFileSync(persistenceFile, 'utf8'));
+              }
+            } catch {}
+
+            if (!current.configs) current.configs = {};
+            if (agentId && config) {
+              current.configs[agentId] = config;
+            }
+
+            if (!current.commitHistory) current.commitHistory = [];
+            current.commitHistory.unshift({
+              id: `commit-${agentId || 'global'}-${Date.now()}`,
+              agentId,
+              timestamp: timestamp || new Date().toISOString(),
+              meta: meta || {}
+            });
+            if (current.commitHistory.length > 50) {
+              current.commitHistory = current.commitHistory.slice(0, 50);
+            }
+
+            current.lastCommitted = {
+              agentId,
+              timestamp: timestamp || new Date().toISOString(),
+              meta: meta || {}
+            };
+
+            try {
+              fs.writeFileSync(persistenceFile, JSON.stringify(current, null, 2), 'utf8');
+            } catch {}
+
+            return res.end(JSON.stringify({
+              success: true,
+              committed: true,
+              agentId,
+              timestamp: timestamp || new Date().toISOString(),
+              data: current
+            }));
+          },
           handlers: {
             OPTIONS: async () => {
-              res.setHeader('Allow', 'GET, POST, PUT, OPTIONS');
-              return res.end(JSON.stringify({ success: true, allowedMethods: ['GET', 'POST', 'PUT', 'OPTIONS'] }));
+              res.setHeader('Allow', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
+              return res.end(JSON.stringify({ success: true, allowedMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'] }));
             },
             GET: async () => {
               res.setHeader('Content-Type', 'application/json');
@@ -2492,7 +2570,7 @@ fallback:
             }
           }
         },
-        // Resource monitoring stats endpoint for agents: /api/agents/:id/stats (and aliases resources/metrics)
+        // Resource monitoring stats endpoint for agents: /api/agents/:id/stats, /api/agents/stats, /api/stats (and aliases resources/metrics)
         {
           pattern: /^\/api\/(?:agents?|agent)(?:\/([^/]+))?\/(stats|resources|metrics)(\/)?$|^\/api\/(stats|resources|metrics)(\/)?$/i,
           allowedMethods: ['GET', 'POST', 'PUT', 'OPTIONS', 'HEAD'],
@@ -2508,16 +2586,19 @@ fallback:
             }
 
             res.statusCode = 200;
-            const match = pathname.match(/^\/api\/(?:agents?|agent)\/([^/]+)\/(stats|resources|metrics)(\/)?$/i) ||
-                          pathname.match(/^\/api\/(?:agents?|agent)\/(stats|resources|metrics)(\/)?$/i) ||
-                          pathname.match(/^\/api\/(stats|resources|metrics)(\/)?$/i);
-            const rawId = match && match[1] && !['stats', 'resources', 'metrics'].includes(match[1].toLowerCase()) ? match[1] : '';
-            const agentId = (rawId && rawId !== 'undefined' && rawId !== 'null')
+            // Explicitly capture optional agent ID from /api/agents/:id/stats or fallback query param
+            const specificMatch = pathname.match(/^\/api\/(?:agents?|agent)\/([^/]+)\/(?:stats|resources|metrics)(?:\/)?$/i);
+            let rawId = specificMatch && specificMatch[1] ? specificMatch[1].trim() : '';
+            if (rawId && ['stats', 'resources', 'metrics', 'all', 'undefined', 'null'].includes(rawId.toLowerCase())) {
+              rawId = '';
+            }
+
+            const agentId = rawId
               ? rawId
               : (parsedUrl.searchParams.get('agentId') || parsedUrl.searchParams.get('agent') || 'hermes-agent');
 
             const payload = buildAgentStatsPayload(agentId);
-            console.log(`[Vite API Server] Debug: stats payload for ${agentId}:`, payload);
+            console.log(`[Vite API Server] Debug: stats payload generated for agent "${agentId}" from path "${pathname}"`);
             return res.end(JSON.stringify(payload, null, 2));
           }
         },

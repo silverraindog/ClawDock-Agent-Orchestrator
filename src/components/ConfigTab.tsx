@@ -193,6 +193,8 @@ interface ConfigTabProps {
   onRestoreSpecificCheckpoint?: (snapshot: LastKnownGoodConfigSnapshot) => void;
   onDeleteCheckpoint?: (checkpointId: string) => void;
   onTestConnection?: (provider?: string, apiKey?: string, baseUrl?: string) => Promise<{ success: boolean; message?: string; error?: string }>;
+  handleTestConnection?: (provider?: string, apiKey?: string, baseUrl?: string) => Promise<{ success: boolean; message?: string; error?: string }>;
+  connectionStatus?: { status: string; message: string } | null;
 }
 
 type ConfigSection = 'model' | 'moa' | 'channels' | 'system' | 'security' | 'storage' | 'fallback' | 'raw' | 'checkpoints';
@@ -288,7 +290,9 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
   checkpointHistory = [],
   onRestoreSpecificCheckpoint,
   onDeleteCheckpoint,
-  onTestConnection
+  onTestConnection,
+  handleTestConnection: propHandleTestConnection,
+  connectionStatus: propsConnectionStatus
 }) => {
   const [rawYaml, setRawYaml] = useState(() => YAML.dump(config));
   const [yamlError, setYamlError] = useState<string | null>(null);
@@ -316,9 +320,10 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
   const handleTestConnection = async () => {
     setIsTestingConnection(true);
     const start = performance.now();
+    const testFn = onTestConnection || propHandleTestConnection;
     try {
-      const result = onTestConnection 
-        ? await onTestConnection(config.model.provider, config.model.apiKey || '', config.model.baseUrl || '')
+      const result = testFn 
+        ? await testFn(config.model.provider, config.model.apiKey || '', config.model.baseUrl || '')
         : await testLLMConnection(
             config.model.provider,
             config.model.apiKey || '',
@@ -340,7 +345,7 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
 
   const currentAgent = allAgents?.find(a => a.id === agentId);
 
-  const connectionStatus = isTestingConnection ? {
+  const localConnectionStatus = isTestingConnection ? {
     status: 'testing' as const,
     message: 'Testing connection to model endpoint...'
   } : isModelVerified ? {
@@ -353,6 +358,11 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
     status: 'error' as const,
     message: connectivityErrorReason || 'Endpoint unreachable or connection refused.'
   } : null;
+
+  // Guard clause against undefined/null or uninitialized statuses
+  const connectionStatus = (propsConnectionStatus && propsConnectionStatus.status && propsConnectionStatus.status !== 'disconnected')
+    ? propsConnectionStatus
+    : (localConnectionStatus ?? (propsConnectionStatus && typeof propsConnectionStatus === 'object' ? propsConnectionStatus : { status: 'disconnected', message: 'Not initialized' }));
 
   // Dedicated check for whether the agent is running on its fallback configuration
   // Fallback is only actively running when fallback is enabled AND the primary provider is unreachable/degraded
@@ -2102,19 +2112,27 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
               </div>
 
               {/* Status Alert or Connection Notice */}
-              {connectionStatus && (
-                <div className={`p-2.5 rounded-xl border text-[11px] flex items-center justify-between gap-2 ${
-                  connectionStatus.status === 'connected' 
+              {Boolean(connectionStatus && connectionStatus.status) && (
+                <div className={`p-2.5 rounded-xl border text-[11px] flex items-center justify-between gap-2 transition-all ${
+                  connectionStatus?.status === 'connected' 
                     ? 'bg-emerald-950/30 border-emerald-500/30 text-emerald-300'
+                    : connectionStatus?.status === 'testing'
+                    ? 'bg-amber-950/30 border-amber-500/30 text-amber-300'
+                    : connectionStatus?.status === 'disconnected'
+                    ? 'bg-slate-900/60 border-slate-700/60 text-slate-400'
                     : 'bg-rose-950/30 border-rose-500/30 text-rose-300'
                 }`}>
-                  <div className="flex items-center gap-2">
-                    {connectionStatus.status === 'connected' ? (
+                  <div className="flex items-center gap-2 min-w-0">
+                    {connectionStatus?.status === 'connected' ? (
                       <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                    ) : connectionStatus?.status === 'testing' ? (
+                      <RefreshCw className="w-3.5 h-3.5 text-amber-400 animate-spin shrink-0" />
+                    ) : connectionStatus?.status === 'disconnected' ? (
+                      <AlertCircle className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                     ) : (
                       <AlertCircle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
                     )}
-                    <span className="truncate">{connectionStatus.message}</span>
+                    <span className="truncate">{connectionStatus?.message || 'Not initialized'}</span>
                   </div>
                   {pingLatencyMs !== null && (
                     <span className="text-[10px] font-mono text-emerald-400 shrink-0">
