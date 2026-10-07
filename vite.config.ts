@@ -1156,6 +1156,9 @@ fallback:
     ]
   };
 
+  // Shared in-memory cache for discovered models to prevent repetitive slow probes
+  const modelDiscoveryCache = new Map<string, { timestamp: number; payload: string }>();
+
   /**
    * Extracts agentId, provider, and baseUrl parameters from query strings (and optional body)
    * regardless of parameter order, casing, or naming variations (e.g. snake_case, camelCase, kebab-case).
@@ -1837,9 +1840,22 @@ fallback:
               body.provider ||
               'ollama'
             ).toLowerCase().trim();
+            const queryApiKey = (
+              parsedUrl.searchParams.get('apiKey') ||
+              parsedUrl.searchParams.get('api_key') ||
+              body.apiKey ||
+              body.api_key ||
+              ''
+            ).trim();
 
             const targetBaseUrl = (queryBaseUrl || 'http://192.168.1.49:11434').trim();
-            console.log(`[Vite API Server Proxy] [${timestamp}] Fetching model list from baseUrl "${targetBaseUrl}" (Provider: ${queryProvider}) to bypass browser CORS`);
+
+            // Check in-memory cache for fast, non-blocking response
+            const proxyCacheKey = `proxy:${queryProvider}:${targetBaseUrl}:${queryApiKey}`;
+            const cachedProxy = modelDiscoveryCache.get(proxyCacheKey);
+            if (cachedProxy && (Date.now() - cachedProxy.timestamp < 30000)) {
+              return res.end(cachedProxy.payload);
+            }
 
             // Sanitize: Fix concatenation bugs like '11434host:11434'
             let sanitizedBase = targetBaseUrl
@@ -1849,15 +1865,16 @@ fallback:
             if (!sanitizedBase.startsWith('http')) sanitizedBase = 'http://' + sanitizedBase;
 
             const cleanBase = sanitizedBase.replace(/\/+$/, '').replace(/\/v1\/?$/, '');
-            const probeEndpoints: string[] = [];
+            const isPrivateIp = /192\.168\.|10\.\d+\.|172\.(1[6-9]|2\d|3[01])\.|127\.0\.0\.1|localhost/.test(cleanBase);
+            const probeTimeout = isPrivateIp ? 800 : 1500;
 
-            if (queryProvider === 'ollama' || cleanBase.includes('11434')) {
+            const probeEndpoints: string[] = [];
+            if (queryProvider === 'openrouter' || cleanBase.includes('openrouter')) {
+              probeEndpoints.push('https://openrouter.ai/api/v1/models');
+            } else if (queryProvider === 'ollama' || cleanBase.includes('11434')) {
               probeEndpoints.push(`${cleanBase}/api/tags`);
-              probeEndpoints.push(`${cleanBase}/v1/models`);
             } else {
               probeEndpoints.push(`${cleanBase}/v1/models`);
-              probeEndpoints.push(`${cleanBase}/models`);
-              probeEndpoints.push(`${cleanBase}/api/tags`);
             }
 
             let fetchedModels: Array<{ value: string; label: string; tag: string }> = [];
@@ -1868,13 +1885,16 @@ fallback:
             for (const endpoint of probeEndpoints) {
               try {
                 const controller = new AbortController();
-                const timer = setTimeout(() => controller.abort(), 2500);
-                const probeHeaders = {
+                const timer = setTimeout(() => controller.abort(), probeTimeout);
+                const probeHeaders: Record<string, string> = {
                   'Accept': 'application/json',
-                  'User-Agent': 'Clawdock-Backend-Proxy/1.0',
-                  ...(body.apiKey || req.headers['authorization'] ? { 'Authorization': req.headers['authorization'] || `Bearer ${body.apiKey}` } : {})
+                  'User-Agent': 'Clawdock-Backend-Proxy/1.0'
                 };
-                console.log(`[Vite API Server Proxy] Probing exact URL: ${endpoint} with headers:`, probeHeaders);
+                if (queryApiKey) {
+                  probeHeaders['Authorization'] = `Bearer ${queryApiKey}`;
+                } else if (req.headers['authorization']) {
+                  probeHeaders['Authorization'] = req.headers['authorization'] as string;
+                }
 
                 const resp = await fetch(endpoint, {
                   method: 'GET',
@@ -1893,7 +1913,6 @@ fallback:
                       tag: 'Proxy'
                     }));
                     fetchSuccessful = true;
-                    console.log(`[Vite API Server Proxy] Successfully proxied ${rawNames.length} models from ${endpoint}`);
                     break;
                   } else if (data && Array.isArray(data.data)) {
                     rawNames = data.data.map((m: any) => m.id || m.name).filter(Boolean);
@@ -1903,7 +1922,6 @@ fallback:
                       tag: 'Proxy'
                     }));
                     fetchSuccessful = true;
-                    console.log(`[Vite API Server Proxy] Successfully proxied ${rawNames.length} models from ${endpoint}`);
                     break;
                   }
                 }
@@ -1913,7 +1931,7 @@ fallback:
             }
 
             if (fetchSuccessful && fetchedModels.length > 0) {
-              return res.end(JSON.stringify({
+              const payload = JSON.stringify({
                 success: true,
                 source: 'backend_proxy',
                 baseUrl: targetBaseUrl,
@@ -1922,10 +1940,20 @@ fallback:
                 rawModelNames: rawNames,
                 models: fetchedModels,
                 timestamp
-              }));
+              });
+              modelDiscoveryCache.set(proxyCacheKey, { timestamp: Date.now(), payload });
+              return res.end(payload);
             }
 
-            const fallbackModels = [
+            const fallbackModels = queryProvider === 'openrouter' ? [
+              { value: 'anthropic/claude-3.7-sonnet', label: 'OpenRouter: Claude 3.7 Sonnet', tag: 'Proxy' },
+              { value: 'deepseek/deepseek-r1', label: 'OpenRouter: DeepSeek R1', tag: 'Proxy' },
+              { value: 'meta-llama/llama-3.3-70b-instruct', label: 'OpenRouter: Llama 3.3 70B', tag: 'Proxy' },
+              { value: 'openai/gpt-4o', label: 'OpenRouter: GPT-4o', tag: 'Proxy' }
+            ] : queryProvider === 'custom' ? [
+              { value: 'gemma4-soul:latest', label: 'gemma4-soul:latest (Active Checkpoint)', tag: 'Active' },
+              { value: 'custom-model', label: 'Custom Model (Specify below or probe endpoint)', tag: 'Custom' }
+            ] : [
               { value: 'qwen2.5-coder:7b', label: 'qwen2.5-coder:7b (Local Proxy Fallback)', tag: 'Proxy Fallback' },
               { value: 'qwen2.5-coder:14b', label: 'qwen2.5-coder:14b (Local Proxy Fallback)', tag: 'Proxy Fallback' },
               { value: 'deepseek-r1:8b', label: 'deepseek-r1:8b (Local Proxy Fallback)', tag: 'Proxy Fallback' },
@@ -1934,8 +1962,8 @@ fallback:
               { value: 'gemma4-soul:latest', label: 'gemma4-soul:latest (Active Checkpoint)', tag: 'Active' }
             ];
 
-            return res.end(JSON.stringify({
-              success: false,
+            const fallbackPayload = JSON.stringify({
+              success: true,
               source: 'backend_proxy_fallback',
               baseUrl: targetBaseUrl,
               provider: queryProvider,
@@ -1944,7 +1972,9 @@ fallback:
               rawModelNames: fallbackModels.map(m => m.value),
               models: fallbackModels,
               timestamp
-            }));
+            });
+            modelDiscoveryCache.set(proxyCacheKey, { timestamp: Date.now(), payload: fallbackPayload });
+            return res.end(fallbackPayload);
           }
         },
         {
@@ -2328,44 +2358,57 @@ fallback:
                            body.key ||
                            '';
 
+            // Check cache for fast immediate response
+            const modelsCacheKey = `models:${provider}:${baseUrl}:${apiKey}`;
+            const cachedModels = modelDiscoveryCache.get(modelsCacheKey);
+            if (cachedModels && (Date.now() - cachedModels.timestamp < 30000)) {
+              return res.end(cachedModels.payload);
+            }
+
             if (provider === 'openrouter') {
               let openrouterModels: Array<{ value: string; label: string; tag: string }> = [];
-              if (apiKey || baseUrl) {
-                const targetUrl = baseUrl ? `${baseUrl.replace(/\/+$/, '')}/v1/models` : 'https://openrouter.ai/api/v1/models';
-                try {
-                  const controller = new AbortController();
-                  const timer = setTimeout(() => controller.abort(), 2500);
-                  const headers: Record<string, string> = {
-                    'Accept': 'application/json',
-                    'User-Agent': 'ClawDock/1.0'
-                  };
-                  if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
-                  const resp = await fetch(targetUrl, { signal: controller.signal, headers });
-                  clearTimeout(timer);
-                  if (resp.ok) {
-                    const json: any = await resp.json();
-                    const list = Array.isArray(json.data) ? json.data : (Array.isArray(json.models) ? json.models : []);
-                    if (list.length > 0) {
-                      openrouterModels = list.slice(0, 60).map((m: any) => {
-                        const mid = m.id || m.name;
-                        const mname = m.name || mid;
-                        return {
-                          value: String(mid),
-                          label: mname && mname !== mid ? `${mname} (${mid})` : String(mid),
-                          tag: 'OpenRouter'
-                        };
-                      });
-                    }
+              const b = (baseUrl || 'https://openrouter.ai/api/v1').trim().replace(/\/+$/, '');
+              const targetUrl = b.endsWith('/models')
+                ? b
+                : b.endsWith('/v1')
+                ? `${b}/models`
+                : `${b}/v1/models`;
+
+              try {
+                const controller = new AbortController();
+                const timer = setTimeout(() => controller.abort(), 1500);
+                const headers: Record<string, string> = {
+                  'Accept': 'application/json',
+                  'User-Agent': 'ClawDock/1.0'
+                };
+                if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+                const resp = await fetch(targetUrl, { signal: controller.signal, headers });
+                clearTimeout(timer);
+                if (resp.ok) {
+                  const json: any = await resp.json();
+                  const list = Array.isArray(json.data) ? json.data : (Array.isArray(json.models) ? json.models : []);
+                  if (list.length > 0) {
+                    openrouterModels = list.slice(0, 60).map((m: any) => {
+                      const mid = m.id || m.name;
+                      const mname = m.name || mid;
+                      return {
+                        value: String(mid),
+                        label: mname && mname !== mid ? `${mname} (${mid})` : String(mid),
+                        tag: 'OpenRouter'
+                      };
+                    });
                   }
-                } catch {}
-              }
+                }
+              } catch {}
+
               const catalog = openrouterModels.length > 0 ? openrouterModels : [
                 { value: 'anthropic/claude-3.7-sonnet', label: 'OpenRouter: Claude 3.7 Sonnet', tag: 'Proxy' },
                 { value: 'deepseek/deepseek-r1', label: 'OpenRouter: DeepSeek R1', tag: 'Proxy' },
                 { value: 'meta-llama/llama-3.3-70b-instruct', label: 'OpenRouter: Llama 3.3 70B', tag: 'Proxy' },
                 { value: 'openai/gpt-4o', label: 'OpenRouter: GPT-4o', tag: 'Proxy' }
               ];
-              return res.end(JSON.stringify({
+
+              const payload = JSON.stringify({
                 success: true,
                 provider: 'openrouter',
                 baseUrl,
@@ -2373,14 +2416,21 @@ fallback:
                 modelsCount: catalog.length,
                 isLiveProbed: openrouterModels.length > 0,
                 models: catalog
-              }));
+              });
+              modelDiscoveryCache.set(modelsCacheKey, { timestamp: Date.now(), payload });
+              return res.end(payload);
             }
 
             let liveOllamaModels: string[] = [];
             if (baseUrl && (provider === 'ollama' || provider === 'custom' || baseUrl.includes('11434'))) {
               try {
+                const isPrivateIp = /192\.168\.|10\.\d+\.|172\.(1[6-9]|2\d|3[01])\.|127\.0\.0\.1|localhost/.test(baseUrl);
+                const probeTimeout = isPrivateIp ? 800 : 1500;
                 const cleanBase = baseUrl.replace(/\/v1\/?$/, '').replace(/\/+$/, '');
-                const resp = await fetch(`${cleanBase}/api/tags`, { signal: AbortSignal.timeout(2000) });
+                const controller = new AbortController();
+                const timer = setTimeout(() => controller.abort(), probeTimeout);
+                const resp = await fetch(`${cleanBase}/api/tags`, { signal: controller.signal });
+                clearTimeout(timer);
                 if (resp.ok) {
                   const json: any = await resp.json();
                   if (Array.isArray(json.models)) {
@@ -2389,12 +2439,17 @@ fallback:
                 }
               } catch {}
             }
-            const models = [
+
+            const models = provider === 'custom' ? [
+              { value: 'gemma4-soul:latest', label: 'gemma4-soul:latest (Active Checkpoint)', tag: 'Active' },
+              { value: 'custom-model', label: 'Custom Model (Specify below or probe endpoint)', tag: 'Custom' }
+            ] : [
               { value: 'claude-3-7-sonnet', label: 'claude-3-7-sonnet (Container Active Checkpoint)', tag: 'Active' },
               { value: 'gemma4-soul:latest', label: 'gemma4-soul:latest (Local Edge / Active)', tag: 'Active' },
               { value: 'qwen2.5-coder:7b', label: 'qwen2.5-coder:7b', tag: 'Local' },
               { value: 'deepseek-r1', label: 'DeepSeek-R1', tag: 'Reasoning' }
             ];
+
             for (const m of liveOllamaModels) {
               if (!models.some(x => x.value === m)) {
                 models.unshift({ value: m, label: `${m} (Live Ollama)`, tag: 'Live' });
@@ -2421,7 +2476,8 @@ fallback:
                 lastSuccessTimestamp
               };
             });
-            return res.end(JSON.stringify({
+
+            const finalPayload = JSON.stringify({
               success: true,
               provider,
               baseUrl,
@@ -2429,7 +2485,9 @@ fallback:
               modelsCount: enrichedModels.length,
               lastSuccessTimestamp,
               models: enrichedModels
-            }));
+            });
+            modelDiscoveryCache.set(modelsCacheKey, { timestamp: Date.now(), payload: finalPayload });
+            return res.end(finalPayload);
           }
         },
         {

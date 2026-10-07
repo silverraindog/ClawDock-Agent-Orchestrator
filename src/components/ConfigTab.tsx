@@ -1255,7 +1255,10 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
   };
 
   useEffect(() => {
-    handleFetchModels();
+    const timer = setTimeout(() => {
+      handleFetchModels();
+    }, 300);
+    return () => clearTimeout(timer);
   }, [config.model.provider, config.model.baseUrl, config.model.useProxy, proxyModelsEnabled, agentId]);
 
   // Periodic Auto-refresh of models catalog
@@ -1265,13 +1268,16 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
     const interval = setInterval(() => {
       // Periodic background probe
       handleFetchModels();
-    }, 15000); // 15 seconds standard interval
+    }, 30000); // 30 seconds standard interval
 
     return () => clearInterval(interval);
   }, [autoRefreshEnabled, config.model.provider, config.model.baseUrl, config.model.useProxy, proxyModelsEnabled, agentId]);
 
   useEffect(() => {
-    handleFetchFallbackModels();
+    const timer = setTimeout(() => {
+      handleFetchFallbackModels();
+    }, 350);
+    return () => clearTimeout(timer);
   }, [
     config.fallback?.fallbackProvider,
     config.fallback?.provider,

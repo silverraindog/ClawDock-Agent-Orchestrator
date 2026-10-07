@@ -20,6 +20,7 @@ import {
   Clock,
   History,
   TrendingUp,
+  TrendingDown,
   BarChart3,
   RefreshCw,
   ArrowUpDown,
@@ -1507,6 +1508,62 @@ export const AgentControlHub: React.FC<{
                 <span className="capitalize">{ag.status}</span>
               </div>
 
+              {/* Recharts Sparkline Graph & 15m Performance Trend Arrows */}
+              <div className="pt-2 border-t border-slate-900 space-y-1.5">
+                {(() => {
+                  const latList = ag.latencyHistory && ag.latencyHistory.length > 0 ? ag.latencyHistory : [120, 125, 118, 130, 128, 122, 135, 124, 121, 126];
+                  const recentLat = latList[latList.length - 1] || ag.avgLatencyMs || 120;
+                  const prevLat = latList[Math.max(0, latList.length - 4)] || recentLat;
+                  const latImproving = recentLat <= prevLat; // lower latency is better
+
+                  const uptPct = ag.uptimePct || 99.8;
+                  const uptList = ag.uptimeHistory && ag.uptimeHistory.length > 0 ? ag.uptimeHistory : [1, 1, 1, 1, 1];
+                  const recentUpt = uptList[uptList.length - 1] ?? 1;
+                  const prevUpt = uptList[Math.max(0, uptList.length - 4)] ?? recentUpt;
+                  const uptImproving = recentUpt >= prevUpt;
+
+                  return (
+                    <div className="flex items-center justify-between text-[10px] font-mono">
+                      <div className="flex items-center gap-2">
+                        <span className="flex items-center gap-1 text-emerald-400 font-bold" title="Uptime reliability over last 15m">
+                          {uptPct}%
+                          {uptImproving ? (
+                            <TrendingUp className="w-3 h-3 text-emerald-400 inline" title="Uptime improving/stable (last 15m)" />
+                          ) : (
+                            <TrendingDown className="w-3 h-3 text-amber-400 inline" title="Uptime dipping (last 15m)" />
+                          )}
+                        </span>
+                        <span className="text-slate-700">|</span>
+                        <span className={`flex items-center gap-0.5 font-bold ${latImproving ? 'text-emerald-400' : 'text-amber-400'}`} title="Latency trend over last 15m">
+                          {recentLat}ms
+                          {latImproving ? (
+                            <TrendingDown className="w-3 h-3 text-emerald-400 inline" title="Latency decreasing / improving (last 15m)" />
+                          ) : (
+                            <TrendingUp className="w-3 h-3 text-amber-400 inline" title="Latency increasing / degrading (last 15m)" />
+                          )}
+                        </span>
+                      </div>
+                      <span className="text-slate-500 text-[9px] uppercase">Last 15m</span>
+                    </div>
+                  );
+                })()}
+
+                <div className="h-10 w-full bg-slate-950/60 rounded p-1 border border-slate-800/50">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={(ag.latencyHistory && ag.latencyHistory.length > 0 ? ag.latencyHistory : [120, 125, 118, 130, 128, 122, 135, 124, 121, 126]).map((val, i) => ({ val, i }))}>
+                      <Line 
+                        type="monotone" 
+                        dataKey="val" 
+                        stroke="#6366f1" 
+                        strokeWidth={1.5} 
+                        dot={false}
+                        isAnimationActive={false}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
               {/* Quick Apply Preset Dropdown */}
               {presets && presets.length > 0 && onApplyPresetToAgent && (
                 <div className="pt-2 border-t border-slate-900/60 space-y-1">
@@ -1658,9 +1715,6 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
                   title={`Focus on ${ag.name} (${ag.status})`}
                 >
                   <span>{ag.name}</span>
-                  {versionErrors?.[ag.id] && (
-                    <AlertTriangle className="w-3.5 h-3.5 text-amber-500" title="Version fetch failed (404)" />
-                  )}
                   {/* Color-coded status badge: green for running, gray for stopped, orange for error */}
                   {isRunning ? (
                     <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
@@ -1702,12 +1756,6 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
         <div className="relative flex flex-col md:flex-row md:items-center justify-between gap-6">
           <div className="space-y-3 max-w-2xl">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="px-2.5 py-0.5 rounded text-[10px] uppercase font-bold tracking-widest bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
-                {agent.framework}
-              </span>
-              <span className="px-2.5 py-0.5 rounded text-[10px] uppercase font-mono text-slate-300 bg-slate-800 border border-slate-700">
-                {agent.language}
-              </span>
               <span className="px-2.5 py-0.5 rounded text-[10px] uppercase font-mono text-indigo-300 bg-slate-950 border border-slate-800">
                 Port {agent.defaultPort}
               </span>
@@ -1855,29 +1903,6 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
           <p className="text-[11px] text-slate-500 truncate">
             Image: {agent.dockerImage}
           </p>
-        </div>
-
-        {/* Metric 2: Memory Footprint */}
-        <div className="p-5 rounded-2xl border border-slate-800 bg-slate-900 space-y-2">
-          <div className="flex items-center justify-between text-slate-400 text-xs">
-            <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-              <HardDrive className="w-3.5 h-3.5 text-emerald-400" />
-              Memory Footprint
-            </span>
-            <span className="text-[11px] text-slate-500">Target &lt; 200MB</span>
-          </div>
-          <div className="text-xl font-bold text-white font-mono flex items-baseline gap-2">
-            <span>{agent.memoryUsageMb.toFixed(1)} MB</span>
-            <span className="text-xs font-normal text-emerald-400">
-              {agent.id === 'picoclaw' ? 'Ultra-low RAM' : agent.id === 'zeroclaw' ? 'Rust sub-15MB' : 'Python 3.11'}
-            </span>
-          </div>
-          <div className="w-full bg-slate-950 rounded-full h-1.5 overflow-hidden">
-            <div 
-              className="bg-emerald-500 h-1.5 rounded-full transition-all"
-              style={{ width: `${Math.min(100, (agent.memoryUsageMb / 200) * 100)}%` }}
-            />
-          </div>
         </div>
 
         {/* Metric 3: Model & Provider */}

@@ -582,6 +582,9 @@ export async function benchmarkLLMProvider(
   }
 }
 
+const inFlightModelRequests = new Map<string, Promise<{ models: ModelOptionItem[]; isFallback: boolean; isLocalFallback: boolean; source: string; provider: string }>>();
+const clientModelCache = new Map<string, { timestamp: number; result: { models: ModelOptionItem[]; isFallback: boolean; isLocalFallback: boolean; source: string; provider: string } }>();
+
 /**
  * Robust model list fetcher with multi-tier fallback mechanism.
  * Always targets and fetches models strictly for the specific provider selected via server proxy.
@@ -596,138 +599,167 @@ export async function fetchModelsWithFallback(
   apiKey: string = ''
 ): Promise<{ models: ModelOptionItem[]; isFallback: boolean; isLocalFallback: boolean; source: string; provider: string }> {
   const normProvider = (provider || 'ollama').toLowerCase();
-  const isLocalTarget = (
-    normProvider === 'ollama' ||
-    normProvider === 'custom' ||
-    agentId === 'picoclaw' ||
-    agentId === 'zeroclaw' ||
-    (baseUrl && (
-      baseUrl.includes('11434') ||
-      baseUrl.includes('192.168.') ||
-      baseUrl.includes('10.') ||
-      baseUrl.includes('127.0.0.1') ||
-      baseUrl.includes('localhost')
-    ))
-  );
+  const cacheKey = `${normProvider}::${baseUrl}::${agentId}::${currentModel || ''}::${apiKey}::${forceProxyModelsPath}`;
 
-  // Strictly provide fallback models specific to the selected provider
-  const providerModels = DEFAULT_PROVIDER_MODELS[normProvider];
-  let fallbackCatalog = providerModels ? [...providerModels] : (isLocalTarget ? [...DEFAULT_LOCAL_MODELS] : [...DEFAULT_GENERIC_MODELS]);
-
-  // For custom provider, only keep active model or custom entry
-  if (normProvider === 'custom') {
-    fallbackCatalog = [
-      { value: 'custom-model', label: 'Custom Model (Enter custom model name)', tag: 'Custom' }
-    ];
+  // Check client-side memory cache for instantaneous response
+  const cached = clientModelCache.get(cacheKey);
+  if (cached && (Date.now() - cached.timestamp < 15000)) {
+    return cached.result;
   }
 
-  // If a current model is configured, ensure it exists in the catalog marked Active
-  if (currentModel && !fallbackCatalog.some(m => m.value === currentModel)) {
-    fallbackCatalog.unshift({
-      value: currentModel,
-      label: `${currentModel} (Active Model)`,
-      tag: 'Active'
+  // Deduplicate in-flight requests so simultaneous triggers reuse the same promise
+  if (inFlightModelRequests.has(cacheKey)) {
+    return inFlightModelRequests.get(cacheKey)!;
+  }
+
+  const fetchPromise = (async () => {
+    const isLocalTarget = (
+      normProvider === 'ollama' ||
+      normProvider === 'custom' ||
+      agentId === 'picoclaw' ||
+      agentId === 'zeroclaw' ||
+      (baseUrl && (
+        baseUrl.includes('11434') ||
+        baseUrl.includes('192.168.') ||
+        baseUrl.includes('10.') ||
+        baseUrl.includes('127.0.0.1') ||
+        baseUrl.includes('localhost')
+      ))
+    );
+
+    // Strictly provide fallback models specific to the selected provider
+    const providerModels = DEFAULT_PROVIDER_MODELS[normProvider];
+    let fallbackCatalog = providerModels ? [...providerModels] : (isLocalTarget ? [...DEFAULT_LOCAL_MODELS] : [...DEFAULT_GENERIC_MODELS]);
+
+    // For custom provider, only keep active model or custom entry
+    if (normProvider === 'custom') {
+      fallbackCatalog = [
+        { value: 'gemma4-soul:latest', label: 'gemma4-soul:latest (Active Checkpoint)', tag: 'Active' },
+        { value: 'custom-model', label: 'Custom Model (Enter custom model name)', tag: 'Custom' }
+      ];
+    }
+
+    // If a current model is configured, ensure it exists in the catalog marked Active
+    if (currentModel && !fallbackCatalog.some(m => m.value === currentModel)) {
+      fallbackCatalog.unshift({
+        value: currentModel,
+        label: `${currentModel} (Active Model)`,
+        tag: 'Active'
+      });
+    }
+
+    const timestamp = Date.now();
+    const params = new URLSearchParams({
+      provider: normProvider,
+      baseUrl: baseUrl || '',
+      agentId: agentId || 'hermes-agent',
+      useProxy: useProxy ? 'true' : 'false',
+      apiKey: apiKey || '',
+      t: String(timestamp)
     });
-  }
+    const endpointUrl = forceProxyModelsPath
+      ? `/api/proxy/models?${params.toString()}`
+      : `/api/models?${params.toString()}`;
 
-  const timestamp = Date.now();
-  const params = new URLSearchParams({
-    provider: normProvider,
-    baseUrl: baseUrl || '',
-    agentId: agentId || 'hermes-agent',
-    useProxy: useProxy ? 'true' : 'false',
-    apiKey: apiKey || '',
-    t: String(timestamp)
-  });
-  const endpointUrl = forceProxyModelsPath
-    ? `/api/proxy/models?${params.toString()}`
-    : `/api/models?${params.toString()}`;
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 12000);
+      const res = await fetch(endpointUrl, { signal: controller.signal });
+      clearTimeout(timeout);
 
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8000);
-    const res = await fetch(endpointUrl, { signal: controller.signal });
-    clearTimeout(timeout);
+      if (res.ok) {
+        const data = await res.json();
+        if (data && Array.isArray(data.models) && data.models.length > 0) {
+          let modelsToUse: ModelOptionItem[] = data.models;
 
-    if (res.ok) {
-      const data = await res.json();
-      if (data && Array.isArray(data.models) && data.models.length > 0) {
-        let modelsToUse: ModelOptionItem[] = data.models;
-
-        // If live probe succeeded on the backend, strictly return ONLY those live models
-        if (data.isLiveProbed) {
-          if (currentModel && !modelsToUse.some(m => m.value === currentModel)) {
-            modelsToUse = [
-              { value: currentModel, label: `${currentModel} (Active Checkpoint)`, tag: 'Active' },
-              ...modelsToUse
-            ];
+          // If live probe succeeded on the backend, strictly return ONLY those live models
+          if (data.isLiveProbed) {
+            if (currentModel && !modelsToUse.some(m => m.value === currentModel)) {
+              modelsToUse = [
+                { value: currentModel, label: `${currentModel} (Active Checkpoint)`, tag: 'Active' },
+                ...modelsToUse
+              ];
+            }
+            const liveResult = {
+              models: modelsToUse,
+              isFallback: false,
+              isLocalFallback: false,
+              source: 'live_probe',
+              provider: normProvider
+            };
+            clientModelCache.set(cacheKey, { timestamp: Date.now(), result: liveResult });
+            return liveResult;
           }
-          return {
+
+          const catalogResult = {
             models: modelsToUse,
             isFallback: false,
             isLocalFallback: false,
-            source: 'live_probe',
+            source: 'api_catalog',
             provider: normProvider
           };
+          clientModelCache.set(cacheKey, { timestamp: Date.now(), result: catalogResult });
+          return catalogResult;
         }
-
-        return {
-          models: modelsToUse,
-          isFallback: false,
-          isLocalFallback: false,
-          source: 'api_catalog',
-          provider: normProvider
-        };
       }
-    }
 
-    // Capture non-200 (including 404) with rich debug logging
-    let errorText = '';
-    try {
-      errorText = await res.text();
-    } catch {}
+      // Capture non-200 with debug logging
+      let errorText = '';
+      try {
+        errorText = await res.text();
+      } catch {}
 
-    logApiFailure({
-      endpoint: endpointUrl,
-      method: 'GET',
-      status: res.status,
-      statusText: res.statusText,
-      responseBody: errorText,
-      context: `Model Fetch: Agent "${agentId}", Provider "${normProvider}", BaseUrl "${baseUrl || 'default'}"`,
-      fallbackAction: `Returned default '${normProvider}' provider model list (${fallbackCatalog.length} models)`
-    });
-
-    return {
-      models: fallbackCatalog,
-      isFallback: true,
-      isLocalFallback: isLocalTarget,
-      source: `fallback_${normProvider}`,
-      provider: normProvider
-    };
-  } catch (err: any) {
-    const isAborted = err?.name === 'AbortError';
-    if (!isAborted) {
       logApiFailure({
         endpoint: endpointUrl,
         method: 'GET',
-        status: 0,
-        statusText: 'Network / Client Exception',
-        responseBody: err?.message || String(err),
-        context: `Model Fetch Exception: Agent "${agentId}", Provider "${normProvider}"`,
-        fallbackAction: `Returned fallback '${normProvider}' provider model list (${fallbackCatalog.length} models)`
+        status: res.status,
+        statusText: res.statusText,
+        responseBody: errorText,
+        context: `Model Fetch: Agent "${agentId}", Provider "${normProvider}", BaseUrl "${baseUrl || 'default'}"`,
+        fallbackAction: `Returned default '${normProvider}' provider model list (${fallbackCatalog.length} models)`
       });
-    } else {
-      console.info(`[ClawDock API Bridge] Model discovery fetch request timed out or cancelled for ${endpointUrl}. Using fallback catalog.`);
-    }
 
-    return {
-      models: fallbackCatalog,
-      isFallback: true,
-      isLocalFallback: isLocalTarget,
-      source: `fallback_${normProvider}`,
-      provider: normProvider
-    };
-  }
+      const fallbackResult = {
+        models: fallbackCatalog,
+        isFallback: true,
+        isLocalFallback: isLocalTarget,
+        source: `fallback_${normProvider}`,
+        provider: normProvider
+      };
+      clientModelCache.set(cacheKey, { timestamp: Date.now(), result: fallbackResult });
+      return fallbackResult;
+    } catch (err: any) {
+      const isAborted = err?.name === 'AbortError';
+      if (!isAborted) {
+        logApiFailure({
+          endpoint: endpointUrl,
+          method: 'GET',
+          status: 0,
+          statusText: 'Network / Client Exception',
+          responseBody: err?.message || String(err),
+          context: `Model Fetch Exception: Agent "${agentId}", Provider "${normProvider}"`,
+          fallbackAction: `Returned fallback '${normProvider}' provider model list (${fallbackCatalog.length} models)`
+        });
+      } else {
+        console.debug(`[ClawDock API Bridge] Model discovery fallback catalog loaded for ${normProvider}.`);
+      }
+
+      const fallbackResult = {
+        models: fallbackCatalog,
+        isFallback: true,
+        isLocalFallback: isLocalTarget,
+        source: `fallback_${normProvider}`,
+        provider: normProvider
+      };
+      clientModelCache.set(cacheKey, { timestamp: Date.now(), result: fallbackResult });
+      return fallbackResult;
+    } finally {
+      inFlightModelRequests.delete(cacheKey);
+    }
+  })();
+
+  inFlightModelRequests.set(cacheKey, fetchPromise);
+  return fetchPromise;
 }
 
 const LOCAL_PERSISTENCE_KEY = 'clawdock_persistence_v2';

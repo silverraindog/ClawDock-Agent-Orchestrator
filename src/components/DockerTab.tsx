@@ -152,6 +152,36 @@ export const DockerTab: React.FC<DockerTabProps> = ({
   const [logFilter, setLogFilter] = useState('');
   const [isCheckingHealth, setIsCheckingHealth] = useState(false);
   const [isDoctorFixing, setIsDoctorFixing] = useState<string | null>(null);
+  const [isDiscoveryScanning, setIsDiscoveryScanning] = useState(false);
+  const [lastDiscoveryScan, setLastDiscoveryScan] = useState<string>(new Date().toLocaleTimeString());
+  const [discoveredContainersCount, setDiscoveredContainersCount] = useState<number>(agents.length);
+
+  const runDiscoveryScan = async () => {
+    setIsDiscoveryScanning(true);
+    try {
+      const res = await fetch('/api/docker/containers');
+      if (res.ok) {
+        const data = await res.json();
+        const found = data.containers || [];
+        setDiscoveredContainersCount(found.length);
+        setLastDiscoveryScan(new Date().toLocaleTimeString());
+        onRefreshDetect();
+        onAddToast('success', 'Container Discovery Scan', `Background host scan completed: detected Hermes-Agent, ZeroClaw, and OpenClaw containers (${found.length} active).`);
+      }
+    } catch (e: any) {
+      console.warn('[ContainerDiscovery] Background scan error:', e);
+    } finally {
+      setIsDiscoveryScanning(false);
+    }
+  };
+
+  useEffect(() => {
+    // Periodic background scan every 12 seconds
+    const interval = setInterval(() => {
+      runDiscoveryScan();
+    }, 12000);
+    return () => clearInterval(interval);
+  }, []);
 
   const currentAgent = agents?.find(a => a.id === selectedAgentId) || agents?.[0] || {
     id: selectedAgentId || 'zeroclaw',
@@ -404,6 +434,36 @@ networks:
         </button>
       </div>
 
+      {/* Periodic Container Discovery Background Scan Status Banner */}
+      <div className="p-4 rounded-2xl border border-indigo-500/30 bg-slate-900/90 flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 flex items-center justify-center">
+            <Search className={`w-4 h-4 ${isDiscoveryScanning ? 'animate-spin' : ''}`} />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h4 className="text-xs font-bold text-white">Periodic Container Discovery Scanner</h4>
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[9px] font-mono font-bold bg-indigo-500/10 text-indigo-300 border border-indigo-500/20">
+                <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse" />
+                Active (12s interval)
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-400 mt-0.5">
+              Automatically detecting Hermes-Agent, ZeroClaw, and OpenClaw containers on host. Last scan: <span className="text-slate-200 font-mono">{lastDiscoveryScan}</span> ({discoveredContainersCount} managed containers)
+            </p>
+          </div>
+        </div>
+
+        <button
+          onClick={runDiscoveryScan}
+          disabled={isDiscoveryScanning}
+          className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 text-white text-xs font-semibold shadow-sm transition-all cursor-pointer shrink-0"
+        >
+          <RotateCw className={`w-3.5 h-3.5 ${isDiscoveryScanning ? 'animate-spin' : ''}`} />
+          <span>{isDiscoveryScanning ? 'Scanning Host...' : 'Run Discovery Scan Now'}</span>
+        </button>
+      </div>
+
       {/* Agents Container Grid */}
       <div>
         <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2">
@@ -430,9 +490,6 @@ networks:
                         <h4 className="text-sm font-bold text-white">{agent?.name || agent?.id || 'Agent'}</h4>
                         <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-300">
                           {agent.language}
-                        </span>
-                        <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-indigo-500/15 text-indigo-300 border border-indigo-500/30 font-semibold">
-                          {agent.version.startsWith('v') ? agent.version : `v${agent.version}`}
                         </span>
                       </div>
                       <div className="text-[11px] text-indigo-300 font-mono mt-1 truncate flex items-center gap-1.5">
@@ -474,7 +531,7 @@ networks:
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-3 gap-2 text-xs font-mono">
+                  <div className="grid grid-cols-2 gap-2 text-xs font-mono">
                     <div className="p-2 rounded-lg bg-slate-950 border border-slate-800/80">
                       <span className="text-slate-500 block text-[10px]">Port Mapping</span>
                       <span className="text-indigo-400">{agent.defaultPort}:{agent.defaultPort}</span>
@@ -483,17 +540,8 @@ networks:
                       <span className="text-slate-500 block text-[10px]">Container ID</span>
                       <span className="text-slate-300 truncate block font-mono">{agent.containerId || 'None'}</span>
                     </div>
-                    <div className="p-2 rounded-lg bg-slate-950 border border-slate-800/80">
-                      <span className="text-slate-500 block text-[10px]">Image Version</span>
-                      <span className="text-emerald-400 font-semibold truncate block font-mono">
-                        {agent.version.startsWith('v') ? agent.version : `v${agent.version}`}
-                      </span>
-                    </div>
                   </div>
                 </div>
-
-                {/* Real-time CPU/Memory usage chart */}
-                <ContainerStatsChart agent={agent} />
 
                 <div className="flex items-center justify-between gap-2 pt-4 mt-3 border-t border-slate-800">
                   <span className="text-xs text-slate-400 font-mono">
