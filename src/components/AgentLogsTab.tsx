@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import * as ReactWindow from 'react-window';
-const List = (ReactWindow as any).FixedSizeList || (ReactWindow as any).List || ReactWindow;
+import { List } from 'react-window';
 import {
   Terminal,
   RefreshCw,
@@ -159,11 +158,11 @@ export const AgentLogsTab: React.FC<AgentLogsTabProps> = ({
     return matchesSource && matchesLevel && matchesSearch;
   });
 
-  const LogRow = ({ index, style }: { index: number; style: React.CSSProperties }) => {
+  const LogRow = ({ index, style, ariaAttributes }: { index: number; style: React.CSSProperties; ariaAttributes: any }) => {
     const entry = filteredEntries[index];
     const isDocker = entry.source === 'DOCKER';
     return (
-      <div style={style} className="px-2">
+      <div style={style} className="px-2" {...ariaAttributes}>
         <div
           className={`p-3 rounded-xl border transition-all flex flex-col md:flex-row md:items-center justify-between gap-3 ${
             entry.level === 'ERROR'
@@ -345,14 +344,14 @@ export const AgentLogsTab: React.FC<AgentLogsTabProps> = ({
             <p>// No matching log events found for the selected source or search query.</p>
           </div>
         ) : (
-          <List
+          <List<object>
             height={600}
             rowCount={filteredEntries.length}
             rowHeight={85}
             width="100%"
-          >
-            {LogRow}
-          </List>
+            rowComponent={LogRow}
+            rowProps={{}}
+          />
         )}
       </div>
     </div>
