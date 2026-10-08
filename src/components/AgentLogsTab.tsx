@@ -90,8 +90,8 @@ export const AgentLogsTab: React.FC<AgentLogsTabProps> = ({
   }, [activeAgentId, isLiveContainer]);
 
   const copyAllLogs = () => {
-    const dockerText = containerLogs.join('\n');
-    const runtimeText = uiLogs.map(l => `[${l.timestamp}] [${l.level}] [${l.type}] ${l.message}`).join('\n');
+    const dockerText = (containerLogs || []).join('\n');
+    const runtimeText = (uiLogs || []).map(l => `[${l.timestamp}] [${l.level}] [${l.type}] ${l.message}`).join('\n');
     const combined = `=== DOCKER CONTAINER LOGS ===\n${dockerText}\n\n=== RUNTIME ORCHESTRATION LOGS ===\n${runtimeText}`;
     navigator.clipboard.writeText(combined);
     setCopiedContainer(true);
@@ -100,7 +100,7 @@ export const AgentLogsTab: React.FC<AgentLogsTabProps> = ({
 
   // Helper to determine log level of a raw container log line
   const getContainerLogLevel = (line: string): 'INFO' | 'WARN' | 'ERROR' => {
-    const lower = line.toLowerCase();
+    const lower = (line || '').toLowerCase();
     if (lower.includes('error') || lower.includes('err') || lower.includes('fail') || lower.includes('fatal') || lower.includes('exception')) {
       return 'ERROR';
     }
@@ -112,10 +112,11 @@ export const AgentLogsTab: React.FC<AgentLogsTabProps> = ({
 
   // Helper to highlight search terms in text
   const renderHighlightedText = (text: string, query: string) => {
+    if (!text) return '';
     if (!query.trim()) return text;
     try {
       const parts = text.split(new RegExp(`(${query})`, 'gi'));
-      return parts.map((part, i) => 
+      return (parts || []).map((part, i) => 
         part.toLowerCase() === query.toLowerCase() ? (
           <mark key={i} className="bg-amber-400 text-slate-950 px-0.5 rounded font-bold">{part}</mark>
         ) : (
@@ -128,22 +129,22 @@ export const AgentLogsTab: React.FC<AgentLogsTabProps> = ({
   };
 
   // Normalized log entries grouped by source
-  const dockerEntries = containerLogs.map((line, idx) => ({
+  const dockerEntries = (containerLogs || []).map((line, idx) => ({
     id: `docker-${idx}`,
     source: 'DOCKER' as const,
     timestamp: 'CONTAINER',
     type: 'STDOUT/STDERR',
     level: getContainerLogLevel(line),
-    message: line
+    message: line || ''
   }));
 
-  const runtimeEntries = uiLogs.map((log, idx) => ({
+  const runtimeEntries = (uiLogs || []).map((log, idx) => ({
     id: `runtime-${idx}`,
     source: 'RUNTIME' as const,
-    timestamp: log.timestamp,
-    type: log.type,
-    level: log.level,
-    message: log.message
+    timestamp: log.timestamp || '',
+    type: log.type || '',
+    level: log.level || 'INFO',
+    message: log.message || ''
   }));
 
   const allEntries = [...dockerEntries, ...runtimeEntries];
@@ -224,7 +225,7 @@ export const AgentLogsTab: React.FC<AgentLogsTabProps> = ({
         <div className="flex items-center gap-3 flex-wrap w-full md:w-auto">
           <div className="text-xs font-semibold text-slate-400">Agent:</div>
           <div className="flex items-center gap-1.5 flex-wrap">
-            {agents.map((agent) => {
+            {(agents || []).map((agent) => {
               const isSelected = activeAgentId === agent.id;
               return (
                 <button

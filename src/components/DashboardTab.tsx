@@ -993,7 +993,7 @@ export const LLMHealthMonitorWidget: React.FC<{
   const hasFallbackActive = activeFallbackAgents.length > 0;
 
   const filteredProviders = providers.filter(p => {
-    const isConfigured = p.configuredInAgents.length > 0 || 
+    const isConfigured = (p.configuredInAgents || []).length > 0 || 
                          (activeProvider && p.id === activeProvider.toLowerCase()) || 
                          (fallbackProvider && p.id === fallbackProvider.toLowerCase());
     if (filter === 'configured') return isConfigured;
@@ -1371,9 +1371,9 @@ export const LLMHealthMonitorWidget: React.FC<{
                   </div>
 
                   {/* Configured in Agents info */}
-                  {prov.configuredInAgents.length > 0 && (
+                  {(prov.configuredInAgents || []).length > 0 && (
                     <div className="flex flex-wrap gap-1 pt-1">
-                      {prov.configuredInAgents.map(a => {
+                      {(prov.configuredInAgents || []).map(a => {
                         const isPrim = prov.isPrimaryFor?.includes(a);
                         const isFb = prov.isFallbackFor?.includes(a);
                         return (
@@ -1458,9 +1458,11 @@ export const AgentControlHub: React.FC<{
             <div 
               key={ag.id} 
               className={`p-4 rounded-xl border transition-all flex flex-col justify-between gap-3 ${
-                isSelected 
-                  ? 'bg-indigo-500/5 border-indigo-500/40 shadow-md shadow-indigo-500/5' 
-                  : 'bg-slate-950 border-slate-800/80 hover:border-slate-700/85'
+                ag.status === 'warning'
+                  ? 'bg-amber-500/10 border-amber-500/50 shadow-md shadow-amber-500/10 ring-1 ring-amber-500/30'
+                  : isSelected 
+                    ? 'bg-indigo-500/5 border-indigo-500/40 shadow-md shadow-indigo-500/5' 
+                    : 'bg-slate-950 border-slate-800/80 hover:border-slate-700/85'
               }`}
             >
               <div className="space-y-1.5">
@@ -1477,24 +1479,28 @@ export const AgentControlHub: React.FC<{
                     </p>
                   </div>
                   <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-bold shrink-0 ${
-                    isRunning 
-                      ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' 
-                      : ag.status === 'error'
-                        ? 'bg-orange-500/10 text-orange-400 border border-orange-500/20'
-                        : isRestarting
-                          ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
-                          : 'bg-slate-800 text-slate-400 border border-slate-700'
+                    ag.status === 'warning'
+                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 animate-pulse'
+                      : isRunning 
+                        ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' 
+                        : ag.status === 'error'
+                          ? 'bg-orange-500/10 text-orange-400 border border-orange-500/20'
+                          : isRestarting
+                            ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                            : 'bg-slate-800 text-slate-400 border border-slate-700'
                   }`}>
                     <span className={`w-1 h-1 rounded-full shrink-0 ${
-                      isRunning 
-                        ? 'bg-emerald-400 animate-pulse' 
-                        : ag.status === 'error'
-                          ? 'bg-orange-400 animate-pulse'
-                          : isRestarting
-                            ? 'bg-amber-400 animate-pulse' 
-                            : 'bg-slate-500'
+                      ag.status === 'warning'
+                        ? 'bg-amber-400 animate-ping'
+                        : isRunning 
+                          ? 'bg-emerald-400 animate-pulse' 
+                          : ag.status === 'error'
+                            ? 'bg-orange-400 animate-pulse'
+                            : isRestarting
+                              ? 'bg-amber-400 animate-pulse' 
+                              : 'bg-slate-500'
                     }`} />
-                    {isRunning ? 'Running' : ag.status === 'error' ? 'Error' : isRestarting ? 'Restarting' : 'Stopped'}
+                    {ag.status === 'warning' ? 'Warning' : isRunning ? 'Running' : ag.status === 'error' ? 'Error' : isRestarting ? 'Restarting' : 'Stopped'}
                   </span>
                 </div>
                 
@@ -1821,7 +1827,7 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
 
             {/* Capability tags */}
             <div className="flex flex-wrap gap-2 pt-1">
-              {agent.capabilities.map((cap) => (
+              {(agent.capabilities || []).map((cap) => (
                 <span
                   key={cap}
                   className="px-2.5 py-1 rounded-lg text-xs font-medium bg-slate-950 text-slate-300 border border-slate-800"

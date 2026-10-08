@@ -1657,7 +1657,7 @@ export const MCPTab: React.FC<MCPTabProps> = ({
                     Required Credentials & Environment Variables
                   </label>
 
-                  {configuringServer.envRequirements.map((req) => (
+                  {(configuringServer.envRequirements || []).map((req) => (
                     <div key={req.name} className="space-y-1">
                       <div className="flex items-center justify-between text-xs">
                         <span className="font-mono font-bold text-slate-200 flex items-center gap-1.5">

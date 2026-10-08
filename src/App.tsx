@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   LayoutDashboard, 
   Sliders, 
@@ -475,6 +475,57 @@ export default function App() {
   }, [configs]);
 
   // Persist agent states to localStorage whenever agents state changes
+  const agentsRef = useRef(agents);
+  useEffect(() => {
+    agentsRef.current = agents;
+  }, [agents]);
+
+  // 10-second Ping Mechanism verifying each agent container's status
+  useEffect(() => {
+    const pingAgentContainers = async () => {
+      const currentAgents = agentsRef.current || [];
+      const targetAgents = currentAgents.filter(a => a.status === 'running' || a.status === 'warning');
+      if (targetAgents.length === 0) return;
+
+      const pingResults = await Promise.all(
+        targetAgents.map(async (ag) => {
+          try {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), 3000);
+            const res = await fetch(`/api/agents/${ag.id}/logs`, {
+              method: 'GET',
+              signal: controller.signal
+            });
+            clearTimeout(timer);
+            return { id: ag.id, ok: res.ok || res.status === 200 || res.status === 304 };
+          } catch {
+            return { id: ag.id, ok: false };
+          }
+        })
+      );
+
+      const unresponsiveIds = new Set(pingResults.filter(r => !r.ok).map(r => r.id));
+
+      if (unresponsiveIds.size > 0 || currentAgents.some(a => a.status === 'warning')) {
+        setAgents(prev =>
+          prev.map(a => {
+            if (unresponsiveIds.has(a.id) && a.status === 'running') {
+              return { ...a, status: 'warning' as const };
+            } else if (!unresponsiveIds.has(a.id) && a.status === 'warning') {
+              return { ...a, status: 'running' as const };
+            }
+            return a;
+          })
+        );
+      }
+    };
+
+    // Run ping check initial burst & every 10 seconds
+    pingAgentContainers();
+    const pingInterval = setInterval(pingAgentContainers, 10000);
+    return () => clearInterval(pingInterval);
+  }, []);
+
   useEffect(() => {
     const localMap: Record<string, any> = {};
     agents.forEach(a => {
