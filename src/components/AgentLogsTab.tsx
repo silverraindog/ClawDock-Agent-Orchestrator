@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
+import * as ReactWindow from 'react-window';
+const List = (ReactWindow as any).FixedSizeList || (ReactWindow as any).List || ReactWindow;
 import {
   Terminal,
   RefreshCw,
@@ -40,8 +42,6 @@ export const AgentLogsTab: React.FC<AgentLogsTabProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [sourceGroup, setSourceGroup] = useState<'ALL' | 'DOCKER' | 'RUNTIME'>('ALL');
   const [levelFilter, setLevelFilter] = useState<'ALL' | 'INFO' | 'WARN' | 'ERROR'>('ALL');
-
-  const logsEndRef = useRef<HTMLDivElement>(null);
 
   // Sync active agent if prop changes
   useEffect(() => {
@@ -159,6 +159,53 @@ export const AgentLogsTab: React.FC<AgentLogsTabProps> = ({
     return matchesSource && matchesLevel && matchesSearch;
   });
 
+  const LogRow = ({ index, style }: { index: number; style: React.CSSProperties }) => {
+    const entry = filteredEntries[index];
+    const isDocker = entry.source === 'DOCKER';
+    return (
+      <div style={style} className="px-2">
+        <div
+          className={`p-3 rounded-xl border transition-all flex flex-col md:flex-row md:items-center justify-between gap-3 ${
+            entry.level === 'ERROR'
+              ? 'bg-rose-950/25 border-rose-500/30 text-rose-200'
+              : entry.level === 'WARN'
+              ? 'bg-amber-950/25 border-amber-500/30 text-amber-200'
+              : isDocker
+              ? 'bg-slate-900/70 border-slate-800 text-emerald-300/90'
+              : 'bg-slate-900/90 border-slate-800/80 text-slate-200'
+          }`}
+        >
+          <div className="flex items-start md:items-center gap-3 min-w-0">
+            <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider shrink-0 flex items-center gap-1 ${
+              isDocker
+                ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                : 'bg-indigo-500/15 text-indigo-400 border border-indigo-500/30'
+            }`}>
+              {isDocker ? <Cpu className="w-3 h-3" /> : <Activity className="w-3 h-3" />}
+              {entry.source}
+            </span>
+            <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase shrink-0 ${
+              entry.level === 'ERROR'
+                ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                : entry.level === 'WARN'
+                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                : 'bg-sky-500/20 text-sky-300 border border-sky-500/30'
+            }`}>
+              {entry.level}
+            </span>
+            <span className="text-[10px] text-slate-500 shrink-0 font-mono">[{entry.type}]</span>
+            <span className="break-all text-xs flex-1 font-mono">
+              {renderHighlightedText(entry.message, searchQuery)}
+            </span>
+          </div>
+          <div className="text-[10px] text-slate-500 shrink-0 font-mono text-right">
+            {entry.timestamp}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
       {/* Header & Agent Selector */}
@@ -171,7 +218,7 @@ export const AgentLogsTab: React.FC<AgentLogsTabProps> = ({
             Swarm Agent Logs &amp; Event Stream
           </h2>
           <p className="text-xs text-slate-400 mt-1">
-            Grouped console output streaming Docker container stdout/stderr alongside Runtime orchestration audit events for [{activeAgentId}].
+            Virtualized console output streaming Docker container stdout/stderr alongside Runtime orchestration audit events for [{activeAgentId}].
           </p>
         </div>
 
@@ -291,67 +338,22 @@ export const AgentLogsTab: React.FC<AgentLogsTabProps> = ({
       </div>
 
       {/* Grouped Logs Console Feed */}
-      <div className="rounded-2xl border border-slate-800 bg-slate-950 p-4 font-mono text-xs overflow-x-auto overflow-y-auto h-[600px] leading-relaxed scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-slate-900 space-y-2 shadow-2xl">
+      <div className="rounded-2xl border border-slate-800 bg-slate-950 p-4 shadow-2xl overflow-hidden">
         {filteredEntries.length === 0 ? (
           <div className="text-slate-600 text-center py-32 space-y-2">
             <Terminal className="w-8 h-8 text-slate-600 mx-auto animate-pulse" />
             <p>// No matching log events found for the selected source or search query.</p>
           </div>
         ) : (
-          filteredEntries.map((entry) => {
-            const isDocker = entry.source === 'DOCKER';
-            return (
-              <div
-                key={entry.id}
-                className={`p-3 rounded-xl border transition-all flex flex-col md:flex-row md:items-center justify-between gap-3 ${
-                  entry.level === 'ERROR'
-                    ? 'bg-rose-950/25 border-rose-500/30 text-rose-200'
-                    : entry.level === 'WARN'
-                    ? 'bg-amber-950/25 border-amber-500/30 text-amber-200'
-                    : isDocker
-                    ? 'bg-slate-900/70 border-slate-800 text-emerald-300/90'
-                    : 'bg-slate-900/90 border-slate-800/80 text-slate-200'
-                }`}
-              >
-                <div className="flex items-start md:items-center gap-3 min-w-0">
-                  {/* Source Badge */}
-                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider shrink-0 flex items-center gap-1 ${
-                    isDocker
-                      ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
-                      : 'bg-indigo-500/15 text-indigo-400 border border-indigo-500/30'
-                  }`}>
-                    {isDocker ? <Cpu className="w-3 h-3" /> : <Activity className="w-3 h-3" />}
-                    {entry.source}
-                  </span>
-
-                  {/* Level Badge */}
-                  <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase shrink-0 ${
-                    entry.level === 'ERROR'
-                      ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
-                      : entry.level === 'WARN'
-                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                      : 'bg-sky-500/20 text-sky-300 border border-sky-500/30'
-                  }`}>
-                    {entry.level}
-                  </span>
-
-                  {/* Type / Sub-source */}
-                  <span className="text-[10px] text-slate-500 shrink-0 font-mono">[{entry.type}]</span>
-
-                  {/* Message with highlighting */}
-                  <span className="break-all text-xs flex-1 font-mono">
-                    {renderHighlightedText(entry.message, searchQuery)}
-                  </span>
-                </div>
-
-                <div className="text-[10px] text-slate-500 shrink-0 font-mono text-right">
-                  {entry.timestamp}
-                </div>
-              </div>
-            );
-          })
+          <List
+            height={600}
+            rowCount={filteredEntries.length}
+            rowHeight={85}
+            width="100%"
+          >
+            {LogRow}
+          </List>
         )}
-        <div ref={logsEndRef} />
       </div>
     </div>
   );

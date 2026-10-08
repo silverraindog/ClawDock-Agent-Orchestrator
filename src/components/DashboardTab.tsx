@@ -1695,7 +1695,7 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
           </div>
 
           <div className="flex items-center gap-2 flex-wrap overflow-x-auto pb-1 md:pb-0">
-            {allAgents.map((ag) => {
+            {allAgents?.map((ag) => {
               const isSelected = ag.id === agent.id;
               const isRunning = ag.status === 'running';
               const isStopped = ag.status === 'stopped' || !ag.status;
@@ -2103,7 +2103,7 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
           
           <div className="h-16 w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={agent.uptimeHistory.map((val, i) => ({ val, i }))}>
+              <LineChart data={(agent.uptimeHistory || []).map((val, i) => ({ val, i }))}>
                 <Line 
                   type="stepAfter" 
                   dataKey="val" 
@@ -2118,7 +2118,7 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
           <div className="flex justify-between items-center text-[10px] text-slate-500 font-mono">
             <span>T-20</span>
             <div className="flex gap-1">
-              {agent.uptimeHistory.slice(-10).map((v, i) => (
+              {(agent.uptimeHistory || []).slice(-10).map((v, i) => (
                 <div key={i} className={`w-1.5 h-1.5 rounded-full ${v === 1 ? 'bg-emerald-500' : 'bg-slate-800'}`} />
               ))}
             </div>
@@ -2152,7 +2152,7 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
           
           <div className="h-16 w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={agent.latencyHistory.map((val, i) => ({ val, i }))}>
+              <LineChart data={(agent.latencyHistory || []).map((val, i) => ({ val, i }))}>
                 <Line 
                   type="monotone" 
                   dataKey="val" 
