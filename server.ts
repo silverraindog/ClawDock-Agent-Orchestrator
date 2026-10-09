@@ -3359,7 +3359,7 @@ async function checkLLMProvidersHealth(force = false): Promise<any> {
     const start = Date.now();
     try {
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 1800);
+      const timer = setTimeout(() => controller.abort(), 3000);
       let probeUrl = `${baseUrl}/models`;
       let headers: Record<string, string> = { 'Content-Type': 'application/json' };
 
