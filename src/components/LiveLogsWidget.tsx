@@ -13,12 +13,12 @@ import {
 } from 'lucide-react';
 import { AgentInfo } from '../types';
 
-interface LiveDockerLogsWidgetProps {
+interface LiveLogsWidgetProps {
   agent: AgentInfo;
   onNavigateTab: (tab: string) => void;
 }
 
-export const LiveDockerLogsWidget: React.FC<LiveDockerLogsWidgetProps> = ({
+export const LiveLogsWidget: React.FC<LiveLogsWidgetProps> = ({
   agent,
   onNavigateTab
 }) => {
@@ -31,7 +31,7 @@ export const LiveDockerLogsWidget: React.FC<LiveDockerLogsWidgetProps> = ({
 
   const logsEndRef = useRef<HTMLDivElement>(null);
 
-  // Fetch logs from /api/agents/:id/logs
+  // Fetch logs from /api/agents/:id/logs at 3-second interval
   const fetchLogs = async () => {
     try {
       const res = await fetch(`/api/agents/${agent.id}/logs`);
@@ -43,7 +43,7 @@ export const LiveDockerLogsWidget: React.FC<LiveDockerLogsWidgetProps> = ({
         }
       }
     } catch (err) {
-      console.error(`[LiveDockerLogsWidget] Failed to fetch logs for ${agent.id}:`, err);
+      console.error(`[LiveLogsWidget] Failed to fetch logs for ${agent.id}:`, err);
     }
   };
 
@@ -63,12 +63,12 @@ export const LiveDockerLogsWidget: React.FC<LiveDockerLogsWidgetProps> = ({
     }
   }, [logs, autoScroll]);
 
-  const filteredLogs = logs.filter(line => 
+  const filteredLogs = (logs || []).filter(line => 
     !searchQuery || line.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   const handleCopyLogs = () => {
-    navigator.clipboard.writeText(logs.join('\n'));
+    navigator.clipboard.writeText((logs || []).join('\n'));
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -92,7 +92,7 @@ export const LiveDockerLogsWidget: React.FC<LiveDockerLogsWidgetProps> = ({
 
   return (
     <div 
-      id="live-docker-logs-widget"
+      id="live-logs-widget"
       className="relative overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/90 shadow-xl flex flex-col"
     >
       {/* Widget Header */}
@@ -112,7 +112,7 @@ export const LiveDockerLogsWidget: React.FC<LiveDockerLogsWidgetProps> = ({
                   : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
               }`}>
                 <Radio className={`w-2.5 h-2.5 ${isLive ? 'animate-pulse text-emerald-400' : 'text-amber-400'}`} />
-                {isLive ? 'Streaming' : 'Paused'}
+                {isLive ? 'Streaming (3s)' : 'Paused'}
               </span>
             </div>
             <p className="text-[11px] text-slate-400 font-mono mt-0.5">
@@ -202,7 +202,7 @@ export const LiveDockerLogsWidget: React.FC<LiveDockerLogsWidgetProps> = ({
       <div className="flex items-center justify-between px-4 py-2.5 bg-slate-900 border-t border-slate-800 text-[11px] text-slate-400 font-mono">
         <div className="flex items-center gap-2">
           <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-          <span>Endpoint: <code className="text-indigo-300">/api/agents/{agent.id}/logs</code></span>
+          <span>Endpoint: <code className="text-indigo-300">/api/agents/{agent.id}/logs</code> (Poll 3s)</span>
         </div>
         <div className="flex items-center gap-3">
           <span>Auto-scroll</span>
