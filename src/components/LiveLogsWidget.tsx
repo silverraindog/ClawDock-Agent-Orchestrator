@@ -91,7 +91,7 @@ export const LiveLogsWidget: React.FC<LiveLogsWidgetProps> = ({
 
   return (
     <div 
-      id="live-logs-widget"
+      id="live-logs-widget-container"
       className="relative overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/90 shadow-xl flex flex-col"
     >
       {/* Widget Header */}
