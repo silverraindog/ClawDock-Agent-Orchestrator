@@ -50,6 +50,7 @@ import { AgentFullConfig, AgentInfo, DockerSystemInfo, SkillItem, MCPServerConfi
 import { fetchLLMHealth } from '../utils/apiBridge';
 import { MoAConsensusMonitor } from './MoAConsensusMonitor';
 import { ResourceUtilizationWidget } from './ResourceUtilizationWidget';
+import { LiveDockerLogsWidget } from './LiveDockerLogsWidget';
 
 interface DashboardTabProps {
   agent: AgentInfo;
@@ -1970,6 +1971,12 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
       <MoAConsensusMonitor
         agent={agent}
         config={config}
+        onNavigateTab={onNavigateTab}
+      />
+
+      {/* Persistent Live Docker Logs Widget */}
+      <LiveDockerLogsWidget
+        agent={agent}
         onNavigateTab={onNavigateTab}
       />
 
