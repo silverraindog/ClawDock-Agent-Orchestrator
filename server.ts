@@ -2522,31 +2522,34 @@ function saveClawdockPersistence(data: Record<string, any>) {
   }
 }
 
-// Dedicated Persistence Atomic Commit Endpoint (supports GET, POST, PUT, OPTIONS)
+// Dedicated Persistence Atomic Commit Endpoint (supports GET, POST, PUT, OPTIONS, PATCH, DELETE)
 app.all(['/api/persistence/commit', '/api/persistence/commit/'], (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept, Authorization');
 
-  if (req.method !== 'GET' && req.method !== 'POST' && req.method !== 'PUT' && req.method !== 'OPTIONS') {
-    res.setHeader('Allow', 'GET, POST, PUT, OPTIONS');
+  const method = (req.method || 'GET').toUpperCase();
+
+  if (method !== 'GET' && method !== 'POST' && method !== 'PUT' && method !== 'OPTIONS' && method !== 'PATCH' && method !== 'DELETE') {
+    res.setHeader('Allow', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
     const stackTrace = new Error(`HTTP 405 Method Interceptor: Method '${req.method}' not allowed on route '/api/persistence/commit'`).stack || '';
     (req as any).stackTrace = stackTrace;
     return res.status(405).json({
       error: 'Method Not Allowed',
       method: req.method,
       pathname: '/api/persistence/commit',
-      allowedMethods: ['GET', 'POST', 'PUT', 'OPTIONS'],
+      allowedMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
       stackTrace,
       timestamp: new Date().toISOString()
     });
   }
 
-  if (req.method === 'OPTIONS') {
-    return res.sendStatus(200);
+  if (method === 'OPTIONS') {
+    res.setHeader('Allow', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
+    return res.json({ success: true, allowedMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'] });
   }
 
-  if (req.method === 'GET') {
+  if (method === 'GET') {
     try {
       const current = loadClawdockPersistence();
       return res.json({
