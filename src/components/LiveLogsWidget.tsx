@@ -8,7 +8,6 @@ import {
   Check,
   Search,
   Maximize2,
-  ArrowDown,
   Radio
 } from 'lucide-react';
 import { AgentInfo } from '../types';
@@ -26,10 +25,10 @@ export const LiveLogsWidget: React.FC<LiveLogsWidgetProps> = ({
   const [isLive, setIsLive] = useState<boolean>(true);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [copied, setCopied] = useState<boolean>(false);
-  const [autoScroll, setAutoScroll] = useState<boolean>(true);
+  const [autoScroll, setAutoScroll] = useState<boolean>(false); // Default false to prevent unwanted page scrolling
   const [lastUpdated, setLastUpdated] = useState<string>('');
 
-  const logsEndRef = useRef<HTMLDivElement>(null);
+  const terminalContainerRef = useRef<HTMLDivElement>(null);
 
   // Fetch logs from /api/agents/:id/logs at 3-second interval
   const fetchLogs = async () => {
@@ -56,10 +55,10 @@ export const LiveLogsWidget: React.FC<LiveLogsWidgetProps> = ({
     return () => clearInterval(interval);
   }, [agent.id, isLive]);
 
-  // Auto scroll to bottom
+  // Auto scroll container only without affecting page scroll
   useEffect(() => {
-    if (autoScroll && logsEndRef.current) {
-      logsEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    if (autoScroll && terminalContainerRef.current) {
+      terminalContainerRef.current.scrollTop = terminalContainerRef.current.scrollHeight;
     }
   }, [logs, autoScroll]);
 
@@ -180,7 +179,10 @@ export const LiveLogsWidget: React.FC<LiveLogsWidgetProps> = ({
       </div>
 
       {/* Terminal Viewport */}
-      <div className="p-4 bg-slate-950 font-mono text-xs overflow-y-auto max-h-72 sm:max-h-80 space-y-1.5 select-text">
+      <div 
+        ref={terminalContainerRef}
+        className="p-4 bg-slate-950 font-mono text-xs overflow-y-auto max-h-72 sm:max-h-80 space-y-1.5 select-text"
+      >
         {filteredLogs.length === 0 ? (
           <div className="py-8 text-center text-slate-500 flex flex-col items-center justify-center gap-2">
             <Terminal className="w-8 h-8 text-slate-700 animate-pulse" />
@@ -195,7 +197,6 @@ export const LiveLogsWidget: React.FC<LiveLogsWidgetProps> = ({
             </div>
           ))
         )}
-        <div ref={logsEndRef} />
       </div>
 
       {/* Widget Footer */}

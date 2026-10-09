@@ -1758,6 +1758,52 @@ fallback:
                 timestamp: timestamp || new Date().toISOString(),
                 data: current
               }));
+            },
+            PATCH: async () => {
+              ensureDataDir();
+              const persistenceFile = path.join(dataDir, 'persistence.json');
+              const body = await readRequestBody(req);
+              const { agentId, config, meta, timestamp } = body || {};
+              let current: any = {};
+              try {
+                if (fs.existsSync(persistenceFile)) {
+                  current = JSON.parse(fs.readFileSync(persistenceFile, 'utf8'));
+                }
+              } catch {}
+
+              if (!current.configs) current.configs = {};
+              if (agentId && config) {
+                current.configs[agentId] = config;
+              }
+
+              if (!current.commitHistory) current.commitHistory = [];
+              current.commitHistory.unshift({
+                id: `commit-${agentId || 'global'}-${Date.now()}`,
+                agentId,
+                timestamp: timestamp || new Date().toISOString(),
+                meta: meta || {}
+              });
+              if (current.commitHistory.length > 50) {
+                current.commitHistory = current.commitHistory.slice(0, 50);
+              }
+
+              current.lastCommitted = {
+                agentId,
+                timestamp: timestamp || new Date().toISOString(),
+                meta: meta || {}
+              };
+
+              try {
+                fs.writeFileSync(persistenceFile, JSON.stringify(current, null, 2), 'utf8');
+              } catch {}
+
+              return res.end(JSON.stringify({
+                success: true,
+                committed: true,
+                agentId,
+                timestamp: timestamp || new Date().toISOString(),
+                data: current
+              }));
             }
           }
         },
