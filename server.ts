@@ -4709,6 +4709,15 @@ app.get('/api/agents/:id/logs', (req, res) => {
   res.json({ logs: latest50 });
 });
 
+// Clear agent container logs
+app.delete('/api/agents/:id/logs', (req, res) => {
+  const agentId = req.params.id;
+  if (agentStates[agentId]) {
+    agentStates[agentId].logs = [];
+  }
+  res.json({ success: true, message: `Logs cleared for agent ${agentId}`, logs: [] });
+});
+
 // Rolling stats history in-memory cache for agent containers
 const agentStatsHistory: Record<string, { time: string; cpu: number; memoryMb: number; memoryPct: number }[]> = {};
 

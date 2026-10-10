@@ -2307,6 +2307,18 @@ fallback:
             res.setHeader('Content-Type', 'application/json');
             const match = pathname.match(/^\/api\/agents\/([^/]+)\/logs(\/)?$/i);
             const agentId = match ? match[1] : 'hermes-agent';
+            if (method === 'DELETE') {
+              if (agentStates[agentId]) {
+                agentStates[agentId].logs = [];
+              }
+              return res.end(JSON.stringify({
+                success: true,
+                agentId,
+                message: `Logs cleared for agent ${agentId}`,
+                logs: [],
+                timestamp
+              }));
+            }
             const st = agentStates[agentId] || { logs: [] };
             return res.end(JSON.stringify({
               success: true,
@@ -2725,6 +2737,12 @@ fallback:
             res.setHeader('Access-Control-Allow-Origin', '*');
 
             if (action === 'logs') {
+              if (method === 'DELETE') {
+                if (agentStates[agentId]) {
+                  agentStates[agentId].logs = [];
+                }
+                return res.end(JSON.stringify({ success: true, message: `Logs cleared for agent ${agentId}`, logs: [] }));
+              }
               return res.end(JSON.stringify({ success: true, logs: agentStates[agentId]?.logs || [] }));
             }
 
