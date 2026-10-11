@@ -16,7 +16,8 @@ import {
   Trash2,
   Download,
   X,
-  Clock
+  Clock,
+  WrapText
 } from 'lucide-react';
 import { AgentInfo } from '../types';
 
@@ -36,6 +37,16 @@ export const LiveLogsWidget: React.FC<LiveLogsWidgetProps> = ({
   const [refreshInterval, setRefreshInterval] = useState<number>(3); // User-definable interval in seconds
   const isLive = autoRefresh;
   const setIsLive = setAutoRefresh;
+
+  // Persisted word-wrap toggle state
+  const [wordWrap, setWordWrap] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('live_logs_word_wrap');
+      return saved !== null ? saved === 'true' : true;
+    } catch {
+      return true;
+    }
+  });
 
   // Persisted search query across sessions
   const [searchQuery, setSearchQuery] = useState<string>(() => {
@@ -159,6 +170,15 @@ export const LiveLogsWidget: React.FC<LiveLogsWidgetProps> = ({
       console.warn('[LiveLogsWidget] Failed to persist filter level to localStorage:', e);
     }
   }, [logLevel]);
+
+  // Persist word-wrap preference in localStorage across sessions
+  useEffect(() => {
+    try {
+      localStorage.setItem('live_logs_word_wrap', String(wordWrap));
+    } catch (e) {
+      console.warn('[LiveLogsWidget] Failed to persist word-wrap preference:', e);
+    }
+  }, [wordWrap]);
 
   const parseLogMarker = (line: string): 'Info' | 'Warning' | 'Error' | 'Unknown' => {
     // Explicit terminal error markers: [ERROR], [FATAL], [ERR], [CRITICAL], [FAIL], ERROR:, FATAL:, CRITICAL:, LEVEL=ERROR
@@ -607,6 +627,26 @@ export const LiveLogsWidget: React.FC<LiveLogsWidgetProps> = ({
             <span className="hidden sm:inline font-mono">{exported ? 'Exported' : 'Export Logs'}</span>
           </button>
 
+          {/* Word Wrap Toggle */}
+          <button
+            type="button"
+            id="live-logs-word-wrap-toggle"
+            data-testid="live-logs-word-wrap-toggle"
+            onClick={() => setWordWrap(!wordWrap)}
+            title={wordWrap ? "Word Wrap enabled - Click to disable (keep long lines on one line)" : "Word Wrap disabled - Click to enable (wrap long lines)"}
+            aria-label="Toggle word-wrap for long log lines"
+            className={`p-2 rounded-lg border text-xs font-medium transition-colors flex items-center gap-1.5 cursor-pointer ${
+              wordWrap
+                ? 'bg-indigo-600/20 border-indigo-500/40 text-indigo-300 hover:bg-indigo-600/30'
+                : 'bg-slate-800/80 border-slate-700 text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+            }`}
+          >
+            <WrapText className={`w-3.5 h-3.5 ${wordWrap ? 'text-indigo-400' : 'text-slate-400'}`} />
+            <span className="hidden sm:inline font-mono">
+              {wordWrap ? 'Wrap: ON' : 'Wrap: OFF'}
+            </span>
+          </button>
+
           {/* Expand to Full Docker Tab */}
           <button
             onClick={() => onNavigateTab('docker')}
@@ -621,7 +661,7 @@ export const LiveLogsWidget: React.FC<LiveLogsWidgetProps> = ({
       {/* Terminal Viewport */}
       <div 
         ref={terminalContainerRef}
-        className="p-4 bg-slate-950 font-mono text-xs overflow-y-auto max-h-72 sm:max-h-80 space-y-1.5 select-text"
+        className="p-4 bg-slate-950 font-mono text-xs overflow-y-auto overflow-x-auto max-h-72 sm:max-h-80 space-y-1.5 select-text"
       >
         {filteredLogs.length === 0 ? (
           <div className="py-8 text-center text-slate-500 flex flex-col items-center justify-center gap-2">
@@ -649,7 +689,12 @@ export const LiveLogsWidget: React.FC<LiveLogsWidgetProps> = ({
           </div>
         ) : (
           filteredLogs.map((line, index) => (
-            <div key={index} className={`leading-relaxed py-0.5 whitespace-pre-wrap break-all ${getLogColor(line)}`}>
+            <div
+              key={index}
+              className={`leading-relaxed py-0.5 ${
+                wordWrap ? 'whitespace-pre-wrap break-all' : 'whitespace-pre overflow-x-visible'
+              } ${getLogColor(line)}`}
+            >
               <span className="text-slate-600 select-none mr-3 text-[10px]">{String(index + 1).padStart(3, '0')}</span>
               {renderHighlightedLine(line)}
             </div>
