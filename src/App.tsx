@@ -1551,7 +1551,9 @@ export default function App() {
         );
 
         const execLogs: string[] = data.execLogs || [];
-        const lastCmd = `docker exec ${selectedAgentId} hermes config set model "${currentConfig.model.model}" && hermes config set provider "${currentConfig.model.provider}"`;
+        const lastCmd = selectedAgentId === 'hermes-agent'
+          ? `docker exec ${selectedAgentId} hermes config set model "${currentConfig.model.model}" && hermes config set provider "${currentConfig.model.provider}"`
+          : `docker restart ${selectedAgentId === 'zeroclaw' ? 'zeroclaw-daemon' : selectedAgentId}`;
         const outputText = execLogs.length > 0
           ? execLogs.join('\n')
           : `[Docker Engine] Config saved to data/clawdock/${DEFAULT_NATIVE_FILES[selectedAgentId]?.fileName || 'config.yaml'}\n[Docker Engine] Model set to "${currentConfig.model.model}" (${currentConfig.model.provider})\n[Docker Engine] Container ${selectedAgentId} restarted with updated configuration.`;

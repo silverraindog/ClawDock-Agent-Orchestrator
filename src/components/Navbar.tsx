@@ -402,10 +402,8 @@ export const Navbar: React.FC<NavbarProps> = ({
             <RotateCw className={`w-3.5 h-3.5 text-indigo-400 ${currentAgent?.status === 'restarting' ? 'animate-spin' : ''}`} />
             <span className="hidden sm:inline">
               {currentAgent?.status === 'restarting'
-                ? 'Restarting...'
-                : currentAgent?.status === 'running'
-                  ? 'Restart'
-                  : 'Restart'}
+                ? `Restarting ${currentAgent?.name || 'Agent'}...`
+                : `Restart ${currentAgent?.name || 'Agent'}`}
             </span>
           </button>
         )}

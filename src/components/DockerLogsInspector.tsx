@@ -315,7 +315,7 @@ export const DockerLogsInspector: React.FC<DockerLogsInspectorProps> = ({
               title={isContainerRunning ? `Restart ${agentName} Container` : `Start ${agentName} Container`}
             >
               <RotateCw className="w-3.5 h-3.5 text-indigo-400" />
-              <span className="hidden md:inline">{isContainerRunning ? 'Restart Container' : 'Start Container'}</span>
+              <span className="hidden md:inline">{isContainerRunning ? `Restart ${agentName}` : `Start ${agentName}`}</span>
             </button>
           )}
 
