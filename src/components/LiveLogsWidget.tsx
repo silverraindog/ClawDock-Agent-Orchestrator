@@ -97,10 +97,21 @@ export const LiveLogsWidget: React.FC<LiveLogsWidgetProps> = ({
 
   // Fetch logs from /api/agents/:id/logs at 3-second interval
   const fetchLogs = async (forceResetBaseline = false) => {
+    if (!agent || !agent.id) return;
     try {
-      const res = await fetch(`/api/agents/${agent.id}/logs`);
-      if (res.ok) {
-        const data = await res.json();
+      const res = await fetch(`/api/agents/${agent.id}/logs`, {
+        headers: { 'Accept': 'application/json' },
+        cache: 'no-store'
+      });
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && contentType.includes('application/json')) {
+        let data: any = null;
+        try {
+          data = await res.json();
+        } catch {
+          return;
+        }
+
         if (data && Array.isArray(data.logs)) {
           rawLogsRef.current = data.logs;
           let visibleLogs = data.logs;
@@ -126,7 +137,7 @@ export const LiveLogsWidget: React.FC<LiveLogsWidgetProps> = ({
         }
       }
     } catch (err) {
-      console.error(`[LiveLogsWidget] Failed to fetch logs for ${agent.id}:`, err);
+      console.warn(`[LiveLogsWidget] Note fetching logs for ${agent?.id}:`, err);
     }
   };
 
@@ -329,9 +340,11 @@ export const LiveLogsWidget: React.FC<LiveLogsWidgetProps> = ({
 
     // Call DELETE on server to clear server-side log buffer as well
     try {
-      await fetch(`/api/agents/${agent.id}/logs`, { method: 'DELETE' });
+      if (agent?.id) {
+        await fetch(`/api/agents/${agent.id}/logs`, { method: 'DELETE' });
+      }
     } catch (err) {
-      console.warn(`[LiveLogsWidget] DELETE /api/agents/${agent.id}/logs error:`, err);
+      console.warn(`[LiveLogsWidget] DELETE /api/agents/${agent?.id}/logs error:`, err);
     }
   };
 

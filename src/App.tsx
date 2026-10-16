@@ -20,7 +20,8 @@ import {
   X,
   AlertTriangle,
   Info,
-  Save
+  Save,
+  FolderTree
 } from 'lucide-react';
 import { 
   AgentId, 
@@ -90,6 +91,7 @@ import { UpdatesTab } from './components/UpdatesTab';
 import { EverOSTab } from './components/EverOSTab';
 import { DiagnosticsTab } from './components/DiagnosticsTab';
 import { AgentLogsTab } from './components/AgentLogsTab';
+import { DockerPathsTab } from './components/DockerPathsTab';
 import { BulkUpdateSummaryModal } from './components/BulkUpdateSummaryModal';
 import ToastContainer, { ToastMessage } from './components/Toast';
 import { ContainerDiscoveryModal } from './components/ContainerDiscoveryModal';
@@ -102,7 +104,7 @@ import {
 } from './utils/configValidator';
 import { enhanceConfigWithNative, detectOpenClawConfigFormat, sanitizeConfigString, generateHermesYaml } from './utils/configParser';
 
-type MainTab = 'dashboard' | 'config' | 'presets' | 'everos' | 'skills' | 'mcp' | 'docker' | 'console' | 'export' | 'updates' | 'diagnostics' | 'agent-logs';
+type MainTab = 'dashboard' | 'config' | 'presets' | 'everos' | 'skills' | 'mcp' | 'docker' | 'console' | 'export' | 'updates' | 'diagnostics' | 'agent-logs' | 'docker-paths';
 
 export default function App() {
   const [agents, setAgents] = useState<AgentInfo[]>(() => {
@@ -200,6 +202,13 @@ export default function App() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isDiscoveryOpen, setIsDiscoveryOpen] = useState(false);
   const [versionErrors, setVersionErrors] = useState<Record<string, boolean>>({});
+  const [restartConfirmationState, setRestartConfirmationState] = useState<{
+    isOpen: boolean;
+    agentId: AgentId;
+    agentName: string;
+    containerName: string;
+    command: string;
+  } | null>(null);
   const [saveConfirmationState, setSaveConfirmationState] = useState<{
     isOpen: boolean;
     restartContainer: boolean;
@@ -1014,18 +1023,37 @@ export default function App() {
     }
   };
 
-  // Restart agent container (or start if stopped)
-  const handleRestartAgent = async (agentId: AgentId) => {
+  // Restart agent container (or start if stopped) with visual confirmation modal
+  const handleRestartAgent = (agentId: AgentId) => {
+    const targetAgent = agents.find(a => a.id === agentId);
+    const containerName = agentId === 'zeroclaw' ? 'zeroclaw-daemon' :
+                          agentId === 'openclaw' ? 'openclaw-hub' :
+                          agentId === 'picoclaw' ? 'picoclaw-edge' :
+                          'hermes-agent-core';
+    const command = `docker restart ${containerName}`;
+    setRestartConfirmationState({
+      isOpen: true,
+      agentId,
+      agentName: targetAgent?.name || agentId,
+      containerName,
+      command
+    });
+  };
+
+  const executeConfirmedRestart = async () => {
+    if (!restartConfirmationState) return;
+    const { agentId, agentName, containerName } = restartConfirmationState;
+    setRestartConfirmationState(null);
+
     const targetAgent = agents.find(a => a.id === agentId);
     const wasStopped = targetAgent?.status === 'stopped' || targetAgent?.status === 'not_installed';
     
-    // Optimistic restarting state
     setAgents(prev => prev.map(a => a.id === agentId ? { ...a, status: 'restarting' } : a));
     setContainerLogs(prev => [
       ...prev,
-      `[${new Date().toLocaleTimeString()}] [Docker Engine] Initiating restart sequence for container ${agentId}...`
+      `[${new Date().toLocaleTimeString()}] [Docker Engine] Executing docker restart ${containerName}...`
     ]);
-    addToast('info', wasStopped ? 'Starting Container...' : 'Restarting Container...', `Docker daemon processing ${targetAgent?.name || agentId}`);
+    addToast('info', wasStopped ? 'Starting Container...' : 'Restarting Container...', `Docker daemon processing ${agentName} (${containerName})`);
 
     try {
       const result = await restartAgentContainer(agentId);
@@ -1037,18 +1065,18 @@ export default function App() {
         } : a));
         setContainerLogs(prev => [
           ...prev,
-          `[${new Date().toLocaleTimeString()}] [Docker Engine] Container ${agentId} is running and healthy.`
+          `[${new Date().toLocaleTimeString()}] [Docker Engine] Container ${containerName} restarted successfully.`
         ]);
         addToast(
           'success', 
           result.action === 'started' || wasStopped ? 'Container Started' : 'Container Restarted', 
-          `${targetAgent?.name || agentId} container runtime active.`
+          `${agentName} (${containerName}) runtime active.`
         );
       }, 600);
     } catch {
       setTimeout(() => {
         setAgents(prev => prev.map(a => a.id === agentId ? { ...a, status: 'running' } : a));
-        addToast('success', 'Container Active', `Docker container for ${agentId} is running.`);
+        addToast('success', 'Container Active', `Docker container ${containerName} is running.`);
       }, 600);
     }
   };
@@ -2463,7 +2491,8 @@ export default function App() {
       label: 'MCP Servers', 
       icon: Server, 
       badge: mcpServers.filter(m => m.enabled).length 
-    }
+    },
+    { id: 'docker-paths', label: 'Docker Paths', icon: FolderTree }
   ];
 
   const bottomNavItems = [
@@ -2997,6 +3026,10 @@ export default function App() {
             <ExportTab />
           )}
 
+          {currentTab === 'docker-paths' && (
+            <DockerPathsTab onAddToast={addToast} />
+          )}
+
           {currentTab === 'updates' && (
             <UpdatesTab
               updates={updates}
@@ -3168,6 +3201,75 @@ export default function App() {
               >
                 <Save className="w-3.5 h-3.5" />
                 <span>Authorize &amp; Execute</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isBulkUpdateSummaryOpen && <BulkUpdateSummaryModal isOpen={isBulkUpdateSummaryOpen} onClose={() => setIsBulkUpdateSummaryOpen(false)} updates={lastBulkUpdate} />}
+
+      {/* Visual Restart Confirmation Modal */}
+      {restartConfirmationState?.isOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="p-4 sm:p-5 border-b border-slate-800 flex items-center justify-between bg-slate-900/90">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-indigo-500/10 border border-indigo-500/20">
+                  <Terminal className="w-5 h-5 text-indigo-400" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white">Confirm Container Restart</h3>
+                  <p className="text-[11px] text-slate-400">Explicit verification of target container</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setRestartConfirmationState(null)}
+                className="text-slate-400 hover:text-white p-1 hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4">
+              <p className="text-xs text-slate-300 leading-relaxed">
+                You are about to restart container <strong className="text-indigo-300 font-mono">{restartConfirmationState.agentName}</strong>. Please verify the exact command below before sending to the Docker daemon:
+              </p>
+
+              <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
+                <div className="flex items-center justify-between text-xs pb-2 border-b border-slate-800/60">
+                  <span className="text-slate-400 font-medium">Target Agent:</span>
+                  <span className="text-white font-semibold">{restartConfirmationState.agentName}</span>
+                </div>
+                <div className="flex items-center justify-between text-xs pb-2 border-b border-slate-800/60">
+                  <span className="text-slate-400 font-medium">Container Name:</span>
+                  <code className="text-indigo-400 font-mono font-bold">{restartConfirmationState.containerName}</code>
+                </div>
+                <div className="pt-1">
+                  <span className="text-[11px] text-slate-400 font-medium block mb-1">Docker Daemon Command:</span>
+                  <div className="bg-slate-900 border border-indigo-500/30 rounded-lg p-2.5 font-mono text-xs text-indigo-300 select-all">
+                    {restartConfirmationState.command}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="p-4 border-t border-slate-800 bg-slate-950/60 flex items-center justify-end gap-2.5">
+              <button
+                type="button"
+                onClick={() => setRestartConfirmationState(null)}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-300 bg-slate-800 hover:bg-slate-700 border border-slate-700 cursor-pointer transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                id="confirm-execute-restart-btn"
+                onClick={executeConfirmedRestart}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 shadow-lg shadow-indigo-600/30 flex items-center gap-1.5 cursor-pointer transition-all"
+              >
+                <Terminal className="w-3.5 h-3.5" />
+                <span>Execute Restart</span>
               </button>
             </div>
           </div>

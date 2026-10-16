@@ -51,16 +51,21 @@ export const AgentLogsTab: React.FC<AgentLogsTabProps> = ({
 
   // Fetch container logs for activeAgentId
   const fetchContainerLogs = async () => {
+    if (!activeAgentId) return;
     try {
-      const res = await fetch(`/api/agents/${activeAgentId}/logs`);
-      if (res.ok) {
+      const res = await fetch(`/api/agents/${activeAgentId}/logs`, {
+        headers: { 'Accept': 'application/json' },
+        cache: 'no-store'
+      });
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && contentType.includes('application/json')) {
         const data = await res.json();
         if (data && Array.isArray(data.logs)) {
           setContainerLogs(data.logs);
         }
       }
     } catch (err) {
-      console.error('Failed to fetch container logs:', err);
+      console.warn('Failed to fetch container logs:', err);
     }
   };
 

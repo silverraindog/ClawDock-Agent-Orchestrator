@@ -62,16 +62,21 @@ export const ConsoleTab: React.FC<ConsoleTabProps> = ({
     if (!liveStream) return;
 
     const fetchLogs = async () => {
+      if (!agent?.id) return;
       try {
-        const res = await fetch(`/api/agents/${agent.id}/logs`);
-        if (res.ok) {
+        const res = await fetch(`/api/agents/${agent.id}/logs`, {
+          headers: { 'Accept': 'application/json' },
+          cache: 'no-store'
+        });
+        const contentType = res.headers.get('content-type') || '';
+        if (res.ok && contentType.includes('application/json')) {
           const data = await res.json();
           if (Array.isArray(data.logs)) {
             setLiveLogs(data.logs);
           }
         }
       } catch (err) {
-        console.error('Error fetching logs:', err);
+        console.warn('Error fetching logs:', err);
       }
     };
 

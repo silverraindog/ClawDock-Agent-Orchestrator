@@ -2234,6 +2234,68 @@ fallback:
           }
         },
         {
+          pattern: /^\/api\/docker\/sync-paths(\/)?$/i,
+          allowedMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+          handler: async () => {
+            res.setHeader('Content-Type', 'application/json');
+            let paths: any = {};
+            if (method === 'POST' || method === 'PUT') {
+              const body = await readRequestBody(req);
+              paths = body?.paths || body?.pathMappings || {};
+            }
+
+            const defaultPaths: Record<string, any> = {
+              'zeroclaw': { composeDir: '/opt/bots/zeroclaw', composeFile: 'docker-compose.yml', workspaceDir: '/var/zeroclaw/workspace', enabled: true },
+              'hermes-agent': { composeDir: '/opt/bots/hermes', composeFile: 'docker-compose.yml', workspaceDir: '/workspace', enabled: true },
+              'openclaw': { composeDir: '/opt/bots/openclaw', composeFile: 'docker-compose.yml', workspaceDir: '/home/openclaw/workspace', enabled: true },
+              'picoclaw': { composeDir: '/opt/bots/picoclaw', composeFile: 'docker-compose.yml', workspaceDir: '/home/sipeed/.picoclaw/workspace', enabled: true }
+            };
+
+            const finalPaths = {
+              ...defaultPaths,
+              ...(paths || {})
+            };
+
+            const envVars: Record<string, string> = {
+              STANDARDIZED_WORKSPACE_ROOT: '/workspace',
+              CLAW_CONFIGS_DIR: '/data/clawdock',
+              ZEROCLAW_WORKSPACE: finalPaths['zeroclaw']?.workspaceDir || '/var/zeroclaw/workspace',
+              ZEROCLAW_COMPOSE_DIR: finalPaths['zeroclaw']?.composeDir || '/opt/bots/zeroclaw',
+              ZEROCLAW_CONFIG_FILE: `${finalPaths['zeroclaw']?.composeDir || '/opt/bots/zeroclaw'}/${finalPaths['zeroclaw']?.composeFile || 'docker-compose.yml'}`,
+              HERMES_WORKSPACE: finalPaths['hermes-agent']?.workspaceDir || '/workspace',
+              WORKSPACE_DIR: finalPaths['hermes-agent']?.workspaceDir || '/workspace',
+              HERMES_COMPOSE_DIR: finalPaths['hermes-agent']?.composeDir || '/opt/bots/hermes',
+              HERMES_CONFIG_FILE: `${finalPaths['hermes-agent']?.composeDir || '/opt/bots/hermes'}/${finalPaths['hermes-agent']?.composeFile || 'docker-compose.yml'}`,
+              OPENCLAW_WORKSPACE: finalPaths['openclaw']?.workspaceDir || '/home/openclaw/workspace',
+              OPENCLAW_COMPOSE_DIR: finalPaths['openclaw']?.composeDir || '/opt/bots/openclaw',
+              OPENCLAW_CONFIG_FILE: `${finalPaths['openclaw']?.composeDir || '/opt/bots/openclaw'}/${finalPaths['openclaw']?.composeFile || 'docker-compose.yml'}`,
+              PICOCLAW_WORKSPACE: finalPaths['picoclaw']?.workspaceDir || '/home/sipeed/.picoclaw/workspace',
+              PICOCLAW_COMPOSE_DIR: finalPaths['picoclaw']?.composeDir || '/opt/bots/picoclaw',
+              PICOCLAW_CONFIG_FILE: `${finalPaths['picoclaw']?.composeDir || '/opt/bots/picoclaw'}/${finalPaths['picoclaw']?.composeFile || 'docker-compose.yml'}`
+            };
+
+            const appliedAgents = Object.keys(finalPaths).filter(id => finalPaths[id].enabled);
+
+            for (const agentId of appliedAgents) {
+              if (agentStates[agentId]) {
+                agentStates[agentId].logs.push(
+                  `[${new Date().toLocaleTimeString()}] [Docker Path Sync] Synchronized environment variables: WORKSPACE=${finalPaths[agentId]?.workspaceDir}, COMPOSE_DIR=${finalPaths[agentId]?.composeDir}`
+                );
+              }
+            }
+
+            return res.end(JSON.stringify({
+              success: true,
+              message: 'Container environment variables updated with standardized directory mappings',
+              syncedPaths: finalPaths,
+              environmentVariables: envVars,
+              appliedAgents,
+              filePath: 'data/clawdock/standardized_paths.env',
+              timestamp
+            }));
+          }
+        },
+        {
           pattern: /^\/api\/state(\/)?$/i,
           allowedMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
           handler: async () => {
