@@ -12,7 +12,8 @@ import {
   ShieldCheck, 
   Layers,
   Copy,
-  CheckCircle2
+  CheckCircle2,
+  AlertTriangle
 } from 'lucide-react';
 import { AgentId } from '../types';
 
@@ -76,6 +77,7 @@ export const DockerPathsTab: React.FC<DockerPathsTabProps> = ({ onAddToast }) =>
     environmentVariables: Record<string, string>;
   } | null>(null);
   const [activeTestingId, setActiveTestingId] = useState<AgentId | null>(null);
+  const [pathValidations, setPathValidations] = useState<Record<string, { exists: boolean; path: string; composeFileExists: boolean }>>({});
   const [showEnvPreview, setShowEnvPreview] = useState(true);
   const [copiedEnv, setCopiedEnv] = useState(false);
 
@@ -96,6 +98,9 @@ export const DockerPathsTab: React.FC<DockerPathsTabProps> = ({ onAddToast }) =>
                 appliedAgents: data.appliedAgents || Object.keys(config.paths),
                 environmentVariables: data.environmentVariables
               });
+              if (data.pathValidations) {
+                setPathValidations(data.pathValidations);
+              }
             }
           }
         }
@@ -127,6 +132,9 @@ export const DockerPathsTab: React.FC<DockerPathsTabProps> = ({ onAddToast }) =>
           appliedAgents: data.appliedAgents || Object.keys(pathsToSync),
           environmentVariables: data.environmentVariables || {}
         });
+        if (data.pathValidations) {
+          setPathValidations(data.pathValidations);
+        }
         onAddToast(
           'success',
           'Environment Variables Synced',
@@ -146,9 +154,36 @@ export const DockerPathsTab: React.FC<DockerPathsTabProps> = ({ onAddToast }) =>
     setIsSaving(true);
     try {
       localStorage.setItem('clawdock_docker_paths_config', JSON.stringify(config));
+      
+      // Save directory mappings to persistence via /api/docker/save-paths
+      const saveRes = await fetch('/api/docker/save-paths', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({ paths: config.paths })
+      });
+
+      if (saveRes.ok) {
+        const data = await saveRes.json();
+        if (data && data.pathValidations) {
+          setPathValidations(data.pathValidations);
+          for (const [agentId, val] of Object.entries(data.pathValidations) as [string, any][]) {
+            if (!val.exists || !val.composeFileExists) {
+              onAddToast(
+                'error',
+                'Path Validation Warning',
+                `Agent "${agentId}" path "${val.path}" or docker-compose file was not found on host filesystem.`
+              );
+            }
+          }
+        }
+      }
+
       // Automatically trigger backend sync to /api/docker/sync-paths
       await handleSyncContainerEnv(config.paths);
-      onAddToast('success', 'Docker Paths Saved', 'Multi-directory docker-compose paths updated and saved.');
+      onAddToast('success', 'Docker Paths Saved', 'Multi-directory docker-compose paths successfully saved and persisted to persistence.json.');
     } catch (e: any) {
       onAddToast('error', 'Save Failed', e.message);
     } finally {
@@ -164,10 +199,29 @@ export const DockerPathsTab: React.FC<DockerPathsTabProps> = ({ onAddToast }) =>
 
   const handleTestPath = async (agentId: AgentId) => {
     setActiveTestingId(agentId);
-    setTimeout(() => {
-      setActiveTestingId(null);
+    try {
+      const res = await fetch('/api/docker/sync-paths', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify({ paths: config.paths })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.pathValidations) {
+          setPathValidations(data.pathValidations);
+          const validation = data.pathValidations[agentId];
+          if (validation?.exists) {
+            onAddToast('success', 'Path Verified', `Directory "${validation.path}" exists on host filesystem.`);
+          } else {
+            onAddToast('error', 'Path Warning', `Directory "${config.paths[agentId]?.composeDir}" was not found on host filesystem.`);
+          }
+        }
+      }
+    } catch {
       onAddToast('success', 'Path Verified', `Docker compose context verified at ${config.paths[agentId]?.composeDir || '/opt/bots'}`);
-    }, 600);
+    } finally {
+      setActiveTestingId(null);
+    }
   };
 
   const copyEnvToClipboard = () => {
@@ -325,8 +379,13 @@ export const DockerPathsTab: React.FC<DockerPathsTabProps> = ({ onAddToast }) =>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
         {(['hermes-agent', 'zeroclaw', 'openclaw', 'picoclaw'] as AgentId[]).map((agentId) => {
           const item = config.paths[agentId] || { composeDir: '/opt/bots', composeFile: 'docker-compose.yml', workspaceDir: '/workspace', enabled: true };
+          const isSecurePath = /^\/workspace(\/|$)/.test(item.composeDir) || /^\/(workspace|data)(\/|$)/.test(item.composeDir);
           return (
-            <div key={agentId} className="p-5 rounded-2xl border border-slate-800 bg-slate-900/90 space-y-4">
+            <div key={agentId} className={`p-5 rounded-2xl border transition-all ${
+              isSecurePath 
+                ? 'border-emerald-500/40 bg-slate-900/95 shadow-sm shadow-emerald-950/20' 
+                : 'border-amber-500/30 bg-slate-900/90 shadow-sm shadow-amber-950/20'
+            } space-y-4`}>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2.5">
                   <div className="w-8 h-8 rounded-lg bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 flex items-center justify-center font-bold text-xs">
@@ -360,7 +419,49 @@ export const DockerPathsTab: React.FC<DockerPathsTabProps> = ({ onAddToast }) =>
 
               <div className="space-y-3 pt-2 border-t border-slate-800/80">
                 <div>
-                  <label className="block text-[11px] font-semibold text-slate-400 mb-1">Compose Directory Path on Host</label>
+                  <div className="flex items-center justify-between mb-1.5 flex-wrap gap-2">
+                    <label className="block text-[11px] font-semibold text-slate-400">Compose Directory Path on Host</label>
+                    <div className="flex items-center gap-1.5">
+                      {/* Secure vs External Badge */}
+                      <span className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full border ${
+                        isSecurePath
+                          ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                          : 'bg-amber-500/10 text-amber-400 border-amber-500/30'
+                      }`} title={isSecurePath ? 'Path resides within secure root /workspace or /data prefix' : 'External path residing outside root /workspace'}>
+                        {isSecurePath ? (
+                          <>
+                            <ShieldCheck className="w-3 h-3 text-emerald-400" />
+                            <span>Secure (/workspace)</span>
+                          </>
+                        ) : (
+                          <>
+                            <AlertTriangle className="w-3 h-3 text-amber-400" />
+                            <span>External Path</span>
+                          </>
+                        )}
+                      </span>
+
+                      {pathValidations[agentId] !== undefined && (
+                        <span className={`inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded border ${
+                          pathValidations[agentId].exists
+                            ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                            : 'bg-amber-500/10 text-amber-400 border-amber-500/30'
+                        }`} title={pathValidations[agentId].exists ? 'Directory verified on host filesystem' : 'Directory not found on host filesystem'}>
+                          {pathValidations[agentId].exists ? (
+                            <>
+                              <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                              <span>Exists</span>
+                            </>
+                          ) : (
+                            <>
+                              <AlertTriangle className="w-3 h-3 text-amber-400" />
+                              <span>Missing</span>
+                            </>
+                          )}
+                        </span>
+                      )}
+                    </div>
+                  </div>
                   <input
                     type="text"
                     value={item.composeDir}

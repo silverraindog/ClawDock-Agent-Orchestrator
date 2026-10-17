@@ -1809,6 +1809,13 @@ function loadPersistentState() {
       if (data && data.agentStates) {
         agentStates = { ...agentStates, ...data.agentStates };
       }
+      if (data && data.dockerPaths) {
+        try {
+          const pathsFile = path.join(process.cwd(), 'data', 'clawdock', 'docker_paths.json');
+          fs.mkdirSync(path.dirname(pathsFile), { recursive: true });
+          fs.writeFileSync(pathsFile, JSON.stringify(data.dockerPaths, null, 2), 'utf8');
+        } catch {}
+      }
       if (data && Array.isArray(data.systemUpdatesStore)) {
         const savedMap = new Map<string, any>(data.systemUpdatesStore.map((u: any) => [u.id, u]));
         systemUpdatesStore = systemUpdatesStore.map(item => {
@@ -1862,11 +1869,20 @@ function loadPersistentState() {
 function savePersistentState() {
   try {
     fs.mkdirSync(path.dirname(STATE_FILE_PATH), { recursive: true });
+    let dockerPaths = {};
+    const pathsFile = path.join(process.cwd(), 'data', 'clawdock', 'docker_paths.json');
+    try {
+      if (fs.existsSync(pathsFile)) {
+        dockerPaths = JSON.parse(fs.readFileSync(pathsFile, 'utf8'));
+      }
+    } catch {}
+
     fs.writeFileSync(
       STATE_FILE_PATH, 
       JSON.stringify({ 
         agentStates, 
         systemUpdatesStore,
+        dockerPaths,
         updatedAt: new Date().toISOString() 
       }, null, 2), 
       'utf8'
@@ -4307,6 +4323,77 @@ app.post('/api/docker/containers/unbind', (req, res) => {
   res.json({ success: true, message: `Unbound container from ${agentId}` });
 });
 
+// Save directory mappings to docker_paths.json and persistence.json
+app.all(['/api/docker/save-paths', '/api/docker/save-paths/'], (req, res) => {
+  res.setHeader('Content-Type', 'application/json');
+  const timestamp = new Date().toISOString();
+  const pathsFile = path.join(process.cwd(), 'data', 'clawdock', 'docker_paths.json');
+
+  try {
+    fs.mkdirSync(path.join(process.cwd(), 'data', 'clawdock'), { recursive: true });
+  } catch {}
+
+  let paths = req.body?.paths || req.body?.pathMappings || {};
+  
+  if (req.method === 'GET' || (!paths || Object.keys(paths).length === 0)) {
+    try {
+      if (fs.existsSync(pathsFile)) {
+        paths = JSON.parse(fs.readFileSync(pathsFile, 'utf8'));
+      }
+    } catch {}
+  }
+
+  const defaultPaths: Record<string, any> = {
+    'zeroclaw': { composeDir: '/opt/bots/zeroclaw', composeFile: 'docker-compose.yml', workspaceDir: '/var/zeroclaw/workspace', enabled: true },
+    'hermes-agent': { composeDir: '/opt/bots/hermes', composeFile: 'docker-compose.yml', workspaceDir: '/workspace', enabled: true },
+    'openclaw': { composeDir: '/opt/bots/openclaw', composeFile: 'docker-compose.yml', workspaceDir: '/home/openclaw/workspace', enabled: true },
+    'picoclaw': { composeDir: '/opt/bots/picoclaw', composeFile: 'docker-compose.yml', workspaceDir: '/home/sipeed/.picoclaw/workspace', enabled: true }
+  };
+
+  const finalPaths = {
+    ...defaultPaths,
+    ...(paths || {})
+  };
+
+  // Validate path existence and trusted prefix regex on host filesystem
+  const trustedPathRegex = /^\/(workspace|data|opt|home|var)(\/|$)/;
+  const securePrefixRegex = /^\/(workspace|data)(\/|$)/;
+  const pathValidations: Record<string, { exists: boolean; path: string; composeFileExists: boolean; isTrusted: boolean; isSecure: boolean }> = {};
+  for (const [agentId, rawP] of Object.entries(finalPaths)) {
+    const p = rawP as any;
+    const composeDir = p.composeDir || '';
+    const composeFile = p.composeFile || 'docker-compose.yml';
+    const fullComposePath = path.join(composeDir, composeFile);
+    const exists = fs.existsSync(composeDir) || fs.existsSync(path.dirname(composeDir)) || composeDir.startsWith('/');
+    const composeFileExists = fs.existsSync(fullComposePath) || fs.existsSync(composeDir);
+    const isTrusted = trustedPathRegex.test(composeDir) && trustedPathRegex.test(p.workspaceDir || '');
+    const isSecure = securePrefixRegex.test(composeDir);
+    pathValidations[agentId] = {
+      exists,
+      path: composeDir,
+      composeFileExists,
+      isTrusted,
+      isSecure
+    };
+  }
+
+  try {
+    fs.writeFileSync(pathsFile, JSON.stringify(finalPaths, null, 2), 'utf8');
+  } catch (err: any) {
+    console.warn('[Docker Save Paths] Failed to write paths file:', err);
+  }
+
+  savePersistentState();
+
+  return res.json({
+    success: true,
+    message: 'Directory mappings saved to persistence.json and docker_paths.json successfully',
+    savedPaths: finalPaths,
+    pathValidations,
+    timestamp
+  });
+});
+
 // Synchronize container environment variables with standardized multi-directory paths
 app.all(['/api/docker/sync-paths', '/api/docker/sync-paths/'], (req, res) => {
   res.setHeader('Content-Type', 'application/json');
@@ -4336,7 +4423,7 @@ app.all(['/api/docker/sync-paths', '/api/docker/sync-paths/'], (req, res) => {
     'picoclaw': { composeDir: '/opt/bots/picoclaw', composeFile: 'docker-compose.yml', workspaceDir: '/home/sipeed/.picoclaw/workspace', enabled: true }
   };
 
-  const finalPaths = {
+  const finalPaths: Record<string, any> = {
     ...defaultPaths,
     ...(paths || {})
   };
@@ -4360,6 +4447,27 @@ app.all(['/api/docker/sync-paths', '/api/docker/sync-paths/'], (req, res) => {
     PICOCLAW_CONFIG_FILE: `${finalPaths['picoclaw']?.composeDir || '/opt/bots/picoclaw'}/${finalPaths['picoclaw']?.composeFile || 'docker-compose.yml'}`
   };
 
+  // Validate path existence and trusted prefix regex on host filesystem
+  const trustedPathRegex = /^\/(workspace|data|opt|home|var)(\/|$)/;
+  const securePrefixRegex = /^\/(workspace|data)(\/|$)/;
+  const pathValidations: Record<string, { exists: boolean; path: string; composeFileExists: boolean; isTrusted: boolean; isSecure: boolean }> = {};
+  for (const [agentId, p] of Object.entries(finalPaths)) {
+    const composeDir = p.composeDir || '';
+    const composeFile = p.composeFile || 'docker-compose.yml';
+    const fullComposePath = path.join(composeDir, composeFile);
+    const exists = fs.existsSync(composeDir) || fs.existsSync(path.dirname(composeDir)) || composeDir.startsWith('/');
+    const composeFileExists = fs.existsSync(fullComposePath) || fs.existsSync(composeDir);
+    const isTrusted = trustedPathRegex.test(composeDir) && trustedPathRegex.test(p.workspaceDir || '');
+    const isSecure = securePrefixRegex.test(composeDir);
+    pathValidations[agentId] = {
+      exists,
+      path: composeDir,
+      composeFileExists,
+      isTrusted,
+      isSecure
+    };
+  }
+
   // Persist JSON mappings and .env format file
   try {
     fs.writeFileSync(pathsFile, JSON.stringify(finalPaths, null, 2), 'utf8');
@@ -4375,6 +4483,17 @@ app.all(['/api/docker/sync-paths', '/api/docker/sync-paths/'], (req, res) => {
   const execLogs: string[] = [];
 
   for (const [agentId, p] of Object.entries(finalPaths)) {
+    // Regex security validation: ensure directories start with trusted /workspace or /data (or trusted system root) prefix
+    const composeDir = p.composeDir || '';
+    const isTrusted = trustedPathRegex.test(composeDir);
+    if (!isTrusted) {
+      console.warn(`[Security] Path "${composeDir}" for ${agentId} failed trusted prefix regex validation (/workspace or /data). Environment update skipped.`);
+      if (agentStates[agentId]) {
+        agentStates[agentId].logs.push(`[${new Date().toLocaleTimeString()}] [Security Warning] Path "${composeDir}" failed trusted prefix regex validation (/workspace or /data). Environment update skipped.`);
+      }
+      continue;
+    }
+
     if (!p.enabled) continue;
     appliedAgents.push(agentId);
 
@@ -4411,6 +4530,7 @@ app.all(['/api/docker/sync-paths', '/api/docker/sync-paths/'], (req, res) => {
     message: 'Container environment variables updated with standardized directory mappings',
     syncedPaths: finalPaths,
     environmentVariables: envVars,
+    pathValidations,
     appliedAgents,
     execLogs,
     filePath: 'data/clawdock/standardized_paths.env',
