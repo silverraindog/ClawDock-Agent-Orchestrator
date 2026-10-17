@@ -1,0 +1,26 @@
+{
+  "zeroclaw": {
+    "composeDir": "/opt/bots/zeroclaw",
+    "composeFile": "docker-compose.yml",
+    "workspaceDir": "/var/zeroclaw/workspace",
+    "enabled": true
+  },
+  "hermes-agent": {
+    "composeDir": "/opt/bots/hermes",
+    "composeFile": "docker-compose.yml",
+    "workspaceDir": "/workspace",
+    "enabled": true
+  },
+  "openclaw": {
+    "composeDir": "/opt/bots/openclaw",
+    "composeFile": "docker-compose.yml",
+    "workspaceDir": "/home/openclaw/workspace",
+    "enabled": true
+  },
+  "picoclaw": {
+    "composeDir": "/opt/bots/picoclaw",
+    "composeFile": "docker-compose.yml",
+    "workspaceDir": "/home/sipeed/.picoclaw/workspace",
+    "enabled": true
+  }
+}

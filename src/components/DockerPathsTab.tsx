@@ -16,6 +16,7 @@ import {
   AlertTriangle
 } from 'lucide-react';
 import { AgentId } from '../types';
+import { DockerPathsTreemap } from './DockerPathsTreemap';
 
 interface DockerPathsConfig {
   paths: Record<AgentId, {
@@ -79,7 +80,9 @@ export const DockerPathsTab: React.FC<DockerPathsTabProps> = ({ onAddToast }) =>
   const [activeTestingId, setActiveTestingId] = useState<AgentId | null>(null);
   const [pathValidations, setPathValidations] = useState<Record<string, { exists: boolean; path: string; composeFileExists: boolean }>>({});
   const [showEnvPreview, setShowEnvPreview] = useState(true);
+  const [showTreemap, setShowTreemap] = useState(true);
   const [copiedEnv, setCopiedEnv] = useState(false);
+  const [isPulsing, setIsPulsing] = useState(false);
 
   // Load existing sync status on mount
   useEffect(() => {
@@ -167,6 +170,8 @@ export const DockerPathsTab: React.FC<DockerPathsTabProps> = ({ onAddToast }) =>
 
       if (saveRes.ok) {
         const data = await saveRes.json();
+        setIsPulsing(true);
+        setTimeout(() => setIsPulsing(false), 1500);
         if (data && data.pathValidations) {
           setPathValidations(data.pathValidations);
           for (const [agentId, val] of Object.entries(data.pathValidations) as [string, any][]) {
@@ -282,6 +287,19 @@ export const DockerPathsTab: React.FC<DockerPathsTabProps> = ({ onAddToast }) =>
 
         <div className="flex items-center gap-2 flex-wrap">
           <button
+            onClick={() => setShowTreemap(!showTreemap)}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
+              showTreemap
+                ? 'bg-indigo-600/20 text-indigo-300 border-indigo-500/40 hover:bg-indigo-600/30'
+                : 'bg-slate-800 hover:bg-slate-750 text-slate-300 border-slate-700'
+            }`}
+            title="Toggle D3.js filesystem treemap visualization"
+          >
+            <FolderTree className="w-3.5 h-3.5 text-indigo-400" />
+            <span>{showTreemap ? 'Hide Treemap' : 'Show Treemap'}</span>
+          </button>
+
+          <button
             onClick={handleReset}
             className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-750 text-slate-300 text-xs font-semibold border border-slate-700 transition-colors cursor-pointer"
           >
@@ -373,6 +391,14 @@ export const DockerPathsTab: React.FC<DockerPathsTabProps> = ({ onAddToast }) =>
             ))}
           </div>
         </div>
+      )}
+
+      {/* D3.js Mounted Filesystem Footprints Treemap */}
+      {showTreemap && (
+        <DockerPathsTreemap 
+          paths={config.paths} 
+          pathValidations={pathValidations} 
+        />
       )}
 
       {/* Agents Path Cards Grid */}
@@ -474,7 +500,9 @@ export const DockerPathsTab: React.FC<DockerPathsTabProps> = ({ onAddToast }) =>
                         }
                       });
                     }}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono text-slate-200 focus:outline-none focus:border-indigo-500"
+                    className={`w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono text-slate-200 focus:outline-none focus:border-indigo-500 transition-all duration-500 ${
+                      isPulsing ? 'animate-pulse ring-2 ring-emerald-500/80 bg-emerald-950/30' : ''
+                    }`}
                     placeholder="/opt/bots/zeroclaw"
                   />
                 </div>
@@ -494,7 +522,9 @@ export const DockerPathsTab: React.FC<DockerPathsTabProps> = ({ onAddToast }) =>
                           }
                         });
                       }}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono text-slate-200 focus:outline-none focus:border-indigo-500"
+                      className={`w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono text-slate-200 focus:outline-none focus:border-indigo-500 transition-all duration-500 ${
+                        isPulsing ? 'animate-pulse ring-2 ring-emerald-500/80 bg-emerald-950/30' : ''
+                      }`}
                       placeholder="docker-compose.yml"
                     />
                   </div>
@@ -513,7 +543,9 @@ export const DockerPathsTab: React.FC<DockerPathsTabProps> = ({ onAddToast }) =>
                           }
                         });
                       }}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono text-slate-200 focus:outline-none focus:border-indigo-500"
+                      className={`w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono text-slate-200 focus:outline-none focus:border-indigo-500 transition-all duration-500 ${
+                        isPulsing ? 'animate-pulse ring-2 ring-emerald-500/80 bg-emerald-950/30' : ''
+                      }`}
                       placeholder="/var/workspace"
                     />
                   </div>
