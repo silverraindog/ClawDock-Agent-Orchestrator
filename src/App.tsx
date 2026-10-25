@@ -102,7 +102,7 @@ import {
   SchemaValidationError, 
   NetworkTransportError 
 } from './utils/configValidator';
-import { enhanceConfigWithNative, detectOpenClawConfigFormat, sanitizeConfigString, generateHermesYaml } from './utils/configParser';
+import { enhanceConfigWithNative, detectOpenClawConfigFormat, sanitizeConfigString, generateHermesYaml, generateZeroClawToml } from './utils/configParser';
 
 type MainTab = 'dashboard' | 'config' | 'presets' | 'everos' | 'skills' | 'mcp' | 'docker' | 'console' | 'export' | 'updates' | 'diagnostics' | 'agent-logs' | 'docker-paths';
 
@@ -1317,13 +1317,19 @@ export default function App() {
         return;
       }
 
-      // 2. Non-blocking model catalog check (health verification / advisory)
+      // 2. Non-blocking model catalog check (health verification / advisory with 2.5s timeout)
       try {
-        const modelValidation = await validateModelAgainstCatalog(
-          currentConfig.model.model,
-          currentConfig.model.baseUrl,
-          currentConfig.model.provider
+        const timeoutPromise = new Promise<{ isValid: true; message: string }>(resolve =>
+          setTimeout(() => resolve({ isValid: true, message: 'Validation check timed out' }), 2500)
         );
+        const modelValidation = await Promise.race([
+          validateModelAgainstCatalog(
+            currentConfig.model.model,
+            currentConfig.model.baseUrl,
+            currentConfig.model.provider
+          ),
+          timeoutPromise
+        ]);
         if (!modelValidation.isValid) {
           console.info('[handleSaveConfig] Model catalog advisory:', modelValidation.message);
         }
@@ -1461,7 +1467,7 @@ export default function App() {
             nativeContent = YAML.dump(normalizedConfig);
           }
         } else if (nativeInfo.format === 'toml') {
-          nativeContent = toml.stringify(normalizedConfig as any);
+          nativeContent = generateZeroClawToml(normalizedConfig);
         } else {
           nativeContent = JSON.stringify(normalizedConfig, null, 2);
         }
@@ -1524,11 +1530,19 @@ export default function App() {
       console.log('[handleSaveConfig] Final Raw Request Body being sent over network (PUT /api/agents/' + selectedAgentId + '/config):\n', generatedJsonPayload);
       console.groupEnd();
 
-      const res = await fetch(`/api/agents/${selectedAgentId}/config`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: generatedJsonPayload
-      });
+      const saveController = new AbortController();
+      const saveTimeout = setTimeout(() => saveController.abort(), 10000);
+      let res: Response;
+      try {
+        res = await fetch(`/api/agents/${selectedAgentId}/config`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: generatedJsonPayload,
+          signal: saveController.signal
+        });
+      } finally {
+        clearTimeout(saveTimeout);
+      }
       
       let data: any = {};
       try {

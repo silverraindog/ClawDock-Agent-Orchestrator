@@ -1526,3 +1526,82 @@ env:
 ${Object.entries(env).map(([k, v]) => `  ${k}: "${v}"`).join('\n')}
 `;
 }
+
+/**
+ * Generates a complete, standard zeroclaw.toml for ZeroClaw Agent.
+ */
+export function generateZeroClawToml(cfg: any): string {
+  const m = cfg?.model || {};
+  const sys = cfg?.system || {};
+  const sec = cfg?.security || {};
+  const sto = cfg?.storage || {};
+  const env = cfg?.customEnv || cfg?.env || {};
+  const ch = cfg?.channels || {};
+
+  const model = m.model || 'deepseek-r1';
+  const provider = m.provider || 'deepseek';
+  const apiKey = m.apiKey || '';
+  const baseUrl = m.baseUrl || '';
+  const temperature = m.temperature ?? 0.2;
+  const maxTokens = m.maxTokens ?? 4096;
+  const contextWindow = m.contextWindow ?? 64000;
+
+  let tomlStr = `[agent]
+id = "${cfg?.agentId || 'zeroclaw'}"
+version = "${cfg?.version || '1.0.0'}"
+name = "${sys?.agentName || 'ZeroClaw Edge'}"
+persona = "${sys?.personaName || 'Zero'}"
+
+[daemon]
+port = ${cfg?.port || 8081}
+rust_log = "${env?.RUST_LOG || 'info'}"
+max_ram_mb = ${env?.ZEROCLAW_MAX_RAM_MB || 16}
+unix_socket = "/var/run/zeroclaw.sock"
+
+[model]
+provider = "${provider}"
+model = "${model}"
+temperature = ${temperature}
+max_tokens = ${maxTokens}
+context_window = ${contextWindow}
+`;
+
+  if (apiKey) {
+    tomlStr += `api_key = "${apiKey}"\n`;
+  }
+  if (baseUrl) {
+    tomlStr += `base_url = "${baseUrl}"\n`;
+  }
+
+  tomlStr += `
+[system]
+preset = "${sys?.preset || 'edge_assistant'}"
+system_prompt = ${JSON.stringify(sys?.systemPrompt || 'You are ZeroClaw, an ultra-fast, minimal AI assistant running natively in Rust.')}
+
+[channels.telegram]
+enabled = ${ch?.telegram?.enabled ?? true}
+bot_token = "${ch?.telegram?.botToken || 'env:ZEROCLAW_TELEGRAM_TOKEN'}"
+allowed_users = ${JSON.stringify(ch?.telegram?.allowedUsers || ['@edge_admin'])}
+mode = "${ch?.telegram?.mode || 'polling'}"
+
+[channels.webhook]
+enabled = ${ch?.webhook?.enabled ?? true}
+port = ${ch?.webhook?.port ?? 8081}
+auth_token = "${ch?.webhook?.authToken || 'zeroclaw_auth_key'}"
+
+[security]
+sandbox_mode = "${sec?.sandboxMode || 'docker_isolated'}"
+allowed_directories = ${JSON.stringify(sec?.allowedDirectories || ['/var/zeroclaw/workspace'])}
+max_execution_time_sec = ${sec?.maxExecutionTimeSec ?? 60}
+require_approval_for_commands = ${sec?.requireApprovalForCommands ?? true}
+
+[storage]
+memory_backend = "${sto?.memoryBackend || 'everos'}"
+db_path = "${sto?.dbPath || '/data/everos/memories/zeroclaw'}"
+auto_summarize_interval = ${sto?.autoSummarizeInterval ?? 50}
+max_history_turns = ${sto?.maxHistoryTurns ?? 40}
+vector_db_url = "${sto?.vectorDbUrl || 'http://everos:8080'}"
+`;
+
+  return tomlStr;
+}

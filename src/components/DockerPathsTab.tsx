@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   FolderTree, 
   Save, 
@@ -83,6 +83,81 @@ export const DockerPathsTab: React.FC<DockerPathsTabProps> = ({ onAddToast }) =>
   const [showTreemap, setShowTreemap] = useState(true);
   const [copiedEnv, setCopiedEnv] = useState(false);
   const [isPulsing, setIsPulsing] = useState(false);
+  const [autoSaveStatus, setAutoSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
+  const [lastAutoSavedTime, setLastAutoSavedTime] = useState<string | null>(null);
+  const isInitialMount = useRef(true);
+
+  // Auto-save function: performs a silent save & sync of directory mappings
+  const performSilentSave = async (pathsToSave: DockerPathsConfig['paths']) => {
+    setAutoSaveStatus('saving');
+    try {
+      localStorage.setItem('clawdock_docker_paths_config', JSON.stringify({ paths: pathsToSave }));
+
+      const saveRes = await fetch('/api/docker/save-paths', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({ paths: pathsToSave })
+      });
+
+      if (saveRes.ok) {
+        const data = await saveRes.json();
+        setIsPulsing(true);
+        setTimeout(() => setIsPulsing(false), 1500);
+        if (data && data.pathValidations) {
+          setPathValidations(data.pathValidations);
+        }
+      }
+
+      // Silent sync environment variables to /api/docker/sync-paths
+      const syncRes = await fetch('/api/docker/sync-paths', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({ paths: pathsToSave })
+      });
+
+      if (syncRes.ok) {
+        const syncData = await syncRes.json();
+        if (syncData && syncData.environmentVariables) {
+          setLastSyncResult({
+            timestamp: new Date().toLocaleTimeString(),
+            appliedAgents: syncData.appliedAgents || Object.keys(pathsToSave),
+            environmentVariables: syncData.environmentVariables
+          });
+          if (syncData.pathValidations) {
+            setPathValidations(syncData.pathValidations);
+          }
+        }
+      }
+
+      const timeStr = new Date().toLocaleTimeString();
+      setAutoSaveStatus('saved');
+      setLastAutoSavedTime(timeStr);
+    } catch (err) {
+      console.warn('[DockerPathsTab] Auto-save failed silently:', err);
+      setAutoSaveStatus('idle');
+    }
+  };
+
+  // Debounced auto-save trigger (2-second debounce after input modifications)
+  useEffect(() => {
+    if (isInitialMount.current) {
+      isInitialMount.current = false;
+      return;
+    }
+
+    setAutoSaveStatus('idle');
+    const timer = setTimeout(() => {
+      performSilentSave(config.paths);
+    }, 2000);
+
+    return () => clearTimeout(timer);
+  }, [config]);
 
   // Load existing sync status on mount
   useEffect(() => {
@@ -270,9 +345,21 @@ export const DockerPathsTab: React.FC<DockerPathsTabProps> = ({ onAddToast }) =>
             <FolderTree className="w-6 h-6" />
           </div>
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <h2 className="text-lg font-bold text-white">Multi-Directory Docker Paths &amp; Compose Mapping</h2>
-              {lastSyncResult && (
+              {autoSaveStatus === 'saving' && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono bg-amber-500/10 text-amber-400 border border-amber-500/30 animate-pulse">
+                  <RefreshCw className="w-3 h-3 animate-spin text-amber-400" />
+                  Auto-saving...
+                </span>
+              )}
+              {autoSaveStatus === 'saved' && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono bg-indigo-500/10 text-indigo-300 border border-indigo-500/30">
+                  <Zap className="w-3 h-3 text-indigo-400" />
+                  Auto-saved ({lastAutoSavedTime})
+                </span>
+              )}
+              {lastSyncResult && autoSaveStatus !== 'saving' && (
                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
                   <CheckCircle2 className="w-3 h-3 text-emerald-400" />
                   Synced ({lastSyncResult.timestamp})

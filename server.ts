@@ -3925,6 +3925,82 @@ ${Object.entries(env).map(([k, v]) => `  ${k}: "${v}"`).join('\n')}
 `;
 }
 
+function generateZeroClawToml(cfg: any): string {
+  const m = cfg?.model || {};
+  const sys = cfg?.system || {};
+  const sec = cfg?.security || {};
+  const sto = cfg?.storage || {};
+  const env = cfg?.customEnv || {};
+  const ch = cfg?.channels || {};
+
+  const model = m.model || 'deepseek-r1';
+  const provider = m.provider || 'deepseek';
+  const apiKey = m.apiKey || '';
+  const baseUrl = m.baseUrl || '';
+  const temperature = m.temperature ?? 0.2;
+  const maxTokens = m.maxTokens ?? 4096;
+  const contextWindow = m.contextWindow ?? 64000;
+
+  let tomlStr = `[agent]
+id = "${cfg?.agentId || 'zeroclaw'}"
+version = "${cfg?.version || '1.0.0'}"
+name = "${sys?.agentName || 'ZeroClaw Edge'}"
+persona = "${sys?.personaName || 'Zero'}"
+
+[daemon]
+port = ${cfg?.port || 8081}
+rust_log = "${env?.RUST_LOG || 'info'}"
+max_ram_mb = ${env?.ZEROCLAW_MAX_RAM_MB || 16}
+unix_socket = "/var/run/zeroclaw.sock"
+
+[model]
+provider = "${provider}"
+model = "${model}"
+temperature = ${temperature}
+max_tokens = ${maxTokens}
+context_window = ${contextWindow}
+`;
+
+  if (apiKey) {
+    tomlStr += `api_key = "${apiKey}"\n`;
+  }
+  if (baseUrl) {
+    tomlStr += `base_url = "${baseUrl}"\n`;
+  }
+
+  tomlStr += `
+[system]
+preset = "${sys?.preset || 'edge_assistant'}"
+system_prompt = ${JSON.stringify(sys?.systemPrompt || 'You are ZeroClaw, an ultra-fast, minimal AI assistant running natively in Rust.')}
+
+[channels.telegram]
+enabled = ${ch?.telegram?.enabled ?? true}
+bot_token = "${ch?.telegram?.botToken || 'env:ZEROCLAW_TELEGRAM_TOKEN'}"
+allowed_users = ${JSON.stringify(ch?.telegram?.allowedUsers || ['@edge_admin'])}
+mode = "${ch?.telegram?.mode || 'polling'}"
+
+[channels.webhook]
+enabled = ${ch?.webhook?.enabled ?? true}
+port = ${ch?.webhook?.port ?? 8081}
+auth_token = "${ch?.webhook?.authToken || 'zeroclaw_auth_key'}"
+
+[security]
+sandbox_mode = "${sec?.sandboxMode || 'docker_isolated'}"
+allowed_directories = ${JSON.stringify(sec?.allowedDirectories || ['/var/zeroclaw/workspace'])}
+max_execution_time_sec = ${sec?.maxExecutionTimeSec ?? 60}
+require_approval_for_commands = ${sec?.requireApprovalForCommands ?? true}
+
+[storage]
+memory_backend = "${sto?.memoryBackend || 'everos'}"
+db_path = "${sto?.dbPath || '/data/everos/memories/zeroclaw'}"
+auto_summarize_interval = ${sto?.autoSummarizeInterval ?? 50}
+max_history_turns = ${sto?.maxHistoryTurns ?? 40}
+vector_db_url = "${sto?.vectorDbUrl || 'http://everos:8080'}"
+`;
+
+  return tomlStr;
+}
+
 // Save / update native config file for agent container and restart container
 app.put('/api/agents/:id/config', (req, res) => {
   const agentId = req.params.id;
@@ -3952,10 +4028,14 @@ app.put('/api/agents/:id/config', (req, res) => {
         }
       }
     } else if (def.format === 'toml') {
-      try {
-        nativeContent = TOML.stringify(config);
-      } catch {
-        nativeContent = JSON.stringify(config, null, 2);
+      if (agentId === 'zeroclaw') {
+        nativeContent = generateZeroClawToml(config);
+      } else {
+        try {
+          nativeContent = TOML.stringify(config);
+        } catch {
+          nativeContent = generateZeroClawToml(config);
+        }
       }
     } else if (def.format === 'json') {
       nativeContent = JSON.stringify(config, null, 2);
@@ -3970,7 +4050,15 @@ app.put('/api/agents/:id/config', (req, res) => {
           nativeContent = YAML.stringify(parsed);
         }
       } else if (def.format === 'toml') {
-        nativeContent = TOML.stringify(parsed);
+        if (agentId === 'zeroclaw') {
+          nativeContent = generateZeroClawToml(parsed);
+        } else {
+          try {
+            nativeContent = TOML.stringify(parsed);
+          } catch {
+            nativeContent = generateZeroClawToml(parsed);
+          }
+        }
       } else if (def.format === 'json') {
         nativeContent = JSON.stringify(parsed, null, 2);
       }
@@ -4027,10 +4115,15 @@ app.put('/api/agents/:id/config', (req, res) => {
 
       for (const cName of candidateContainers) {
         try {
-          // Check if container exists/running
-          const inspectOut = execSync(`docker inspect ${cName}`, { encoding: 'utf8', timeout: 1000, stdio: ['ignore', 'pipe', 'ignore'] });
-          if (inspectOut) {
-            execLogs.push(`Found active container ${cName}`);
+          // Check if container is running
+          let isRunning = false;
+          try {
+            const inspectOut = execSync(`docker inspect -f "{{.State.Running}}" ${cName}`, { encoding: 'utf8', timeout: 800, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+            isRunning = inspectOut === 'true';
+          } catch {}
+
+          if (isRunning) {
+            execLogs.push(`Found active running container ${cName}`);
 
             // Write config file directly into container paths so hermes finds it immediately
             if (agentId === 'hermes-agent') {
@@ -4038,7 +4131,7 @@ app.put('/api/agents/:id/config', (req, res) => {
                 execSync(`docker exec -i ${cName} sh -c "mkdir -p /root/.hermes /opt/hermes /etc/hermes /home/sargus/.hermes /home/sargus/.hermes-data && cat > /root/.hermes/config.yaml && cp /root/.hermes/config.yaml /opt/hermes/config.yaml && cp /root/.hermes/config.yaml /workspace/config.yaml && cp /root/.hermes/config.yaml /etc/hermes/config.yaml && cp /root/.hermes/config.yaml /home/sargus/.hermes-data/config.yaml && cp /root/.hermes/config.yaml /home/sargus/.hermes/config.yaml"`, {
                   input: nativeContent,
                   encoding: 'utf8',
-                  timeout: 3000,
+                  timeout: 2500,
                   stdio: ['pipe', 'pipe', 'ignore']
                 });
                 execLogs.push(`Wrote config.yaml configuration to container ${cName} (/root/.hermes/config.yaml)`);
@@ -4078,7 +4171,7 @@ app.put('/api/agents/:id/config', (req, res) => {
                 execSync(`docker exec -i ${cName} sh -c "mkdir -p /root/.zeroclaw /etc/zeroclaw /workspace && cat > /root/.zeroclaw/config.toml && cp /root/.zeroclaw/config.toml /etc/zeroclaw/config.toml && cp /root/.zeroclaw/config.toml /workspace/zeroclaw.toml"`, {
                   input: nativeContent,
                   encoding: 'utf8',
-                  timeout: 3000,
+                  timeout: 2500,
                   stdio: ['pipe', 'pipe', 'ignore']
                 });
                 execLogs.push(`Wrote zeroclaw.toml configuration to container ${cName}`);
@@ -4090,7 +4183,7 @@ app.put('/api/agents/:id/config', (req, res) => {
                 execSync(`docker exec -i ${cName} sh -c "mkdir -p /root/.openclaw /etc/openclaw /workspace && cat > /root/.openclaw/config.json && cp /root/.openclaw/config.json /etc/openclaw/config.json && cp /root/.openclaw/config.json /workspace/openclaw.json"`, {
                   input: nativeContent,
                   encoding: 'utf8',
-                  timeout: 3000,
+                  timeout: 2500,
                   stdio: ['pipe', 'pipe', 'ignore']
                 });
                 execLogs.push(`Wrote openclaw.json configuration to container ${cName}`);
@@ -4102,7 +4195,7 @@ app.put('/api/agents/:id/config', (req, res) => {
                 execSync(`docker exec -i ${cName} sh -c "mkdir -p /root/.picoclaw /etc/picoclaw /workspace && cat > /root/.picoclaw/config.json && cp /root/.picoclaw/config.json /etc/picoclaw/config.json && cp /root/.picoclaw/config.json /workspace/picoclaw.json"`, {
                   input: nativeContent,
                   encoding: 'utf8',
-                  timeout: 3000,
+                  timeout: 2500,
                   stdio: ['pipe', 'pipe', 'ignore']
                 });
                 execLogs.push(`Wrote picoclaw.json configuration to container ${cName}`);
@@ -4123,8 +4216,23 @@ app.put('/api/agents/:id/config', (req, res) => {
               }
             }
             break;
+          } else {
+            // Container exists on system but is not running
+            execLogs.push(`Container ${cName} exists on host system in stopped/offline state; configuration saved to disk (/data/clawdock/${nativeFileName}).`);
+            if (shouldRestart) {
+              try {
+                execSync(`docker start ${cName}`, { encoding: 'utf8', timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'] });
+                execLogs.push(`Executed: docker start ${cName}`);
+                containerRestarted = true;
+              } catch (e: any) {
+                execLogs.push(`Container start attempted: ${e.message}`);
+              }
+            }
+            break;
           }
-        } catch {}
+        } catch (e: any) {
+          execLogs.push(`Error evaluating container ${cName}: ${e.message}`);
+        }
       }
     }
 
