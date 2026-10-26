@@ -2,10 +2,16 @@ name: Docker Build and Release
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, master ]
     paths-ignore:
       - '**.md'
       - '.gitignore'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag to publish (optional, e.g. 1.0.5)'
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -15,6 +21,7 @@ permissions:
 
 jobs:
   release:
+    name: Build, Tag & Publish to GHCR
     runs-on: ubuntu-latest
     if: "!contains(github.event.head_commit.message, '[skip ci]')"
     
@@ -31,52 +38,52 @@ jobs:
           node-version: 20
           cache: 'npm'
 
-      - name: Set up Git
+      - name: Set up Git Configuration
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if [ -n "${{ secrets.GH_PAT || secrets.DEPLOYMENT_KEY }}" ]; then
-            echo "Using elevated token for bypass authentication."
-          fi
 
-      - name: Increment Version and Sync Dockerfile
+      - name: Determine Version & Sync Package Manifest
         id: versioning
         run: |
-          # Ensure all remote tags are fetched
+          # Fetch all tags from remote repository
           git fetch --tags --force
           
-          # Initial patch bump
-          npm version patch --no-git-tag-version
-          
-          # Increment patch version until we find a version tag that does not exist locally or on remote
-          while git rev-parse "v$(node -p "require('./package.json').version")" >/dev/null 2>&1 || \
-                git ls-remote --tags origin "refs/tags/v$(node -p "require('./package.json').version")" | grep -q "refs/tags/"; do
-            echo "Tag v$(node -p "require('./package.json').version") already exists, incrementing patch version..."
+          INPUT_VER="${{ github.event.inputs.version }}"
+          if [ -n "$INPUT_VER" ]; then
+            NEW_VERSION="${INPUT_VER#v}"
+            npm version "$NEW_VERSION" --no-git-tag-version || true
+          else
             npm version patch --no-git-tag-version
-          done
+            while git rev-parse "v$(node -p "require('./package.json').version")" >/dev/null 2>&1 || \
+                  git ls-remote --tags origin "refs/tags/v$(node -p "require('./package.json').version")" | grep -q "refs/tags/"; do
+              echo "Tag v$(node -p "require('./package.json').version") already exists, incrementing patch version..."
+              npm version patch --no-git-tag-version
+            done
+            NEW_VERSION=$(node -p "require('./package.json').version")
+          fi
           
-          # Extract the unique new version
-          NEW_VERSION=$(node -p "require('./package.json').version")
-          echo "Target unique version determined: $NEW_VERSION"
+          echo "Target Release Version: $NEW_VERSION"
           echo "NEW_VERSION=$NEW_VERSION" >> $GITHUB_ENV
           
-          # Sync the Dockerfile version label
-          sed -i "s/LABEL version=\".*\"/LABEL version=\"$NEW_VERSION\"/" Dockerfile
+          # Compute lowercased image name for GHCR compliance
+          REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          echo "REPO_LOWER=$REPO_LOWER" >> $GITHUB_ENV
           
-          git add package.json package-lock.json Dockerfile
-          git commit -m "chore: bump version to $NEW_VERSION [skip ci]"
-          git tag -a "v$NEW_VERSION" -m "Release v$NEW_VERSION"
+          # Sync version label in Dockerfile if present
+          if grep -q "LABEL version=" Dockerfile; then
+            sed -i "s/LABEL version=\".*\"/LABEL version=\"$NEW_VERSION\"/" Dockerfile
+          fi
           
-          # If GH_PAT or DEPLOYMENT_KEY is provided, push directly to main (bypassing PR rule)
+          git add package.json package-lock.json Dockerfile || true
+          git commit -m "chore: bump version to $NEW_VERSION [skip ci]" || true
+          git tag -a "v$NEW_VERSION" -m "Release v$NEW_VERSION" || true
+          
           if [ -n "${{ secrets.GH_PAT || secrets.DEPLOYMENT_KEY }}" ]; then
-            echo "Pushing directly to main using elevated PAT/Deploy Key..."
-            git push origin main --tags
+            echo "Pushing directly to origin with elevated PAT..."
+            git push origin HEAD:${{ github.ref_name }} --tags || true
           else
-            echo "Pushing via release branch and PR workflow..."
-            RELEASE_BRANCH="release/v$NEW_VERSION"
-            git checkout -b $RELEASE_BRANCH
-            git push origin $RELEASE_BRANCH --tags
-            gh pr create --title "chore: release v$NEW_VERSION [skip ci]" --body "Automated version bump and Docker release preparation for v$NEW_VERSION." --base main --head $RELEASE_BRANCH || echo "Pull request creation notice emitted."
+            git push origin "v$NEW_VERSION" || true
           fi
         env:
           GH_TOKEN: ${{ secrets.GH_PAT || secrets.DEPLOYMENT_KEY || secrets.GITHUB_TOKEN }}
@@ -87,26 +94,38 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Login to GitHub Container Registry
+      - name: Log in to GitHub Container Registry (GHCR)
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract Metadata for Docker
+      - name: Extract Docker Metadata & OCI Labels (Linked to Repo)
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository }}
+          images: ghcr.io/${{ env.REPO_LOWER }}
           tags: |
-            type=semver,pattern={{version}},value=${{ env.NEW_VERSION }}
+            type=raw,value=${{ env.NEW_VERSION }}
+            type=raw,value=v${{ env.NEW_VERSION }}
             type=raw,value=latest
+            type=semver,pattern={{version}},value=v${{ env.NEW_VERSION }}
+            type=semver,pattern={{major}}.{{minor}},value=v${{ env.NEW_VERSION }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.title=${{ github.event.repository.name || 'clawdock' }}
+            org.opencontainers.image.description=ClawDock Multi-Agent Docker Orchestrator
+            org.opencontainers.image.url=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.version=${{ env.NEW_VERSION }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.vendor=ClawDock
 
-      - name: Build and Push Docker Image
+      - name: Build and Push Docker Image to GHCR
         uses: docker/build-push-action@v5
         with:
           context: .
+          file: ./Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
