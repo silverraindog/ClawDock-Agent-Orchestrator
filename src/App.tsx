@@ -239,6 +239,11 @@ export default function App() {
   ]);
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [bulkOperationLogs, setBulkOperationLogs] = useState<any[]>([]);
+
+  const addBulkLog = (log: any) => setBulkOperationLogs(prev => [log, ...prev]);
+  const updateBulkLog = (id: string, status: string) => setBulkOperationLogs(prev => prev.map(l => l.id === id ? { ...l, status } : l));
+
   const [execHistory, setExecHistory] = useState<AgentExecResult[]>(() => {
     try {
       const saved = localStorage.getItem('clawdock_exec_history');
@@ -1083,6 +1088,14 @@ export default function App() {
 
   // Restart all agent containers
   const handleRestartAllAgents = async () => {
+    const bulkLog = {
+      id: `bulk_${Date.now()}`,
+      action: 'Restart All Agents',
+      timestamp: new Date().toLocaleTimeString(),
+      status: 'started'
+    };
+    addBulkLog(bulkLog);
+    
     setAgents(prev => prev.map(a => ({ ...a, status: 'restarting' })));
     setContainerLogs(prev => [
       ...prev,
@@ -1099,11 +1112,13 @@ export default function App() {
           `[${new Date().toLocaleTimeString()}] [Docker Engine] All containers successfully restarted and operational.`
         ]);
         addToast('success', 'All Containers Running', 'Successfully restarted all Docker agent containers.');
+        updateBulkLog(bulkLog.id, 'completed');
       }, 800);
     } catch {
       setTimeout(() => {
         setAgents(prev => prev.map(a => ({ ...a, status: 'running' })));
         addToast('success', 'All Containers Running', 'All containers restarted.');
+        updateBulkLog(bulkLog.id, 'completed');
       }, 800);
     }
   };
@@ -3019,6 +3034,7 @@ export default function App() {
               agent={currentAgent}
               messages={messages}
               execHistory={execHistory}
+              bulkOperationLogs={bulkOperationLogs}
               onSendMessage={handleSendMessage}
               onClearHistory={() => {
                 setMessages([]);

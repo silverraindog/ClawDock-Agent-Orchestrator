@@ -861,66 +861,71 @@ app.all(['/api/mcp/official-catalog', '/api/mcp/catalog', '/api/mcp/servers', '/
   });
 });
 
-// Agent Failback Simulation Endpoint
-app.all(['/api/agents/:id/simulate-failback', '/api/agents/:id/failback/simulate', '/api/failback/simulate'], async (req, res) => {
-  const agentId = req.params.id || req.query.agentId || req.body?.agentId || 'hermes-agent';
-  const body = req.body || {};
-  const query = req.query || {};
-  
-  const fallbackProvider = body.fallbackProvider || body.provider || query.fallbackProvider || 'ollama';
-  const fallbackModel = body.fallbackModel || body.model || query.fallbackModel || 'hermes-3-llama-3.1-8b';
-  const targetAgentId = body.targetAgentId || query.targetAgentId || (agentId === 'hermes-agent' ? 'zeroclaw' : 'picoclaw');
-  const strategy = body.strategy || query.strategy || 'on_offline';
-  const prompt = body.prompt || query.prompt || 'Simulated failback test request: verifying secondary gateway & model inference';
+// New Remote MCP Sources Endpoints
+app.get('/api/mcp/remote-sources', async (req, res) => {
+  const sources = [
+    { name: 'mcpservers.org', url: 'https://mcpservers.org/remote-mcp-servers' },
+    { name: 'pulsemcp.com', url: 'https://www.pulsemcp.com/servers?other%5B%5D=remote' }
+  ];
 
-  const startTime = Date.now();
-  
-  // Simulated processing delay for failover detection and reroute
-  await new Promise(r => setTimeout(r, 60));
-  const latencyMs = Date.now() - startTime;
+  const results = await Promise.all(
+    sources.map(async (source) => {
+      try {
+        const response = await fetch(source.url);
+        if (!response.ok) throw new Error(`Failed to fetch ${source.name}`);
+        const data = await response.json();
+        return { source: source.name, servers: data.servers || [] };
+      } catch (err: any) {
+        return { source: source.name, error: err.message, servers: [] };
+      }
+    })
+  );
 
-  const result = {
-    success: true,
-    simulation: 'FAILBACK_ORCHESTRATION',
-    primaryAgent: {
-      id: agentId,
-      status: 'simulated_offline',
-      triggerReason: strategy === 'on_latency' ? 'Latency threshold exceeded (>500ms)' : strategy === 'on_error' ? 'Simulated 503 Service Unavailable upstream' : 'Primary agent node offline / heartbeat lost'
-    },
-    failbackTriggered: true,
-    strategy,
-    fallbackTarget: {
-      targetAgentId,
-      fallbackProvider,
-      fallbackModel,
-      resolutionType: 'redundant_edge_gateway',
-      activeStatus: 'healthy'
-    },
-    dispatchedPayload: {
-      prompt,
-      timestamp: new Date().toISOString()
-    },
-    response: {
-      status: 200,
-      dispatchedTo: `${fallbackProvider} / ${fallbackModel}`,
-      gatewayNode: targetAgentId,
-      latencyMs,
-      output: `[FAILBACK ORCHESTRATION SUCCESS] Request for [${agentId}] intercepted by failback orchestrator. Primary simulated offline. Gracefully rerouted traffic to failback provider [${fallbackProvider}] running [${fallbackModel}] via [${targetAgentId}] gateway. Failback loop verified healthy.`,
-      heartbeatVerified: true
-    },
-    timestamp: new Date().toISOString()
-  };
+  res.json({ success: true, sources: results });
+});
 
-  jsonConsoleLog('INFO', 'failback-orchestrator', `Simulate failback completed for agent ${agentId}`, {
-    agentId,
-    fallbackProvider,
-    fallbackModel,
-    targetAgentId,
-    strategy,
-    latencyMs
-  });
 
-  return res.json(result);
+// Run MCP server as Docker container
+app.post('/api/mcp/run', async (req, res) => {
+  const { image, name, env, args } = req.body;
+  const containerName = `mcp-${name.toLowerCase().replace(/[^a-z0-9]/g, '-')}-${Date.now()}`;
+  const envArgs = Object.entries(env || {}).map(([k, v]) => `-e ${k}=${v}`).join(' ');
+  const command = `docker run -d --name ${containerName} --network clawdock_default ${envArgs} ${image} ${args || ''}`;
+
+  try {
+    execSync(command);
+    jsonConsoleLog('INFO', 'mcp-orchestrator', `Started MCP server container: ${containerName}`);
+    res.json({ success: true, containerName, status: 'running' });
+  } catch (err: any) {
+    jsonConsoleLog('ERROR', 'mcp-orchestrator', `Failed to start container: ${err.message}`);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Install/Configure MCP server settings for a specific bot
+app.post('/api/mcp/install-to-agent', async (req, res) => {
+  const { agentId, mcpServerConfig } = req.body;
+  // This would update the persistence.json (or the agent's config file)
+  // Reusing the existing persistence update logic or similar
+  try {
+    const persistencePath = './data/persistence.json';
+    const persistence = JSON.parse(fs.readFileSync(persistencePath, 'utf-8'));
+    
+    if (!persistence.configs[agentId]) {
+      persistence.configs[agentId] = { mcpServers: [] };
+    }
+    if (!persistence.configs[agentId].mcpServers) {
+      persistence.configs[agentId].mcpServers = [];
+    }
+    
+    persistence.configs[agentId].mcpServers.push(mcpServerConfig);
+    fs.writeFileSync(persistencePath, JSON.stringify(persistence, null, 2));
+    
+    jsonConsoleLog('INFO', 'mcp-orchestrator', `Installed MCP server ${mcpServerConfig.name} to agent ${agentId}`);
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 // Generic LLM / Provider API forwarder proxy to avoid browser CORS issues

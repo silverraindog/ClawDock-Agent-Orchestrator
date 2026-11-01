@@ -22,6 +22,7 @@ interface ConsoleTabProps {
   agent: AgentInfo;
   messages: ChatMessage[];
   execHistory: AgentExecResult[];
+  bulkOperationLogs: any[];
   onSendMessage: (text: string) => void;
   onClearHistory: () => void;
   isThinking: boolean;
@@ -31,6 +32,7 @@ export const ConsoleTab: React.FC<ConsoleTabProps> = ({
   agent,
   messages,
   execHistory,
+  bulkOperationLogs,
   onSendMessage,
   onClearHistory,
   isThinking
@@ -41,8 +43,47 @@ export const ConsoleTab: React.FC<ConsoleTabProps> = ({
   const [liveStream, setLiveStream] = useState(false);
   const [liveLogs, setLiveLogs] = useState<string[]>([]);
   const [isHistoryExpanded, setIsHistoryExpanded] = useState(false);
+  const [isBulkExpanded, setIsBulkExpanded] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const logsEndRef = useRef<HTMLDivElement>(null);
+
+  // ... inside return ...
+  {/* Bulk Operation Logs Panel (Collapsible) */}
+  <div className="rounded-xl border border-slate-800 bg-slate-900/50 overflow-hidden transition-all duration-300">
+    <button
+      onClick={() => setIsBulkExpanded(!isBulkExpanded)}
+      className="w-full flex items-center justify-between p-3 text-xs font-bold text-slate-300 hover:text-white hover:bg-slate-800/50 transition-colors"
+    >
+      <div className="flex items-center gap-2">
+        <RefreshCw className="w-4 h-4 text-emerald-400" />
+        <span>Bulk Operation Logs</span>
+        <span className="px-1.5 py-0.5 rounded-full bg-slate-800 text-[10px] text-slate-400 border border-slate-700">
+          {bulkOperationLogs.length}
+        </span>
+      </div>
+      <ChevronRight className={`w-4 h-4 transition-transform ${isBulkExpanded ? 'rotate-90' : ''}`} />
+    </button>
+    
+    {isBulkExpanded && (
+      <div className="p-3 pt-0 max-h-[300px] overflow-y-auto space-y-2 custom-scrollbar">
+        {bulkOperationLogs.length === 0 ? (
+          <div className="py-8 text-center text-slate-500 text-[11px] italic">
+            No bulk operations recorded.
+          </div>
+        ) : (
+          bulkOperationLogs.map((log) => (
+            <div key={log.id} className="p-2.5 rounded-lg bg-slate-950 border border-slate-800/80 font-mono text-[11px] flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className={`w-1.5 h-1.5 rounded-full ${log.status === 'completed' ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+                <span className="text-slate-300">{log.action}</span>
+              </div>
+              <span className="text-slate-500">{log.timestamp}</span>
+            </div>
+          ))
+        )}
+      </div>
+    )}
+  </div>
 
   const scrollToBottom = () => {
     if (autoScroll) {
@@ -166,6 +207,43 @@ export const ConsoleTab: React.FC<ConsoleTabProps> = ({
             Clear Terminal
           </button>
         </div>
+      </div>
+
+      {/* Bulk Operation Logs Panel (Collapsible) */}
+      <div className="rounded-xl border border-slate-800 bg-slate-900/50 overflow-hidden transition-all duration-300">
+        <button
+          onClick={() => setIsBulkExpanded(!isBulkExpanded)}
+          className="w-full flex items-center justify-between p-3 text-xs font-bold text-slate-300 hover:text-white hover:bg-slate-800/50 transition-colors"
+        >
+          <div className="flex items-center gap-2">
+            <RefreshCw className="w-4 h-4 text-emerald-400" />
+            <span>Bulk Operation Logs</span>
+            <span className="px-1.5 py-0.5 rounded-full bg-slate-800 text-[10px] text-slate-400 border border-slate-700">
+              {bulkOperationLogs.length}
+            </span>
+          </div>
+          <ChevronRight className={`w-4 h-4 transition-transform ${isBulkExpanded ? 'rotate-90' : ''}`} />
+        </button>
+        
+        {isBulkExpanded && (
+          <div className="p-3 pt-0 max-h-[300px] overflow-y-auto space-y-2 custom-scrollbar">
+            {bulkOperationLogs.length === 0 ? (
+              <div className="py-8 text-center text-slate-500 text-[11px] italic">
+                No bulk operations recorded.
+              </div>
+            ) : (
+              bulkOperationLogs.map((log) => (
+                <div key={log.id} className="p-2.5 rounded-lg bg-slate-950 border border-slate-800/80 font-mono text-[11px] flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className={`w-1.5 h-1.5 rounded-full ${log.status === 'completed' ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+                    <span className="text-slate-300">{log.action}</span>
+                  </div>
+                  <span className="text-slate-500">{log.timestamp}</span>
+                </div>
+              ))
+            )}
+          </div>
+        )}
       </div>
 
       {/* Execution History Panel (Collapsible) */}
