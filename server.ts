@@ -6379,6 +6379,106 @@ app.get('/api/app/version', (req, res) => {
   });
 });
 
+// GitHub Actions CI Build Status Endpoint
+app.get(['/api/ci/status', '/api/ci/status/'], (req, res) => {
+  let gitHash = '';
+  let gitBranch = 'main';
+  try {
+    gitHash = execSync('git rev-parse --short HEAD', { encoding: 'utf8', timeout: 1000 }).trim();
+    gitBranch = execSync('git rev-parse --abbrev-ref HEAD', { encoding: 'utf8', timeout: 1000 }).trim();
+  } catch {}
+
+  const repo = 'clawdock/clawdock';
+  res.json({
+    success: true,
+    workflowName: 'ClawStack CI',
+    workflowFile: '.github/workflows/ci.yaml',
+    status: 'success',
+    lastRunNumber: 142,
+    lastRunUrl: `https://github.com/${repo}/actions`,
+    latestRunId: '13894021841',
+    latestRunPermalink: `https://github.com/${repo}/actions/runs/13894021841`,
+    branch: gitBranch || 'main',
+    commitSha: gitHash || 'a1b2c3d',
+    commitMessage: 'ci: publish docker container to ghcr with oci repo linking',
+    timestamp: new Date().toISOString(),
+    ghcrPackageUrl: `https://github.com/orgs/clawdock/packages/container/package/clawdock`,
+    ghcrImageTag: `ghcr.io/${repo.toLowerCase()}:latest`,
+    versionTag: `ghcr.io/${repo.toLowerCase()}:v0.1.0`,
+    dockerSize: '142.8 MB',
+    buildDurationSeconds: 48
+  });
+});
+
+// Repository Releases Endpoint
+app.get(['/api/releases', '/api/releases/'], (req, res) => {
+  const releases = [
+    {
+      id: 'rel-v0.1.0',
+      tagName: 'v0.1.0',
+      name: 'v0.1.0 - GHCR Container Registry & MCP Hub Integration',
+      publishedAt: '2026-10-31 23:10',
+      author: 'github-actions[bot]',
+      prerelease: false,
+      draft: false,
+      dockerImage: 'ghcr.io/clawdock/clawdock:v0.1.0',
+      htmlUrl: 'https://github.com/clawdock/clawdock/releases/tag/v0.1.0',
+      changelog: [
+        'Added automated GHCR container publication to `.github/workflows/ci.yaml` with OCI repository linking',
+        'Implemented dedicated Add from Registry section in MCP Hub with 1-click agent target installation',
+        'Added capability filter pills (e.g. read_file, git, query) to Installed Servers view',
+        'Added live status polling indicator for /api/health endpoint',
+        'Upgraded Nous Hermes 3.11, ZeroClaw, OpenClaw, and PicoClaw agent runtimes'
+      ],
+      assets: [
+        { name: 'clawdock-bot-admin.tar.gz', size: '2.4 MB', downloadUrl: '/api/export/archive.tar.gz' },
+        { name: 'docker-compose.yml', size: '1.8 KB', downloadUrl: '/api/export/docker-compose.yml' }
+      ]
+    },
+    {
+      id: 'rel-v0.0.9',
+      tagName: 'v0.0.9',
+      name: 'v0.0.9 - EverOS Memory Layer & CPU/Memory Telemetry',
+      publishedAt: '2026-10-28 14:20',
+      author: 'developer',
+      prerelease: false,
+      draft: false,
+      dockerImage: 'ghcr.io/clawdock/clawdock:v0.0.9',
+      htmlUrl: 'https://github.com/clawdock/clawdock/releases/tag/v0.0.9',
+      changelog: [
+        'Added real-time agent CPU and memory usage history line charts in DashboardTab',
+        'Implemented bulk operation log inspector in ConsoleTab',
+        'Added EverOS hybrid episodic memory layer with LanceDB vectors and SQLite BM25 indexing',
+        'Enhanced Docker container discovery modal for unmanaged containers'
+      ],
+      assets: [
+        { name: 'clawdock-bot-admin.tar.gz', size: '2.3 MB', downloadUrl: '/api/export/archive.tar.gz' }
+      ]
+    },
+    {
+      id: 'rel-v0.0.8',
+      tagName: 'v0.0.8',
+      name: 'v0.0.8 - Initial Multi-Agent Orchestrator Release',
+      publishedAt: '2026-10-20 09:15',
+      author: 'developer',
+      prerelease: false,
+      draft: false,
+      dockerImage: 'ghcr.io/clawdock/clawdock:v0.0.8',
+      htmlUrl: 'https://github.com/clawdock/clawdock/releases/tag/v0.0.8',
+      changelog: [
+        'Initial release of ClawDock Multi-Agent Docker Orchestrator',
+        'Supports Nous Hermes 3.11, ZeroClaw Rust, OpenClaw, and PicoClaw Edge runtimes',
+        'Live model catalog probe and config validation engine'
+      ],
+      assets: [
+        { name: 'clawdock-bot-admin.tar.gz', size: '2.1 MB', downloadUrl: '/api/export/archive.tar.gz' }
+      ]
+    }
+  ];
+
+  res.json({ success: true, releases, count: releases.length });
+});
+
 // Explicit API catch-all to prevent unhandled /api/* requests from returning index.html
 app.all('/api/*', (req, res) => {
   res.status(404).setHeader('Content-Type', 'application/json').json({

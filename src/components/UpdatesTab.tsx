@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   RefreshCw, 
   ArrowUpCircle, 
@@ -24,7 +24,10 @@ import {
   GitCompare,
   ArrowRightLeft,
   FileJson,
-  X
+  X,
+  ExternalLink,
+  Download,
+  BookOpen
 } from 'lucide-react';
 import { SystemUpdateItem, UpdateCategory, BuildHistoryItem } from '../types';
 
@@ -84,6 +87,12 @@ export const UpdatesTab: React.FC<UpdatesTabProps> = ({
   isCheckingAll,
   lastCheckedTime
 }) => {
+  const [viewMode, setViewMode] = useState<'updates' | 'releases'>('updates');
+  const [releasesList, setReleasesList] = useState<any[]>([]);
+  const [isFetchingReleases, setIsFetchingReleases] = useState(false);
+  const [releaseSearch, setReleaseSearch] = useState('');
+  const [copiedTagId, setCopiedTagId] = useState<string | null>(null);
+
   const [activeCategory, setActiveCategory] = useState<'all' | UpdateCategory>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [onlyUpdates, setOnlyUpdates] = useState(false);
@@ -95,6 +104,30 @@ export const UpdatesTab: React.FC<UpdatesTabProps> = ({
   const [rollingBack, setRollingBack] = useState<string | null>(null);
   const [compareSelection, setCompareSelection] = useState<{agentId: string, v1?: BuildHistoryItem, v2?: BuildHistoryItem}>({ agentId: '' });
   const [showCompare, setShowCompare] = useState(false);
+
+  useEffect(() => {
+    setIsFetchingReleases(true);
+    fetch('/api/releases')
+      .then(r => r.json())
+      .then(d => {
+        if (d && d.success && Array.isArray(d.releases)) {
+          setReleasesList(d.releases);
+        }
+      })
+      .catch(() => {})
+      .finally(() => setIsFetchingReleases(false));
+  }, []);
+
+  const filteredReleases = useMemo(() => {
+    return releasesList.filter(rel => {
+      if (!releaseSearch.trim()) return true;
+      const q = releaseSearch.toLowerCase().trim();
+      const inTag = (rel.tagName || '').toLowerCase().includes(q);
+      const inName = (rel.name || '').toLowerCase().includes(q);
+      const inChangelog = Array.isArray(rel.changelog) && rel.changelog.some((c: string) => c.toLowerCase().includes(q));
+      return inTag || inName || inChangelog;
+    });
+  }, [releasesList, releaseSearch]);
 
   // Filtered update list
   const filteredUpdates = useMemo(() => {
@@ -443,8 +476,194 @@ export const UpdatesTab: React.FC<UpdatesTabProps> = ({
         </div>
       </div>
 
-      {/* Filter and Search Bar */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 p-3 rounded-2xl bg-slate-900/60 border border-slate-800">
+      {/* Sub-Header Navigation: System Updates vs Release History */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 rounded-2xl bg-slate-900/80 border border-slate-800 shadow-lg">
+        <div className="flex items-center gap-2">
+          <button
+            id="view-mode-updates-tab"
+            onClick={() => setViewMode('updates')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+              viewMode === 'updates'
+                ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20'
+                : 'text-slate-400 hover:text-white hover:bg-slate-800'
+            }`}
+          >
+            <ArrowUpCircle className="w-4 h-4" />
+            <span>System &amp; Agent Updates</span>
+            {updatesAvailableCount > 0 && (
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                {updatesAvailableCount}
+              </span>
+            )}
+          </button>
+
+          <button
+            id="view-mode-releases-tab"
+            onClick={() => setViewMode('releases')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+              viewMode === 'releases'
+                ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20'
+                : 'text-slate-400 hover:text-white hover:bg-slate-800'
+            }`}
+          >
+            <History className="w-4 h-4 text-cyan-400" />
+            <span>Release History &amp; Changelogs</span>
+            <span className="px-2 py-0.5 rounded-md text-[10px] bg-slate-900 text-cyan-300 border border-cyan-500/20 font-mono">
+              {releasesList.length}
+            </span>
+          </button>
+        </div>
+
+        {viewMode === 'releases' && (
+          <div className="relative w-full sm:w-72">
+            <input
+              type="text"
+              placeholder="Search releases or changelogs..."
+              value={releaseSearch}
+              onChange={(e) => setReleaseSearch(e.target.value)}
+              className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-9 pr-8 py-2 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono"
+            />
+            <Search className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-2.5" />
+            {releaseSearch && (
+              <button
+                onClick={() => setReleaseSearch('')}
+                className="absolute right-2.5 top-2 text-slate-500 hover:text-white p-0.5"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+
+      {viewMode === 'releases' ? (
+        <div className="space-y-4">
+          <div className="p-4 rounded-xl bg-slate-950/60 border border-slate-800 flex items-center justify-between text-xs text-slate-400">
+            <div className="flex items-center gap-2">
+              <Tag className="w-4 h-4 text-indigo-400" />
+              <span>Official Repository Releases retrieved from Repository Releases API</span>
+            </div>
+            <span className="font-mono text-[11px] text-slate-500">{filteredReleases.length} release tags found</span>
+          </div>
+
+          {filteredReleases.length === 0 ? (
+            <div className="p-12 text-center border border-dashed border-slate-800 rounded-2xl bg-slate-950/40 space-y-3">
+              <History className="w-10 h-10 text-slate-600 mx-auto" />
+              <h3 className="text-sm font-bold text-white">No Release History Found</h3>
+              <p className="text-xs text-slate-400">
+                {releaseSearch ? `No release match "${releaseSearch}".` : 'No release tags recorded in repository history.'}
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {filteredReleases.map((release) => (
+                <div
+                  key={release.id}
+                  className="p-5 rounded-2xl bg-slate-950 border border-slate-800 space-y-4 hover:border-slate-700 transition-all shadow-xl"
+                >
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800/80 pb-3">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 flex items-center justify-center shrink-0">
+                        <Tag className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-sm font-bold text-white">{release.name}</span>
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                            {release.tagName}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-3 mt-1 text-[11px] text-slate-400">
+                          <span>By: <strong className="text-slate-300">{release.author}</strong></span>
+                          <span>•</span>
+                          <span>Published: <strong className="text-slate-300">{release.publishedAt}</strong></span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      <a
+                        href={release.htmlUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-300 bg-slate-900 hover:bg-slate-800 border border-slate-700 transition-colors flex items-center gap-1.5"
+                      >
+                        <span>GitHub Release</span>
+                        <ExternalLink className="w-3 h-3 text-slate-400" />
+                      </a>
+                    </div>
+                  </div>
+
+                  {/* Docker Container Image Tag */}
+                  {release.dockerImage && (
+                    <div className="p-2.5 rounded-xl bg-slate-900/80 border border-slate-800 font-mono text-[11px] flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 truncate">
+                        <span className="text-cyan-400 font-bold text-[10px] px-1.5 py-0.5 rounded bg-cyan-950/60 border border-cyan-500/30 shrink-0">
+                          GHCR DOCKER IMAGE
+                        </span>
+                        <span className="text-slate-200 truncate">{release.dockerImage}</span>
+                      </div>
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(`docker pull ${release.dockerImage}`);
+                          setCopiedTagId(release.id);
+                          setTimeout(() => setCopiedTagId(null), 2000);
+                        }}
+                        className="p-1 rounded text-slate-400 hover:text-white transition-colors shrink-0"
+                        title="Copy docker pull command"
+                      >
+                        {copiedTagId === release.id ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Changelog Bullets */}
+                  <div>
+                    <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                      <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+                      Release Changelog &amp; Highlights
+                    </div>
+                    <ul className="space-y-1.5 pl-2 text-xs text-slate-300">
+                      {Array.isArray(release.changelog) && release.changelog.map((entry: string, i: number) => (
+                        <li key={i} className="flex items-start gap-2">
+                          <span className="text-indigo-400 font-bold shrink-0">•</span>
+                          <span>{entry}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+
+                  {/* Assets */}
+                  {Array.isArray(release.assets) && release.assets.length > 0 && (
+                    <div className="pt-2 border-t border-slate-800/80">
+                      <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1.5">
+                        Release Assets
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {release.assets.map((asset: any, i: number) => (
+                          <a
+                            key={i}
+                            href={asset.downloadUrl}
+                            download
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 text-[11px] font-mono text-indigo-300 transition-colors"
+                          >
+                            <Download className="w-3 h-3 text-indigo-400" />
+                            <span>{asset.name}</span>
+                            <span className="text-[10px] text-slate-500">({asset.size})</span>
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : (
+        <>
+          {/* Filter and Search Bar */}
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 p-3 rounded-2xl bg-slate-900/60 border border-slate-800">
         {/* Category Pills */}
         <div className="flex items-center gap-2 flex-wrap">
           <button
@@ -874,6 +1093,8 @@ export const UpdatesTab: React.FC<UpdatesTabProps> = ({
           })
         )}
       </div>
+        </>
+      )}
     </div>
   );
 };

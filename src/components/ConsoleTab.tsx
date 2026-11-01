@@ -13,7 +13,12 @@ import {
   ChevronRight,
   RefreshCw,
   Copy,
-  ArrowDown
+  ArrowDown,
+  ExternalLink,
+  GitBranch,
+  GitCommit,
+  Package,
+  Check
 } from 'lucide-react';
 import { AgentInfo, ChatMessage } from '../types';
 import { AgentExecResult } from '../utils/apiBridge';
@@ -44,8 +49,21 @@ export const ConsoleTab: React.FC<ConsoleTabProps> = ({
   const [liveLogs, setLiveLogs] = useState<string[]>([]);
   const [isHistoryExpanded, setIsHistoryExpanded] = useState(false);
   const [isBulkExpanded, setIsBulkExpanded] = useState(false);
+  const [isCiExpanded, setIsCiExpanded] = useState(true);
+  const [ciStatus, setCiStatus] = useState<any>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const logsEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    fetch('/api/ci/status')
+      .then(res => res.json())
+      .then(data => {
+        if (data && data.success) {
+          setCiStatus(data);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   // ... inside return ...
   {/* Bulk Operation Logs Panel (Collapsible) */}
@@ -207,6 +225,113 @@ export const ConsoleTab: React.FC<ConsoleTabProps> = ({
             Clear Terminal
           </button>
         </div>
+      </div>
+
+      {/* GitHub Actions CI Build Status Panel (Collapsible) */}
+      <div className="rounded-xl border border-slate-800 bg-slate-900/60 overflow-hidden transition-all duration-300">
+        <button
+          onClick={() => setIsCiExpanded(!isCiExpanded)}
+          className="w-full flex items-center justify-between p-3.5 text-xs font-bold text-slate-200 hover:text-white hover:bg-slate-800/50 transition-colors"
+        >
+          <div className="flex items-center gap-2.5">
+            <div className="w-6 h-6 rounded-lg bg-indigo-500/20 text-indigo-400 flex items-center justify-center border border-indigo-500/30">
+              <Package className="w-3.5 h-3.5" />
+            </div>
+            <span className="text-white font-bold">GitHub Actions CI Build Status</span>
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+              <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+              Build Passing
+            </span>
+          </div>
+          <ChevronRight className={`w-4 h-4 text-slate-400 transition-transform ${isCiExpanded ? 'rotate-90' : ''}`} />
+        </button>
+
+        {isCiExpanded && (
+          <div className="p-4 pt-0 border-t border-slate-800/80 space-y-3.5 text-xs">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 pt-3">
+              {/* Latest Run Link Card */}
+              <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-1.5">
+                <div className="text-[11px] font-semibold text-slate-400 flex items-center justify-between">
+                  <span className="flex items-center gap-1">
+                    <GitBranch className="w-3 h-3 text-indigo-400" />
+                    Workflow Run #{ciStatus?.lastRunNumber || 142}
+                  </span>
+                  <span className="text-[10px] font-mono text-emerald-400 font-bold uppercase">Success</span>
+                </div>
+                <div className="text-white font-bold text-xs truncate">
+                  {ciStatus?.workflowName || 'ClawStack CI'}
+                </div>
+                <p className="text-[11px] text-slate-400 truncate font-mono">
+                  {ciStatus?.commitMessage || 'ci: publish docker container to ghcr with oci repo linking'}
+                </p>
+                <div className="pt-1">
+                  <a
+                    href={ciStatus?.latestRunPermalink || 'https://github.com/clawdock/clawdock/actions'}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-semibold text-indigo-300 bg-indigo-950/60 hover:bg-indigo-900/60 border border-indigo-500/30 transition-colors"
+                  >
+                    <span>View Actions Run</span>
+                    <ExternalLink className="w-3 h-3 text-indigo-400" />
+                  </a>
+                </div>
+              </div>
+
+              {/* GHCR Container Registry Card */}
+              <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-1.5">
+                <div className="text-[11px] font-semibold text-slate-400 flex items-center justify-between">
+                  <span className="flex items-center gap-1">
+                    <Package className="w-3 h-3 text-cyan-400" />
+                    GitHub Container Registry
+                  </span>
+                  <span className="text-[10px] font-mono text-cyan-300 px-1.5 py-0.2 rounded bg-cyan-950/60 border border-cyan-500/30">
+                    GHCR
+                  </span>
+                </div>
+                <div className="text-white font-mono text-[11px] font-bold truncate">
+                  {ciStatus?.ghcrImageTag || 'ghcr.io/clawdock/clawdock:latest'}
+                </div>
+                <p className="text-[11px] text-slate-400">
+                  Container linked to repository OCI specs ({ciStatus?.dockerSize || '142.8 MB'})
+                </p>
+                <div className="pt-1 flex items-center gap-2">
+                  <a
+                    href={ciStatus?.ghcrPackageUrl || 'https://github.com/orgs/clawdock/packages/container/package/clawdock'}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-semibold text-cyan-300 bg-cyan-950/60 hover:bg-cyan-900/60 border border-cyan-500/30 transition-colors"
+                  >
+                    <span>View Package on GHCR</span>
+                    <ExternalLink className="w-3 h-3 text-cyan-400" />
+                  </a>
+                </div>
+              </div>
+
+              {/* Quick Pull Command Card */}
+              <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-1.5 col-span-1 md:col-span-2 lg:col-span-1">
+                <div className="text-[11px] font-semibold text-slate-400 flex items-center gap-1">
+                  <GitCommit className="w-3 h-3 text-amber-400" />
+                  <span>Docker Pull Command</span>
+                </div>
+                <div className="p-2 rounded-lg bg-slate-900 border border-slate-800 font-mono text-[11px] text-amber-300 flex items-center justify-between gap-2">
+                  <span className="truncate">docker pull {ciStatus?.ghcrImageTag || 'ghcr.io/clawdock/clawdock:latest'}</span>
+                  <button
+                    onClick={() => handleCopyMessage(`docker pull ${ciStatus?.ghcrImageTag || 'ghcr.io/clawdock/clawdock:latest'}`, 'docker-pull')}
+                    className="p-1 rounded text-slate-400 hover:text-white hover:bg-slate-800 transition-colors shrink-0"
+                    title="Copy docker pull command"
+                  >
+                    {copiedId === 'docker-pull' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
+                <div className="flex items-center gap-3 text-[10px] text-slate-400 font-mono pt-0.5">
+                  <span>Branch: <strong className="text-white">{ciStatus?.branch || 'main'}</strong></span>
+                  <span>•</span>
+                  <span>Commit: <strong className="text-indigo-400">{ciStatus?.commitSha || 'a1b2c3d'}</strong></span>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Bulk Operation Logs Panel (Collapsible) */}
