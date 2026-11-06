@@ -261,6 +261,14 @@ class DockerManager:
                 logger.info(f"Container restart error: {e}")
                 return self.start_container(agent_id)
 
+        return {
+            "success": True,
+            "status": "running",
+            "action": "restarted",
+            "containerId": f"c_{agent_id[:6]}9a",
+            "message": f"Restarted {spec['container_name']} in emulation mode"
+        }
+
     def doctor_fix(self, agent_id: str) -> Dict[str, Any]:
         spec = AGENT_DOCKER_IMAGES.get(agent_id)
         cname = spec["container_name"] if spec else f"{agent_id}-hub"
@@ -559,4 +567,3 @@ class DockerManager:
             "containerName": container_name,
             "message": f"Bound agent {agent_id} to container {container_name or container_id}"
         }
-

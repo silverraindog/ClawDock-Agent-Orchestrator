@@ -602,42 +602,60 @@ def docker_exec_config(agent_id: str):
 
 @app.api_route("/api/agents/{agent_id}/config", methods=["POST", "PUT"])
 def save_config(agent_id: str, payload: Dict[str, Any] = Body(...)):
+    valid_agents = {"hermes-agent", "zeroclaw", "openclaw", "picoclaw"}
+    if agent_id not in valid_agents:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found.")
+
     cfg = payload.get("config")
     if not cfg or not isinstance(cfg, dict):
         if "model" in payload or "system" in payload or "channels" in payload:
             cfg = payload
+
+    native_content = payload.get("nativeContent")
+    has_native_content = isinstance(native_content, str) and bool(native_content)
+    has_config = isinstance(cfg, dict) and any(key in cfg for key in ("model", "system", "channels"))
+    if not has_config and not has_native_content:
+        raise HTTPException(status_code=400, detail="A config object or non-empty nativeContent is required.")
 
     if cfg and isinstance(cfg, dict) and ("model" in cfg or "system" in cfg or "channels" in cfg):
         config_file = os.path.join(CONFIG_STORE_DIR, f"{agent_id}_config.json")
         try:
             with open(config_file, "w") as f:
                 json.dump(cfg, f, indent=2)
-        except Exception:
-            pass
+        except (OSError, TypeError, ValueError) as exc:
+            logger.exception("Failed to save schema config for %s", agent_id)
+            raise HTTPException(status_code=500, detail="Failed to save schema config.") from exc
 
-    native_content = payload.get("nativeContent")
-    if native_content and isinstance(native_content, str):
+    if has_native_content:
         file_map = {
             "hermes-agent": "config.yaml",
             "zeroclaw": "zeroclaw.toml",
             "openclaw": "openclaw.json",
             "picoclaw": "picoclaw.json",
         }
-        fname = file_map.get(agent_id, f"{agent_id}.json")
+        fname = file_map[agent_id]
+        saved = False
+        last_error = None
         for dir_path in ["/data/clawdock", os.path.join("data", "clawdock")]:
             try:
                 os.makedirs(dir_path, exist_ok=True)
                 with open(os.path.join(dir_path, fname), "w", encoding="utf-8") as f:
                     f.write(native_content)
-            except Exception:
-                pass
+                saved = True
+                break
+            except OSError as exc:
+                last_error = exc
+                logger.warning("Could not save native config to %s: %s", dir_path, exc)
+        if not saved:
+            logger.error("Failed to save native config for %s: %s", agent_id, last_error)
+            raise HTTPException(status_code=500, detail="Failed to save native config.") from last_error
 
     should_restart = payload.get("restartContainer") or payload.get("restart")
     if should_restart:
-        try:
-            docker_mgr.start_container(agent_id)
-        except Exception:
-            pass
+        restart_result = docker_mgr.restart_container(agent_id)
+        if not restart_result.get("success"):
+            logger.error("Config for %s was saved, but its container did not restart: %s", agent_id, restart_result)
+            raise HTTPException(status_code=502, detail="Config saved, but the agent container could not be restarted.")
 
     return {"success": True, "message": f"Saved config for {agent_id}"}
 
