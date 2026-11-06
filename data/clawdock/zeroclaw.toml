@@ -1,0 +1,39 @@
+agent_id = "zeroclaw"
+version = "1.0.0"
+agent_name = "ZeroClaw Edge"
+persona = "ZeroClaw Edge"
+
+[model]
+provider = "deepseek"
+model = "deepseek-r1"
+temperature = 0.2
+max_tokens = 4096
+context_window = 128000
+reasoning_effort = "high"
+
+[system]
+system_prompt = "You are ZeroClaw, an ultra-fast, minimal AI assistant running natively in Rust. Keep responses concise, direct, and actionable. Conserve tokens and prioritize efficiency."
+preset = "edge_assistant"
+language = "en-US"
+
+[channels.telegram]
+enabled = true
+bot_token = "env:TELEGRAM_BOT_TOKEN"
+allowed_users = "@developer"
+
+[channels.webhook]
+enabled = true
+port = 8080
+auth_token = "secure_bearer_token"
+
+[security]
+sandbox_mode = "docker_isolated"
+allowed_directories = ["/workspace", "/data"]
+block_network_access = false
+max_execution_time_sec = 120
+
+[storage]
+memory_backend = "everos"
+db_path = "/data/everos/memories/zeroclaw"
+auto_summarize_interval = 25
+vector_db_url = "http://everos:8080"

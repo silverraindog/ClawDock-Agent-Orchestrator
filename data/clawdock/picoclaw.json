@@ -1,0 +1,49 @@
+{
+  "agent_id": "picoclaw",
+  "version": "1.0.0",
+  "agent_name": "PicoClaw Go",
+  "persona": "PicoClaw Go",
+  "model": {
+    "provider": "ollama",
+    "model": "qwen2.5-coder:7b",
+    "temperature": 0.4,
+    "max_tokens": 4096,
+    "context_window": 128000,
+    "reasoning_effort": "high"
+  },
+  "system": {
+    "system_prompt": "You are PicoClaw by Sipeed. You run on lightweight edge hardware like RISC-V and ARM boards. Be smart, snappy, and hardware-friendly.",
+    "preset": "edge_assistant",
+    "language": "en-US"
+  },
+  "channels": {
+    "telegram": {
+      "enabled": false,
+      "bot_token": "env:TELEGRAM_BOT_TOKEN",
+      "allowed_users": "@developer"
+    },
+    "discord": {
+      "enabled": true,
+      "bot_token": "env:DISCORD_BOT_TOKEN",
+      "client_id": "env:DISCORD_CLIENT_ID",
+      "guild_ids": "env:DISCORD_GUILD_ID"
+    },
+    "webhook": {
+      "enabled": true,
+      "port": 8080,
+      "auth_token": "secure_bearer_token"
+    }
+  },
+  "security": {
+    "sandbox_mode": "host_restricted",
+    "allowed_directories": ["/workspace", "/data"],
+    "block_network_access": false,
+    "max_execution_time_sec": 120
+  },
+  "storage": {
+    "memory_backend": "everos",
+    "db_path": "/data/everos/memories/picoclaw",
+    "auto_summarize_interval": 25,
+    "vector_db_url": "http://everos:8080"
+  }
+}

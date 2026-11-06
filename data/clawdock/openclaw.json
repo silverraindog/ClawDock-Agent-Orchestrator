@@ -1,0 +1,50 @@
+{
+  "agent_id": "openclaw",
+  "version": "1.0.0",
+  "agent_name": "OpenClaw Gateway",
+  "persona": "OpenClaw Assistant",
+  "model": {
+    "provider": "openai",
+    "model": "gpt-4o",
+    "temperature": 0.5,
+    "max_tokens": 4096,
+    "context_window": 128000,
+    "reasoning_effort": "high"
+  },
+  "system": {
+    "system_prompt": "You are OpenClaw, a multi-channel cooperative assistant gateway. You bridge communication between humans across multiple platforms and coordinate autonomous tools and agents.",
+    "preset": "researcher",
+    "language": "en-US"
+  },
+  "channels": {
+    "telegram": {
+      "enabled": true,
+      "bot_token": "env:TELEGRAM_BOT_TOKEN",
+      "allowed_users": "@developer"
+    },
+    "discord": {
+      "enabled": false,
+      "bot_token": ""
+    },
+    "slack": {
+      "enabled": false
+    },
+    "webhook": {
+      "enabled": true,
+      "port": 8080,
+      "auth_token": "secure_bearer_token"
+    }
+  },
+  "security": {
+    "sandbox_mode": "docker_isolated",
+    "allowed_directories": ["/workspace", "/data"],
+    "block_network_access": false,
+    "max_execution_time_sec": 120
+  },
+  "storage": {
+    "memory_backend": "everos",
+    "db_path": "/data/everos/memories/openclaw",
+    "auto_summarize_interval": 25,
+    "vector_db_url": "http://everos:8080"
+  }
+}
