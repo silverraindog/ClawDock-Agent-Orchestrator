@@ -44,10 +44,66 @@ Ensure both `docker-compose.yml` and `Dockerfile` are located in the target dire
 
 ```bash
 # In /opt/bots/bot-admin-ui
-docker compose down && docker compose build && docker compose up -d && docker compose logs -f
+docker compose up -d --build clawdock-orchestrator
 ```
 
 Access the web interface at **http://localhost:3000**.
+
+### Migrating the athena bot containers
+
+The `bots` profile is opt-in. The service definitions are tailored to athena's
+existing paths and require Docker Compose 2.30 or later for raw environment
+files. They do not automatically migrate existing containers. The existing
+host Compose file has local changes; review and merge those changes rather than
+overwriting it. Back up the Compose files and bot data before proceeding.
+
+1. Copy the private, git-ignored `.env.hermes`, `.env.zeroclaw`,
+   `.env.openclaw` and `.env.picoclaw` files to the orchestrator directory on
+   athena over a secure connection. Keep their permissions restrictive. The
+   OpenClaw and ZeroClaw MCP files remain at `/opt/bots/openclaw/.env-mcp`
+   and `/opt/bots/zeroclaw/.env-mcp`; they are mounted at runtime rather than
+   baked into images.
+2. With the old PicoClaw launcher stopped, manually copy its live data from
+   `/opt/picaclaw/data` to `/home/picoclaw`, preserving ownership, permissions,
+   and contents. Do not remove the original until the new launcher is verified.
+3. Ensure the prepared Compose file and `docker/` Dockerfiles are in
+   `/opt/bots/ClawDock-Agent-Orchestrator`. Set `CLAWDOCK_HOST_DIR` if using a
+   different absolute host path, and `COMPOSE_PROJECT_NAME` if the project is
+   not `clawdock-agent-orchestrator`. The project directory must be mounted at
+   the same absolute path in the orchestrator container for Docker Compose.
+   The socket and project mount grant the orchestrator powerful access to the
+   host and sensitive configuration: only expose it to trusted users.
+4. Run `docker compose --profile bots config --quiet` on the host. Build the
+   custom images with `docker compose --profile bots build zeroclaw openclaw`.
+   Before starting each replacement, stop and remove only its old container
+   using its original Compose project. The old Hermes, ZeroClaw, and OpenClaw
+   projects are `hermes`, `zeroclaw`, and `openclaw` respectively. The old
+   PicoClaw launcher is in project `picaclaw`; its original Compose file is
+   unavailable, so inspect it before removing that container. Do not remove
+   volumes or the shared `claw-network`.
+5. Start only the services you intend to run, for example
+   `docker compose up -d hermes zeroclaw picoclaw-launcher`. OpenClaw was
+   stopped/unhealthy in the inspected deployment; do not start it until its
+   configuration has been reviewed. Verify each container, its mounts and
+   logs before retiring the old setup. Service recreation interrupts agents.
+
+Hermes and the PicoClaw launcher use their official images directly; their
+separate Dockerfiles are provided for optional customization. ZeroClaw and
+OpenClaw use the separate custom Dockerfiles in `docker/`. If customizing the
+official-image services, adjust the update workflow accordingly.
+
+Once migration is verified and access to the orchestrator is restricted to
+trusted users, export `CLAWDOCK_ENABLE_COMPOSE_UPDATES=true` on the host (or
+add it to the private Compose `.env` file), then run
+`docker compose up -d clawdock-orchestrator`. The update API can interrupt
+Hermes, so it is disabled by default.
+
+The production Python backend can update **migrated, running** Hermes by
+pulling the official `latest` tag and recreating that service. It verifies
+Compose ownership and the running container image, but does not check
+application health or automatically roll back. Registry scans, other
+component updates, and bulk updates are not implemented. The development
+Express backend rejects update requests rather than simulating success.
 
 ### Troubleshooting: `failed to read dockerfile: open Dockerfile: no such file or directory`
 If you encounter this error, `docker-compose.yml` is attempting to build the `clawdock-orchestrator` service using `context: .` and `dockerfile: Dockerfile`, but the `Dockerfile` is missing from your working directory.

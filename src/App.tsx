@@ -87,7 +87,7 @@ import { MCPTab } from './components/MCPTab';
 import { DockerTab } from './components/DockerTab';
 import { ConsoleTab } from './components/ConsoleTab';
 import { ExportTab } from './components/ExportTab';
-import { UpdatesTab } from './components/UpdatesTab';
+import { VerifiedUpdatesTab } from './components/VerifiedUpdatesTab';
 import { EverOSTab } from './components/EverOSTab';
 import { DiagnosticsTab } from './components/DiagnosticsTab';
 import { AgentLogsTab } from './components/AgentLogsTab';
@@ -2531,8 +2531,8 @@ export default function App() {
     { 
       id: 'updates', 
       label: 'Updates', 
-      icon: ArrowUpCircle, 
-      badge: updates.filter(u => u.status === 'update_available').length 
+      icon: ArrowUpCircle,
+      badge: 0
     },
     { id: 'export', label: 'Codebase', icon: Code2 },
     { id: 'diagnostics', label: 'API Diagnostics', icon: Activity }
@@ -2759,9 +2759,8 @@ export default function App() {
           isDetecting={isDetecting}
           onOpenExport={() => setCurrentTab('export')}
           onOpenDiscovery={() => setIsDiscoveryOpen(true)}
-          updatesCount={updates.filter(u => u.status === 'update_available').length}
           onOpenUpdates={() => setCurrentTab('updates')}
-          updates={updates}
+          updates={[]}
           onOpenMobileMenu={() => setIsMobileMenuOpen(true)}
           versionErrors={versionErrors}
           onResyncVersion={refreshAgentVersions}
@@ -3061,15 +3060,7 @@ export default function App() {
           )}
 
           {currentTab === 'updates' && (
-            <UpdatesTab
-              updates={updates}
-              onCheckAll={handleCheckAllUpdates}
-              onCheckSingle={handleCheckSingleUpdate}
-              onApplyUpdate={handleApplyUpdate}
-              onApplyAllUpdates={handleApplyAllUpdates}
-              isCheckingAll={isCheckingUpdates}
-              lastCheckedTime={lastCheckedUpdatesTime}
-            />
+            <VerifiedUpdatesTab />
           )}
         </main>
 

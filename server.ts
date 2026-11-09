@@ -6047,6 +6047,8 @@ app.post('/api/everos/sync', handleEverOSVectorSync);
 
 // Check updates
 app.post('/api/updates/check', (req, res) => {
+  res.status(501).json({ success: false, error: 'Registry update checks are not implemented.' });
+  return;
   const { id } = req.body || {};
   res.json({
     success: true,
@@ -6057,6 +6059,8 @@ app.post('/api/updates/check', (req, res) => {
 
 // Apply an update
 app.post('/api/updates/apply', (req, res) => {
+  res.status(501).json({ success: false, error: 'Compose updates require the production Python backend.' });
+  return;
   const { id, targetVersion } = req.body || {};
   let found = systemUpdatesStore.find(u => u.id === id);
   if (!found) {
@@ -6126,6 +6130,8 @@ app.post('/api/updates/apply', (req, res) => {
 
 // Apply all pending updates
 app.post('/api/updates/apply-all', (req, res) => {
+  res.status(501).json({ success: false, error: 'Bulk updates are not implemented.' });
+  return;
   const { items } = req.body || {};
   const idsToUpdate = Array.isArray(items) && items.length > 0 
     ? items 

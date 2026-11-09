@@ -122,7 +122,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   };
 
   const currentUpdate = React.useMemo(() => {
-    const list = updates && updates.length > 0 ? updates : INITIAL_UPDATES;
+    const list = updates ?? INITIAL_UPDATES;
     return list.find(u => u.targetId === selectedAgentId);
   }, [selectedAgentId, updates]);
 

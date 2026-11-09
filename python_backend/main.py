@@ -21,6 +21,7 @@ import re
 
 from config_schema import AgentFullConfigSchema
 from docker_manager import DockerManager
+from compose_updates import UpdateError, update_hermes
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("clawdock_api")
@@ -1290,23 +1291,17 @@ def get_system_updates():
 
 @app.post("/api/updates/check")
 def check_updates(payload: Dict[str, Any] = Body(...)):
-    target_id = payload.get("id")
-    return {
-        "success": True,
-        "message": f"Registry scan completed for {target_id or 'all targets'}",
-        "timestamp": "Just now"
-    }
+    raise HTTPException(status_code=501, detail="Registry update checks are not implemented.")
 
 @app.post("/api/updates/apply")
 def apply_update(payload: Dict[str, Any] = Body(...)):
-    item_id = payload.get("id")
-    ver = payload.get("targetVersion", "latest")
-    return {
-        "success": True,
-        "id": item_id,
-        "version": ver,
-        "message": f"Successfully pulled and applied {ver} for {item_id}"
-    }
+    if payload.get("id") != "update-agent-hermes" or payload.get("targetVersion", "latest") != "latest":
+        raise HTTPException(status_code=400, detail="Only the configured Hermes latest image can be updated.")
+    try:
+        return update_hermes(docker_mgr.client)
+    except UpdateError as exc:
+        logger.warning("Hermes update failed: %s", exc)
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 # ==============================================================================
 # EverOS Memory Layer API (EverMind AI)

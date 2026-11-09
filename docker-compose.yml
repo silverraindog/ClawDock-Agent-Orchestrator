@@ -33,11 +33,18 @@ services:
       - ./data/clawdock:/data/clawdock
       # Shared workspace for agents to read/write files and execute code
       - ./workspace:/workspace
+      # Compose must see the same absolute paths as the host Docker daemon.
+      - ${CLAWDOCK_HOST_DIR:-/opt/bots/ClawDock-Agent-Orchestrator}:${CLAWDOCK_HOST_DIR:-/opt/bots/ClawDock-Agent-Orchestrator}:ro
     environment:
       - PORT=3000
       - PYTHONUNBUFFERED=1
       - DOCKER_HOST=unix:///var/run/docker.sock
       - CONFIG_STORE_DIR=/data/configs
+      - CLAWDOCK_HOST_DIR=${CLAWDOCK_HOST_DIR:-/opt/bots/ClawDock-Agent-Orchestrator}
+      - COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME:-clawdock-agent-orchestrator}
+      - CLAWDOCK_COMPOSE_DIR=${CLAWDOCK_HOST_DIR:-/opt/bots/ClawDock-Agent-Orchestrator}
+      - CLAWDOCK_COMPOSE_PROJECT=${COMPOSE_PROJECT_NAME:-clawdock-agent-orchestrator}
+      - CLAWDOCK_ENABLE_COMPOSE_UPDATES=${CLAWDOCK_ENABLE_COMPOSE_UPDATES:-false}
     networks:
       - claw-network
     healthcheck:
@@ -170,6 +177,82 @@ services:
   #    - everos
   #  networks:
   #    - claw-network
+
+  hermes:
+    profiles: [bots]
+    image: docker.io/nousresearch/hermes-agent:latest
+    container_name: hermes-agent
+    command: gateway run
+    restart: unless-stopped
+    env_file:
+      - path: .env.hermes
+        format: raw
+    volumes:
+      - /home/sargus/.hermes-data:/opt/data
+      - /home/sargus/.hermes:/opt/data/.hermes
+      - /home/sargus/.ssh:/opt/data/.ssh:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "0.0.0.0:8000:8642"
+      - "0.0.0.0:9119:9119"
+      - "0.0.0.0:8642:8642"
+    networks: [claw-network]
+
+  zeroclaw:
+    profiles: [bots]
+    build:
+      context: .
+      dockerfile: docker/zeroclaw.Dockerfile
+    container_name: zeroclaw
+    command: [daemon]
+    restart: unless-stopped
+    env_file:
+      - path: .env.zeroclaw
+        format: raw
+    volumes:
+      - /home/zeroclaw:/home/zeroclaw
+      - /opt/bots/zeroclaw/.env-mcp:/tmp/everos-mcp/.env-mcp:ro
+    networks: [claw-network]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "zeroclaw", "status", "--format=exit-code"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  openclaw:
+    profiles: [bots]
+    build:
+      context: .
+      dockerfile: docker/openclaw.Dockerfile
+    container_name: openclaw-gateway
+    user: "1002:1002"
+    restart: unless-stopped
+    env_file:
+      - path: .env.openclaw
+        format: raw
+    ports:
+      - "18789:18789"
+    volumes:
+      - /home/openclaw:/home/openclaw
+      - /opt/bots/openclaw/.env-mcp:/tmp/everos-mcp/.env:ro
+    networks: [claw-network]
+
+  picoclaw-launcher:
+    profiles: [bots]
+    image: docker.io/sipeed/picoclaw:launcher
+    container_name: picoclaw-launcher
+    restart: always
+    env_file:
+      - path: .env.picoclaw
+        format: raw
+    ports:
+      - "18800:18800"
+      - "18790:18790"
+    volumes:
+      - /home/picoclaw:/root/.picoclaw
 
 # #------------------------------------------------------------------------------
 # Isolated Internal Bridge Network
