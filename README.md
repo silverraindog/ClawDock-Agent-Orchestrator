@@ -10,7 +10,7 @@ A unified Docker orchestration and configuration studio for **Hermes-Agent**, **
 |---|---|---|---|---|
 | **Hermes Agent** | Nous Research / Python 3.11 | `8080` | `ghcr.io/nousresearch/hermes-agent:latest` | Autonomous coding and multi-step reasoning agent with episodic memory |
 | **ZeroClaw** | ZeroClaw Engine / Rust | `8081` | `zeroclaw/zeroclaw:latest` | Sub-15MB RAM footprint agent for edge devices, VPS & embedded hardware |
-| **OpenClaw** | OpenClaw / Node.js | `8082` | `openclaw/openclaw:latest` | Multi-channel gateway connecting 16+ chat platforms (Telegram, Discord, Slack) |
+| **OpenClaw** | OpenClaw / Node.js | `18791` | `openclaw/openclaw:latest` | Multi-channel gateway connecting 16+ chat platforms (Telegram, Discord, Slack) |
 | **PicoClaw** | Sipeed Edge / Go | `8083` | `sipeed/picoclaw:latest` | Ultra-lightweight assistant for RISC-V LicheeRV and Raspberry Pi boards |
 
 ---
