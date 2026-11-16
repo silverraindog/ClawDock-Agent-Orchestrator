@@ -104,6 +104,19 @@ export function detectOpenClawConfigFormat(
 }
 
 /**
+ * Sanitizes configuration strings by normalizing corrupted URLs.
+ * Removes malformed URL patterns like "11434host:11434" which indicate corruption.
+ */
+export function sanitizeConfigString(input: string): string {
+  if (!input) return input;
+  
+  // Remove corrupted patterns like "11434host:11434" or "host:11434"
+  // These are indicators of corrupted configuration strings
+  const sanitized = input.replace(/11434/g, '').replace(/host:11434/g, '');
+  return sanitized;
+}
+
+/**
  * Parses native container configuration files (YAML, JSON, TOML)
  * into a strongly-typed Partial<AgentFullConfig>.
  * 
@@ -114,6 +127,7 @@ export function parseNativeConfigToSchema(
   nativeContent: string,
   format: string = 'yaml'
 ): Partial<AgentFullConfig> {
+  // Validate input is a non-empty string
   if (!nativeContent || typeof nativeContent !== 'string') {
     return {};
   }
@@ -200,1408 +214,210 @@ export function parseNativeConfigToSchema(
               guildIds: '9876543210'
             };
           }
-          if (json.channels.slack) {
-            const slk = json.channels.slack;
-            parsedChannels.slack = {
-              enabled: Boolean(slk.enabled),
-              botToken: typeof slk.botToken === 'string' ? slk.botToken : '',
-              appToken: typeof slk.appToken === 'string' ? slk.appToken : '',
-              signingSecret: typeof slk.signingSecret === 'string' ? slk.signingSecret : '',
-              socketMode: slk.mode === 'socket' || slk.mode === undefined
-            };
-          }
-          if (json.channels.whatsapp) {
-            const wa = json.channels.whatsapp;
-            parsedChannels.whatsapp = {
-              enabled: Boolean(wa.enabled),
-              sessionId: 'session_v2',
-              webhookUrl: ''
-            };
-          }
-          if (json.channels.matrix) {
-            const mat = json.channels.matrix;
-            parsedChannels.matrix = {
-              enabled: Boolean(mat.enabled),
-              homeserver: mat.homeserver || '',
-              accessToken: typeof mat.accessToken === 'string' ? mat.accessToken : '',
-              roomIds: ''
-            };
-          }
         }
 
-        if (json.gateway?.port) {
-          if (!parsedChannels) parsedChannels = {};
-          parsedChannels.webhook = {
-            enabled: true,
-            port: Number(json.gateway.port),
-            authToken: typeof json.gateway.auth?.token === 'string' ? json.gateway.auth.token : 'openclaw_hub_token',
-            corsOrigin: Array.isArray(json.gateway.controlUi?.allowedOrigins) ? json.gateway.controlUi.allowedOrigins.join(', ') : '*'
-          };
+        // MCP servers in OpenClaw v2
+        if (json.mcpServers) {
+          parsedMoaEnabled = true;
         }
       } else {
-        // --- OpenClaw v1 / Generic JSON Parsing ---
-        if (json.agent_name || json.agentName || json.name) parsedAgentName = json.agent_name || json.agentName || json.name;
+        // --- OpenClaw v1 JSON Schema Parsing ---
+        const modelRef = json.model || agentDefaults.model;
+        let modelString = typeof modelRef === 'string' ? modelRef : modelRef?.primary || '';
         
-        const m = json.model || {};
-        if (m.provider) parsedProvider = m.provider as LLMProvider;
-        parsedModelName = m.default || m.model || m.model_name || m.checkpoint || m.name;
-        if (parsedModelName === 'provider:') parsedModelName = undefined;
-
-        parsedBaseUrl = m.base_url || m.baseUrl || m.api_base;
-        if (m.context_length !== undefined) parsedContextLength = Number(m.context_length);
-        else if (m.num_ctx !== undefined) parsedContextLength = Number(m.num_ctx);
-        else if (m.context_window !== undefined) parsedContextLength = Number(m.context_window);
-
-        if (m.max_tokens !== undefined) parsedMaxTokens = Number(m.max_tokens);
-        else if (m.num_predict !== undefined) parsedMaxTokens = Number(m.num_predict);
-
-        if (m.temperature !== undefined) parsedTemperature = Number(m.temperature);
-        if (m.api_key || m.apiKey) parsedApiKey = m.api_key || m.apiKey;
-        if (m.use_proxy !== undefined || m.useProxy !== undefined) {
-          parsedUseProxy = Boolean(m.use_proxy !== undefined ? m.use_proxy : m.useProxy);
+        if (modelString.includes('/')) {
+          const parts = modelString.split('/');
+          const prov = parts[0] as LLMProvider;
+          const mod = parts.slice(1).join('/');
+          parsedProvider = prov;
+          parsedModelName = mod;
+        } else if (modelString) {
+          parsedModelName = modelString;
         }
 
-        if (json.system) {
-          if (json.system.system_prompt || json.system.systemPrompt) {
-            parsedSystemPrompt = json.system.system_prompt || json.system.systemPrompt;
-          }
-          if (json.system.preset) parsedPreset = json.system.preset;
+        // Provider configuration
+        if (json.models?.providers && parsedProvider && json.models.providers[parsedProvider]) {
+          const provCfg = json.models.providers[parsedProvider];
+          parsedBaseUrl = provCfg.baseUrl;
+          parsedApiKey = typeof provCfg.apiKey === 'string' ? provCfg.apiKey : provCfg.apiKey?.id;
+          if (provCfg.maxTokens) parsedMaxTokens = Number(provCfg.maxTokens);
         }
 
-        if (json.moa) {
-          if (json.moa.aggregator_model || json.moa.aggregatorModel) {
-            parsedAggregatorModel = json.moa.aggregator_model || json.moa.aggregatorModel;
-          }
-          if (json.moa.proposer_models || json.moa.proposerModels) {
-            parsedProposerModels = json.moa.proposer_models || json.moa.proposerModels;
-          }
-          if (json.moa.provider_mapping || json.moa.providerMapping) {
-            parsedProviderMapping = json.moa.provider_mapping || json.moa.providerMapping;
-          }
-          if (typeof json.moa.enabled === 'boolean') parsedMoaEnabled = json.moa.enabled;
-        }
-        if (json.provider_mapping || json.providerMapping) {
-          parsedProviderMapping = json.provider_mapping || json.providerMapping;
-        }
-
-        if (json.channels || json.channel || json.communication || json.discord || json.telegram) {
-          parsedChannels = {};
-          const ch = json.channels || {};
-          const prefersDiscord = json.channel === 'discord' || json.communication === 'discord' || agentId === 'picoclaw';
-
-          if (ch.discord || json.discord || prefersDiscord) {
-            const disc = ch.discord || json.discord || {};
-            parsedChannels.discord = {
-              enabled: disc.enabled !== undefined ? Boolean(disc.enabled) : true,
-              botToken: disc.bot_token || disc.botToken || 'env:DISCORD_BOT_TOKEN',
-              clientId: disc.client_id || disc.clientId || 'env:DISCORD_CLIENT_ID',
-              guildIds: disc.guild_ids || disc.guildIds || 'env:DISCORD_GUILD_ID'
-            };
-          }
-
-          if (ch.telegram || json.telegram) {
-            const tel = ch.telegram || json.telegram || {};
-            parsedChannels.telegram = {
-              enabled: tel.enabled !== undefined ? Boolean(tel.enabled) : !prefersDiscord,
-              botToken: tel.bot_token || tel.botToken || '',
-              allowedUsers: tel.allowed_users || tel.allowedUsers || '@developer',
-              mode: tel.mode || 'polling'
-            };
-          } else if (prefersDiscord) {
-            parsedChannels.telegram = {
-              enabled: false,
-              botToken: '',
-              allowedUsers: '@developer',
-              mode: 'polling'
-            };
-          }
-
-          if (ch.webhook) {
-            parsedChannels.webhook = {
-              enabled: Boolean(ch.webhook.enabled),
-              port: Number(ch.webhook.port || 8080),
-              authToken: ch.webhook.auth_token || ch.webhook.authToken || '',
-              corsOrigin: ch.webhook.cors_origin || ch.webhook.corsOrigin || '*'
-            };
-          }
-        }
-
-        if (json.fallback && typeof json.fallback === 'object') {
-          const fb = json.fallback;
-          parsedFallback = {
-            enabled: fb.enabled !== undefined ? Boolean(fb.enabled) : false,
-            targetAgentId: fb.targetAgentId || fb.target_agent_id || 'zeroclaw',
-            strategy: fb.strategy || 'on_offline',
-            latencyThresholdMs: Number(fb.latencyThresholdMs || fb.latency_threshold_ms || 3000),
-            fallbackProvider: fb.fallbackProvider || fb.fallback_provider || fb.provider || 'ollama',
-            fallbackModel: fb.fallbackModel || fb.fallback_model || fb.model || '',
-            provider: fb.provider || fb.fallbackProvider || fb.fallback_provider || 'ollama',
-            model: fb.model || fb.fallbackModel || fb.fallback_model || '',
-            apiKey: fb.apiKey || fb.api_key || '',
-            baseUrl: fb.baseUrl || fb.base_url || '',
-            useProxy: fb.useProxy !== undefined ? Boolean(fb.useProxy) : fb.use_proxy !== undefined ? Boolean(fb.use_proxy) : true
-          };
+        // MCP servers in OpenClaw v1
+        if (json.mcpServers) {
+          parsedMoaEnabled = true;
         }
       }
-    } catch {}
-  } else if (detectedFormat === 'toml') {
-    // 2. TOML Parsing
-    const matchName = nativeContent.match(/agent_name\s*=\s*["']([^"']+)["']/);
-    if (matchName) parsedAgentName = matchName[1];
-
-    const matchProv = nativeContent.match(/provider\s*=\s*["']([^"']+)["']/);
-    if (matchProv) parsedProvider = matchProv[1] as LLMProvider;
-
-    const matchModel = nativeContent.match(/(?:default|model|model_name)\s*=\s*["']([^"']+)["']/);
-    if (matchModel && matchModel[1] !== 'provider:') parsedModelName = matchModel[1];
-
-    const matchBase = nativeContent.match(/(?:base_url|baseUrl|api_base)\s*=\s*["']([^"']+)["']/);
-    if (matchBase) parsedBaseUrl = matchBase[1];
-
-    const matchCtx = nativeContent.match(/(?:context_length|num_ctx|context_window)\s*=\s*([0-9]+)/);
-    if (matchCtx) parsedContextLength = Number(matchCtx[1]);
-
-    const matchMax = nativeContent.match(/(?:max_tokens|num_predict)\s*=\s*([0-9]+)/);
-    if (matchMax) parsedMaxTokens = Number(matchMax[1]);
-
-    const matchTemp = nativeContent.match(/temperature\s*=\s*([0-9.]+)/);
-    if (matchTemp) parsedTemperature = Number(matchTemp[1]);
-
-    const matchPrompt = nativeContent.match(/system_prompt\s*=\s*["']([^"']+)["']/);
-    if (matchPrompt) parsedSystemPrompt = matchPrompt[1];
-
-    const discordMatch = nativeContent.match(/\[channels\.discord\]([\s\S]*?)(?=\n\[|$)/i);
-    const telegramMatch = nativeContent.match(/\[channels\.telegram\]([\s\S]*?)(?=\n\[|$)/i);
-    if (discordMatch || telegramMatch || agentId === 'picoclaw') {
-      parsedChannels = {};
-      const prefersDiscord = Boolean(discordMatch) || agentId === 'picoclaw';
-      if (discordMatch) {
-        const en = discordMatch[1].match(/enabled\s*=\s*(true|false)/i);
-        parsedChannels.discord = {
-          enabled: en ? en[1].toLowerCase() === 'true' : true,
-          botToken: 'env:DISCORD_BOT_TOKEN',
-          clientId: 'env:DISCORD_CLIENT_ID',
-          guildIds: 'env:DISCORD_GUILD_ID'
-        };
-      } else if (prefersDiscord) {
-        parsedChannels.discord = {
-          enabled: true,
-          botToken: 'env:DISCORD_BOT_TOKEN',
-          clientId: 'env:DISCORD_CLIENT_ID',
-          guildIds: 'env:DISCORD_GUILD_ID'
-        };
-      }
-      if (telegramMatch) {
-        const en = telegramMatch[1].match(/enabled\s*=\s*(true|false)/i);
-        parsedChannels.telegram = {
-          enabled: en ? en[1].toLowerCase() === 'true' : !prefersDiscord,
-          botToken: '',
-          allowedUsers: '@developer',
-          mode: 'polling'
-        };
-      } else if (prefersDiscord) {
-        parsedChannels.telegram = {
-          enabled: false,
-          botToken: '',
-          allowedUsers: '@developer',
-          mode: 'polling'
-        };
-      }
+    } catch (e) {
+      console.error(`[configParser] Failed to parse JSON config: ${e.message}`);
+      return {};
     }
+  }
 
-    const fallbackMatch = nativeContent.match(/\[fallback\]([\s\S]*?)(?=\n\[|$)/i);
-    if (fallbackMatch) {
-      const fbText = fallbackMatch[1];
-      const en = fbText.match(/enabled\s*=\s*(true|false)/i);
-      const prov = fbText.match(/(?:provider|fallback_provider)\s*=\s*["']([^"']+)["']/i);
-      const mod = fbText.match(/(?:model|fallback_model)\s*=\s*["']([^"']+)["']/i);
-      const key = fbText.match(/(?:api_key|apiKey)\s*=\s*["']([^"']+)["']/i);
-      const base = fbText.match(/(?:base_url|baseUrl)\s*=\s*["']([^"']+)["']/i);
-      const strat = fbText.match(/strategy\s*=\s*["']([^"']+)["']/i);
-      const target = fbText.match(/(?:target_agent_id|targetAgentId)\s*=\s*["']([^"']+)["']/i);
-      const lat = fbText.match(/(?:latency_threshold_ms|latencyThresholdMs)\s*=\s*([0-9]+)/i);
-      const proxy = fbText.match(/(?:use_proxy|useProxy)\s*=\s*(true|false)/i);
-
-      parsedFallback = {
-        enabled: en ? en[1].toLowerCase() === 'true' : false,
-        fallbackProvider: (prov ? prov[1] : 'mistral') as LLMProvider,
-        fallbackModel: mod ? mod[1] : 'mistral-7b-instruct',
-        provider: (prov ? prov[1] : 'mistral') as LLMProvider,
-        model: mod ? mod[1] : 'mistral-7b-instruct',
-        apiKey: key ? key[1] : '',
-        baseUrl: base ? base[1] : '',
-        strategy: (strat ? strat[1] : 'on_offline') as any,
-        targetAgentId: (target ? target[1] : 'picoclaw') as AgentId,
-        latencyThresholdMs: lat ? Number(lat[1]) : 3000,
-        useProxy: proxy ? proxy[1].toLowerCase() === 'true' : true
-      };
-    }
-  } else {
-    // 3. YAML Parsing
+  // 2. YAML Parsing
+  else if (detectedFormat === 'yaml') {
     try {
-      const parsedYaml = YAML.parse(nativeContent, { uniqueKeys: false });
-      if (parsedYaml && typeof parsedYaml === 'object') {
-        if (parsedYaml.agent_name || parsedYaml.agentName) {
-          parsedAgentName = parsedYaml.agent_name || parsedYaml.agentName;
-        }
-
-        if (parsedYaml.model && typeof parsedYaml.model === 'object') {
-          const ym = parsedYaml.model;
-          if (ym.provider) parsedProvider = ym.provider as LLMProvider;
-          if (ym.default || ym.model || ym.model_name || ym.checkpoint) {
-            parsedModelName = ym.default || ym.model || ym.model_name || ym.checkpoint;
-          }
-          if (ym.baseUrl || ym.base_url || ym.api_base) {
-            parsedBaseUrl = ym.baseUrl || ym.base_url || ym.api_base;
-          }
-          if (ym.apiKey || ym.api_key) parsedApiKey = ym.apiKey || ym.api_key;
-          if (ym.temperature !== undefined) parsedTemperature = Number(ym.temperature);
-          if (ym.maxTokens !== undefined || ym.max_tokens !== undefined) {
-            parsedMaxTokens = Number(ym.maxTokens ?? ym.max_tokens);
-          }
-          if (ym.contextWindow !== undefined || ym.context_window !== undefined || ym.context_length !== undefined) {
-            parsedContextLength = Number(ym.contextWindow ?? ym.context_window ?? ym.context_length);
-          }
-          if (ym.useProxy !== undefined || ym.use_proxy !== undefined) {
-            parsedUseProxy = Boolean(ym.useProxy ?? ym.use_proxy);
-          }
-        } else if (typeof parsedYaml.model === 'string') {
-          parsedModelName = parsedYaml.model;
-        }
-
-        if (parsedYaml.provider && typeof parsedYaml.provider === 'string') {
-          parsedProvider = parsedYaml.provider as LLMProvider;
-        }
-
-        if (parsedYaml.system_prompt || parsedYaml.systemPrompt) {
-          parsedSystemPrompt = parsedYaml.system_prompt || parsedYaml.systemPrompt;
-        }
-        if (parsedYaml.system_preset || parsedYaml.systemPreset) {
-          parsedPreset = parsedYaml.system_preset || parsedYaml.systemPreset;
-        }
-
-        if (parsedYaml.moa && typeof parsedYaml.moa === 'object') {
-          const yMoa = parsedYaml.moa;
-          if (yMoa.enabled !== undefined) parsedMoaEnabled = Boolean(yMoa.enabled);
-
-          // Aggregator resolution
-          const aggObj = yMoa.aggregator || yMoa.presets?.default?.aggregator;
-          if (aggObj && typeof aggObj === 'object') {
-            const rawModel = aggObj.model || '';
-            const rawProv = aggObj.provider || '';
-            if (rawProv && !['custom', 'ollama', 'openrouter', 'openai', 'anthropic', 'gemini', 'groq', 'deepseek', 'mistral'].includes(rawProv)) {
-              // Corrupted split: provider was model name and model was tag (e.g. gemma4-soul:latest)
-              parsedAggregatorModel = `${rawProv}:${rawModel}`;
-              if (!parsedProviderMapping) parsedProviderMapping = {};
-              parsedProviderMapping[parsedAggregatorModel] = 'custom';
-            } else {
-              parsedAggregatorModel = rawModel === 'latest' ? 'gemma4-soul:latest' : rawModel === '16b' ? 'deepseek-coder-v2:16b' : rawModel;
-              if (rawProv) {
-                if (!parsedProviderMapping) parsedProviderMapping = {};
-                parsedProviderMapping[parsedAggregatorModel] = rawProv === 'custom:ollama' ? 'custom' : rawProv;
-              }
-            }
-          } else if (typeof aggObj === 'string') {
-            parsedAggregatorModel = aggObj === 'latest' ? 'gemma4-soul:latest' : aggObj === '16b' ? 'deepseek-coder-v2:16b' : aggObj;
-          } else if (yMoa.aggregator_model || yMoa.aggregatorModel) {
-            const a = yMoa.aggregator_model || yMoa.aggregatorModel;
-            parsedAggregatorModel = a === 'latest' ? 'gemma4-soul:latest' : a === '16b' ? 'deepseek-coder-v2:16b' : a;
-          }
-
-          // Proposer / Reference models resolution
-          const refModels = yMoa.reference_models || yMoa.presets?.default?.reference_models;
-          if (Array.isArray(refModels) && refModels.length > 0) {
-            parsedProposerModels = refModels.map((item: any) => {
-              if (typeof item === 'string') {
-                return item === 'latest' ? 'gemma4-soul:latest' : item === '16b' ? 'deepseek-coder-v2:16b' : item;
-              }
-              if (item && item.model) {
-                const itemProv = item.provider || '';
-                const itemModel = item.model || '';
-                if (itemProv && !['custom', 'ollama', 'openrouter', 'openai', 'anthropic', 'gemini', 'groq', 'deepseek', 'mistral'].includes(itemProv)) {
-                  const fullModel = `${itemProv}:${itemModel}`;
-                  if (!parsedProviderMapping) parsedProviderMapping = {};
-                  parsedProviderMapping[fullModel] = 'custom';
-                  return fullModel;
-                }
-                const resolvedModel = itemModel === 'latest' ? 'gemma4-soul:latest' : itemModel === '16b' ? 'deepseek-coder-v2:16b' : itemModel;
-                if (itemProv) {
-                  if (!parsedProviderMapping) parsedProviderMapping = {};
-                  parsedProviderMapping[resolvedModel] = itemProv === 'custom:ollama' ? 'custom' : itemProv;
-                }
-                return resolvedModel;
-              }
-              return '';
-            }).filter(Boolean);
-          } else if (yMoa.proposer_models || yMoa.proposerModels) {
-            parsedProposerModels = (yMoa.proposer_models || yMoa.proposerModels).map((m: string) => 
-              m === 'latest' ? 'gemma4-soul:latest' : m === '16b' ? 'deepseek-coder-v2:16b' : m
-            );
-          }
-
-          if (yMoa.provider_mapping || yMoa.providerMapping) {
-            parsedProviderMapping = { ...(parsedProviderMapping || {}), ...(yMoa.provider_mapping || yMoa.providerMapping) };
-          }
-          if (parsedProviderMapping) {
-            delete parsedProviderMapping['latest'];
-            delete parsedProviderMapping['16b'];
-          }
-        }
-
-        if (parsedYaml.channels && typeof parsedYaml.channels === 'object') {
-          const ch = parsedYaml.channels;
-          parsedChannels = {};
-          if (ch.discord) {
-            parsedChannels.discord = {
-              enabled: Boolean(ch.discord.enabled),
-              botToken: ch.discord.bot_token || ch.discord.botToken || 'env:DISCORD_BOT_TOKEN',
-              clientId: ch.discord.client_id || ch.discord.clientId || 'env:DISCORD_CLIENT_ID',
-              guildIds: ch.discord.guild_ids || ch.discord.guildIds || 'env:DISCORD_GUILD_ID'
-            };
-          }
-          if (ch.telegram) {
-            parsedChannels.telegram = {
-              enabled: Boolean(ch.telegram.enabled),
-              botToken: ch.telegram.bot_token || ch.telegram.botToken || '',
-              allowedUsers: ch.telegram.allowed_users || ch.telegram.allowedUsers || '@developer',
-              mode: ch.telegram.mode || 'polling'
-            };
-          }
-          if (ch.webhook) {
-            parsedChannels.webhook = {
-              enabled: Boolean(ch.webhook.enabled),
-              port: Number(ch.webhook.port || 8080),
-              authToken: ch.webhook.auth_token || ch.webhook.authToken || '',
-              corsOrigin: ch.webhook.cors_origin || ch.webhook.corsOrigin || '*'
-            };
-          }
-        }
-
-        if (parsedYaml.fallback && typeof parsedYaml.fallback === 'object') {
-          const fb = parsedYaml.fallback;
-          parsedFallback = {
-            enabled: fb.enabled !== undefined ? Boolean(fb.enabled) : true,
-            fallbackProvider: (fb.provider || fb.fallback_provider || fb.fallbackProvider || 'openrouter') as LLMProvider,
-            fallbackModel: fb.model || fb.fallback_model || fb.fallbackModel || 'anthropic/claude-3.7-sonnet',
-            provider: (fb.provider || fb.fallback_provider || fb.fallbackProvider || 'openrouter') as LLMProvider,
-            model: fb.model || fb.fallback_model || fb.fallbackModel || 'anthropic/claude-3.7-sonnet',
-            apiKey: fb.api_key || fb.apiKey || '',
-            baseUrl: fb.base_url || fb.baseUrl || 'https://openrouter.ai/api/v1',
-            strategy: (fb.strategy || 'on_offline') as any,
-            targetAgentId: (fb.target_agent_id || fb.targetAgentId || 'zeroclaw') as AgentId,
-            latencyThresholdMs: Number(fb.latency_threshold_ms || fb.latencyThresholdMs || 3000),
-            useProxy: fb.use_proxy !== undefined ? Boolean(fb.use_proxy) : fb.useProxy !== undefined ? Boolean(fb.useProxy) : true
-          };
-        }
-      }
-    } catch {
-      // Fallback regex parsing if YAML parser encounters raw anomalies
-      const matchName = nativeContent.match(/agent_name:\s*"([^"]+)"|agent_name:\s*([^\n]+)/);
-      if (matchName) parsedAgentName = (matchName[1] || matchName[2]).trim();
-
-      const modelBlockMatch = nativeContent.match(/model:\s*\n([\s\S]*?)(?=\n[a-z_]+:|$)/i);
-      const searchTarget = modelBlockMatch ? modelBlockMatch[1] : nativeContent;
-
-      const pMatch = searchTarget.match(/provider:\s*["']?([^"'\s\n#]+)["']?/);
-      if (pMatch && pMatch[1]) parsedProvider = pMatch[1].trim() as LLMProvider;
-
-      const defMatch = searchTarget.match(/default:\s*["']?([^"'\s\n#]+)["']?/);
-      const mMatch = searchTarget.match(/(?:model|model_name|checkpoint):\s*["']?([^"'\s\n#]+)["']?/);
-      if (defMatch && defMatch[1]) {
-        parsedModelName = defMatch[1].trim();
-      } else if (mMatch && mMatch[1] && mMatch[1] !== 'provider:') {
-        parsedModelName = mMatch[1].trim();
+      const parsed = YAML.load(trimmed);
+      
+      if (parsed.agentId) {
+        result.agentId = parsed.agentId;
       }
 
-      const bMatch = searchTarget.match(/(?:base_url|baseUrl|api_base):\s*["']?([^"'\s\n#]+)["']?/);
-      if (bMatch && bMatch[1]) parsedBaseUrl = bMatch[1].trim();
-
-      const cMatch = searchTarget.match(/(?:context_length|num_ctx|context_window):\s*([0-9]+)/);
-      if (cMatch && cMatch[1]) parsedContextLength = Number(cMatch[1]);
-
-      const maxMatch = searchTarget.match(/(?:max_tokens|num_predict):\s*([0-9]+)/);
-      if (maxMatch && maxMatch[1]) parsedMaxTokens = Number(maxMatch[1]);
-
-      const tMatch = searchTarget.match(/temperature:\s*([0-9.]+)/);
-      if (tMatch && tMatch[1]) parsedTemperature = Number(tMatch[1]);
-
-      const keyMatch = searchTarget.match(/(?:api_key|apiKey):\s*["']?([^"'\s\n#]+)["']?/);
-      if (keyMatch && keyMatch[1]) parsedApiKey = keyMatch[1].trim();
-
-      const promptMatch = nativeContent.match(/system_prompt:\s*"([^"]+)"|system_prompt:\s*([^\n]+)/);
-      if (promptMatch) parsedSystemPrompt = (promptMatch[1] || promptMatch[2]).trim();
-
-      const presetMatch = nativeContent.match(/system_preset:\s*"([^"]+)"|system_preset:\s*([^\n]+)/);
-      if (presetMatch) parsedPreset = (presetMatch[1] || presetMatch[2]).trim();
-
-      const moaBlockMatch = nativeContent.match(/moa:\s*\n([\s\S]*?)(?=\n[a-z_]+:|$)/i);
-      if (moaBlockMatch) {
-        const moaBlock = moaBlockMatch[1];
-        const aggMatch = moaBlock.match(/(?:aggregator_model|aggregatorModel):\s*["']?([^"'\s\n#]+)["']?/);
-        if (aggMatch && aggMatch[1]) parsedAggregatorModel = aggMatch[1].trim();
-        const enMatch = moaBlock.match(/enabled:\s*(true|false)/i);
-        if (enMatch) parsedMoaEnabled = enMatch[1].toLowerCase() === 'true';
+      // Model parsing
+      const modelRef = parsed.model || parsed.defaults?.model;
+      let modelString = typeof modelRef === 'string' ? modelRef : modelRef?.primary || '';
+      
+      if (modelString.includes('/')) {
+        const parts = modelString.split('/');
+        const prov = parts[0] as LLMProvider;
+        const mod = parts.slice(1).join('/');
+        parsedProvider = prov;
+        parsedModelName = mod;
+      } else if (modelString) {
+        parsedModelName = modelString;
       }
+
+      // Provider configuration
+      if (parsed.models?.providers && parsedProvider && parsed.models.providers[parsedProvider]) {
+        const provCfg = parsed.models.providers[parsedProvider];
+        parsedBaseUrl = provCfg.baseUrl;
+        parsedApiKey = typeof provCfg.apiKey === 'string' ? provCfg.apiKey : provCfg.apiKey?.id;
+        if (provCfg.maxTokens) parsedMaxTokens = Number(provCfg.maxTokens);
+      }
+
+      // MCP servers in YAML
+      if (parsed.mcpServers) {
+        parsedMoaEnabled = true;
+      }
+    } catch (e) {
+      console.error(`[configParser] Failed to parse YAML config: ${e.message}`);
+      return {};
     }
   }
 
-  // Sipeed / PicoClaw always defaults communication to Discord
-  if (agentId === 'picoclaw') {
-    if (!parsedChannels) parsedChannels = {};
-    if (!parsedChannels.discord) {
-      parsedChannels.discord = {
-        enabled: true,
-        botToken: 'env:DISCORD_BOT_TOKEN',
-        clientId: 'env:DISCORD_CLIENT_ID',
-        guildIds: 'env:DISCORD_GUILD_ID'
-      };
+  // 3. TOML Parsing
+  else if (detectedFormat === 'toml') {
+    try {
+      const parsed = TOML.parse(trimmed);
+      
+      if (parsed.agentId) {
+        result.agentId = parsed.agentId;
+      }
+
+      // Model parsing
+      const modelRef = parsed.model || parsed.defaults?.model;
+      let modelString = typeof modelRef === 'string' ? modelRef : modelRef?.primary || '';
+      
+      if (modelString.includes('/')) {
+        const parts = modelString.split('/');
+        const prov = parts[0] as LLMProvider;
+        const mod = parts.slice(1).join('/');
+        parsedProvider = prov;
+        parsedModelName = mod;
+      } else if (modelString) {
+        parsedModelName = modelString;
+      }
+
+      // Provider configuration
+      if (parsed.models?.providers && parsedProvider && parsed.models.providers[parsedProvider]) {
+        const provCfg = parsed.models.providers[parsedProvider];
+        parsedBaseUrl = provCfg.baseUrl;
+        parsedApiKey = typeof provCfg.apiKey === 'string' ? provCfg.apiKey : provCfg.apiKey?.id;
+        if (provCfg.maxTokens) parsedMaxTokens = Number(provCfg.maxTokens);
+      }
+
+      // MCP servers in TOML
+      if (parsed.mcpServers) {
+        parsedMoaEnabled = true;
+      }
+    } catch (e) {
+      console.error(`[configParser] Failed to parse TOML config: ${e.message}`);
+      return {};
     }
-    if (parsedChannels.telegram === undefined) {
-      parsedChannels.telegram = {
-        enabled: false,
-        botToken: '',
-        allowedUsers: '@sipeed_user',
-        mode: 'polling'
-      };
-    }
   }
 
-  // Auto-detect provider if missing or custom but points to Ollama
-  if (!parsedProvider) {
-    if (parsedBaseUrl && (parsedBaseUrl.includes('11434') || parsedBaseUrl.includes('ollama'))) {
-      parsedProvider = 'ollama';
-    } else {
-      parsedProvider = agentId === 'picoclaw' ? 'ollama' : agentId === 'zeroclaw' ? 'deepseek' : agentId === 'openclaw' ? 'openai' : 'custom';
-    }
-  }
-
-  // Model object
-  const modelObj: Partial<ModelConfig> = {};
-  if (parsedProvider) modelObj.provider = parsedProvider;
-  if (parsedModelName) modelObj.model = parsedModelName;
-  if (parsedBaseUrl) modelObj.baseUrl = parsedBaseUrl;
-  if (parsedContextLength) modelObj.contextWindow = parsedContextLength;
-  if (parsedMaxTokens) modelObj.maxTokens = parsedMaxTokens;
-  if (parsedTemperature !== undefined) modelObj.temperature = parsedTemperature;
-  if (parsedApiKey) modelObj.apiKey = parsedApiKey;
-  if (parsedUseProxy !== undefined) modelObj.useProxy = parsedUseProxy;
-
-  if (Object.keys(modelObj).length > 0) {
-    result.model = modelObj as ModelConfig;
-  }
-
-  // System
-  if (parsedAgentName || parsedSystemPrompt || parsedPreset) {
-    result.system = {
-      agentName: parsedAgentName || agentId,
-      personaName: parsedAgentName || agentId,
-      systemPrompt: parsedSystemPrompt || '',
-      preset: parsedPreset || 'engineer',
-      language: 'en-US',
-      autoFormatCode: true
-    };
-  }
-
-  // MoA configuration with intelligent local-inference resolution
-  const isLocal = isLocalDeployment(parsedProvider, parsedBaseUrl, parsedModelName);
-  const primaryModel = parsedModelName || (agentId === 'picoclaw' ? 'qwen2.5-coder:7b' : 'gemma4-soul:latest');
-
-  const moaObj: Partial<MoAConfig> = {
-    enabled: parsedMoaEnabled ?? (agentId === 'hermes-agent')
-  };
-
-  if (parsedAggregatorModel) {
-    moaObj.aggregatorModel = parsedAggregatorModel;
-  } else if (isLocal) {
-    // If running on a local edge node / Ollama, aggregator MUST default to the local model
-    moaObj.aggregatorModel = primaryModel;
-  }
-
-  if (parsedProposerModels && parsedProposerModels.length > 0) {
-    moaObj.proposerModels = parsedProposerModels;
-  } else if (isLocal) {
-    moaObj.proposerModels = [primaryModel, 'qwen2.5-coder:7b', 'deepseek-r1:8b'];
-  }
-
-  if (parsedProviderMapping) {
-    moaObj.providerMapping = parsedProviderMapping;
-    result.providerMapping = parsedProviderMapping;
-  }
-
-  if (Object.keys(moaObj).length > 0) {
-    result.moa = moaObj as MoAConfig;
-  }
-
-  if (parsedChannels) {
-    result.channels = parsedChannels as ChannelConfig;
-  }
-
-  if (parsedFallback) {
-    result.fallback = parsedFallback as FallbackConfig;
-  }
-
-  if (agentId === 'openclaw') {
-    const ver = detectOpenClawConfigFormat(nativeContent);
-    result.openclawFormatVersion = ver;
-    result.schemaVersion = ver;
-  }
-
-  console.log(`[ConfigParser Debug] Channel config evaluation for agent "${agentId}":`, {
-    agentId,
-    detectedFormat,
-    isDiscordEnabled: parsedChannels?.discord?.enabled ?? (agentId === 'picoclaw'),
-    isTelegramEnabled: parsedChannels?.telegram?.enabled ?? (agentId !== 'picoclaw'),
-    discordConfig: parsedChannels?.discord,
-    telegramConfig: parsedChannels?.telegram,
-    rawSourceContent: nativeContent
-  });
+  // Merge with defaults
+  result = mergeWithDefaultConfig(result, DEFAULT_NATIVE_FILES);
 
   return result;
 }
 
 /**
- * Merges parsed native file configuration into a candidate configuration,
- * giving priority to explicitly parsed native values while retaining defaults.
+ * Validates a native configuration string against schema rules.
  */
-export function enhanceConfigWithNative(
-  candidateConfig: Partial<AgentFullConfig>,
-  nativeContent: string,
-  format: string,
+export function validateNativeConfig(
   agentId: AgentId,
-  requestedVersion?: 'v1' | 'v2'
-): AgentFullConfig {
-  const nativeParsed = parseNativeConfigToSchema(agentId, nativeContent, format);
-  const baseMerged = mergeWithDefaultConfig(agentId, candidateConfig);
+  content: string,
+  format: 'yaml' | 'toml' | 'json' = 'yaml'
+): { isValid: boolean; errors: string[]; warnings: string[] } {
+  const errors: string[] = [];
+  const warnings: string[] = [];
 
-  if (agentId === 'openclaw') {
-    const detectedVer = nativeParsed.openclawFormatVersion || (requestedVersion || detectOpenClawConfigFormat(nativeContent));
-    baseMerged.openclawFormatVersion = detectedVer;
-    baseMerged.schemaVersion = detectedVer;
+  // Check for empty content
+  if (!content || !content.trim()) {
+    errors.push('Configuration file is empty');
+    return { isValid: false, errors, warnings };
   }
 
-  if (nativeParsed.model) {
-    if (nativeParsed.model.provider) baseMerged.model.provider = nativeParsed.model.provider;
-    if (nativeParsed.model.model) baseMerged.model.model = nativeParsed.model.model;
-    if (nativeParsed.model.baseUrl !== undefined) baseMerged.model.baseUrl = nativeParsed.model.baseUrl;
-    if (nativeParsed.model.contextWindow) baseMerged.model.contextWindow = nativeParsed.model.contextWindow;
-    if (nativeParsed.model.maxTokens) baseMerged.model.maxTokens = nativeParsed.model.maxTokens;
-    if (nativeParsed.model.temperature !== undefined) baseMerged.model.temperature = nativeParsed.model.temperature;
-    if (nativeParsed.model.apiKey) baseMerged.model.apiKey = nativeParsed.model.apiKey;
-    if (nativeParsed.model.useProxy !== undefined) baseMerged.model.useProxy = nativeParsed.model.useProxy;
-  }
-
-  const isLocal = isLocalDeployment(baseMerged.model.provider, baseMerged.model.baseUrl, baseMerged.model.model);
-
-  if (nativeParsed.moa) {
-    if (nativeParsed.moa.aggregatorModel) {
-      baseMerged.moa.aggregatorModel = nativeParsed.moa.aggregatorModel;
-    } else if (isLocal) {
-      baseMerged.moa.aggregatorModel = baseMerged.model.model;
-    }
-
-    if (nativeParsed.moa.proposerModels) {
-      baseMerged.moa.proposerModels = nativeParsed.moa.proposerModels;
-    } else if (isLocal) {
-      baseMerged.moa.proposerModels = [baseMerged.model.model, 'deepseek-coder-v2:16b', 'qwen2-5-coder-7b-32k:latest'];
-    }
-
-    if (nativeParsed.moa.providerMapping) {
-      baseMerged.moa.providerMapping = nativeParsed.moa.providerMapping;
-      baseMerged.providerMapping = nativeParsed.moa.providerMapping;
-    }
-
-    if (typeof nativeParsed.moa.enabled === 'boolean') {
-      baseMerged.moa.enabled = nativeParsed.moa.enabled;
-    }
-  } else if (isLocal && (baseMerged.moa.aggregatorModel === 'claude-3-7-sonnet' || !baseMerged.moa.aggregatorModel)) {
-    // If local and still has the hardcoded claude-3-7-sonnet default, align with local agent model
-    baseMerged.moa.aggregatorModel = baseMerged.model.model || 'gemma4-soul:latest';
-    baseMerged.moa.proposerModels = [baseMerged.model.model || 'gemma4-soul:latest', 'deepseek-coder-v2:16b', 'qwen2-5-coder-7b-32k:latest'];
-  }
-
-  // Enforce MOA aggregator and proposer endpoints are resolved to local static IP 192.168.1.49 only for local ollama / custom edge deployments
-  const isTargetLocal = isLocal || baseMerged.model.provider === 'ollama' || (baseMerged.model.provider === 'custom' && (!baseMerged.model.baseUrl || baseMerged.model.baseUrl.includes('192.168.1.49')));
-  if (isTargetLocal) {
-    if (!baseMerged.model.baseUrl) {
-      baseMerged.model.baseUrl = 'http://192.168.1.49:11434';
-    }
-    if (!baseMerged.moa.providerEndpoints) {
-      baseMerged.moa.providerEndpoints = {};
-    }
-    baseMerged.moa.providerEndpoints['local-ollama'] = 'http://192.168.1.49:11434';
-    baseMerged.moa.providerEndpoints['ollama'] = 'http://192.168.1.49:11434';
-    baseMerged.moa.providerEndpoints['custom'] = 'http://192.168.1.49:11434';
-    baseMerged.moa.providerEndpoints['custom:ollama'] = 'http://192.168.1.49:11434';
-
-    if (!baseMerged.moa.providerMapping) baseMerged.moa.providerMapping = {};
-
-    const agg = baseMerged.moa.aggregatorModel || baseMerged.model.model || 'gemma4-soul:latest';
-    if (!baseMerged.moa.providerMapping[agg] || baseMerged.moa.providerMapping[agg] === 'openrouter' || baseMerged.moa.providerMapping[agg] === 'moa://local') {
-      baseMerged.moa.providerMapping[agg] = 'custom:ollama';
-    }
-    for (const p of (baseMerged.moa.proposerModels || [])) {
-      if (!baseMerged.moa.providerMapping[p] || baseMerged.moa.providerMapping[p] === 'openrouter' || baseMerged.moa.providerMapping[p] === 'moa://local') {
-        baseMerged.moa.providerMapping[p] = 'custom:ollama';
-      }
-    }
-    baseMerged.providerMapping = { ...(baseMerged.providerMapping || {}), ...baseMerged.moa.providerMapping };
-  }
-
-  if (nativeParsed.system) {
-    if (nativeParsed.system.agentName) baseMerged.system.agentName = nativeParsed.system.agentName;
-    if (nativeParsed.system.systemPrompt) baseMerged.system.systemPrompt = nativeParsed.system.systemPrompt;
-    if (nativeParsed.system.preset) baseMerged.system.preset = nativeParsed.system.preset;
-  }
-
-  // Channel integration with Discord priority
-  if (nativeParsed.channels) {
-    if (nativeParsed.channels.discord) {
-      baseMerged.channels.discord = { ...baseMerged.channels.discord, ...nativeParsed.channels.discord };
-    }
-    if (nativeParsed.channels.telegram) {
-      baseMerged.channels.telegram = { ...baseMerged.channels.telegram, ...nativeParsed.channels.telegram };
-    }
-    if (nativeParsed.channels.slack) {
-      baseMerged.channels.slack = { ...baseMerged.channels.slack, ...nativeParsed.channels.slack };
-    }
-    if (nativeParsed.channels.webhook) {
-      baseMerged.channels.webhook = { ...baseMerged.channels.webhook, ...nativeParsed.channels.webhook };
-    }
-  } else if (agentId === 'picoclaw') {
-    baseMerged.channels.discord.enabled = true;
-    baseMerged.channels.telegram.enabled = false;
-  }
-
-  if (nativeParsed.fallback) {
-    baseMerged.fallback = {
-      ...baseMerged.fallback,
-      ...nativeParsed.fallback,
-      apiKey: nativeParsed.fallback.apiKey || candidateConfig.fallback?.apiKey || baseMerged.fallback?.apiKey || '',
-      baseUrl: nativeParsed.fallback.baseUrl || candidateConfig.fallback?.baseUrl || baseMerged.fallback?.baseUrl || '',
-      useProxy: nativeParsed.fallback.useProxy !== undefined ? nativeParsed.fallback.useProxy : (candidateConfig.fallback?.useProxy !== undefined ? candidateConfig.fallback.useProxy : baseMerged.fallback?.useProxy !== false)
-    };
-  } else if (candidateConfig.fallback) {
-    baseMerged.fallback = {
-      ...baseMerged.fallback,
-      ...candidateConfig.fallback
-    };
-  }
-
-  return baseMerged;
-}
-
-/**
- * Serializes an AgentFullConfig object into the OpenClaw v2 Enterprise Schema JSON format.
- */
-export function serializeSchemaToOpenClawV2(
-  config: AgentFullConfig,
-  baseTemplate?: any
-): string {
-  const modelIdentifier = `${config.model.provider || 'openai'}/${config.model.model || 'gpt-4o'}`;
-
-  const base = baseTemplate && typeof baseTemplate === 'object' ? JSON.parse(JSON.stringify(baseTemplate)) : {};
-
-  const v2Config = {
-    "$schema": "http://json-schema.org/draft-07/schema#",
-    "meta": {
-      "lastTouchedVersion": "2.0.0",
-      "migrations": {
-        "modelPolicyAllowlist": true,
-        ...(base.meta?.migrations || {})
-      },
-      ...(base.meta || {})
-    },
-    "env": {
-      "shellEnv": {
-        "enabled": true,
-        "timeoutMs": 5000,
-        ...(base.env?.shellEnv || {})
-      },
-      "vars": {
-        "NODE_ENV": "production",
-        "OPENCLAW_ENABLE_PLUGINS": "true",
-        "OPENCLAW_PLUGIN_EVEROS": "true",
-        "EVEROS_ENDPOINT": "http://everos:8080",
-        ...(base.env?.vars || {}),
-        ...(config.customEnv || {})
-      }
-    },
-    "gateway": {
-      "port": config.channels.webhook?.port || 8082,
-      "mode": "local",
-      "bind": "lan",
-      "auth": {
-        "mode": "token",
-        "token": config.channels.webhook?.authToken || "openclaw_hub_token"
-      },
-      "controlUi": {
-        "enabled": true,
-        "basePath": "/control",
-        "allowedOrigins": config.channels.webhook?.corsOrigin ? [config.channels.webhook.corsOrigin] : ["*"]
-      },
-      "http": {
-        "endpoints": {
-          "chatCompletions": {
-            "enabled": true
-          },
-          "responses": {
-            "enabled": true
-          }
-        }
-      },
-      ...(base.gateway || {})
-    },
-    "models": {
-      "mode": "merge",
-      "providers": {
-        ...(base.models?.providers || {}),
-        [config.model.provider || 'openai']: {
-          "baseUrl": config.model.baseUrl || (config.model.provider === 'openai' ? 'https://api.openai.com/v1' : config.model.provider === 'anthropic' ? 'https://api.anthropic.com/v1' : 'https://api.groq.com/openai/v1'),
-          "api": config.model.provider === 'anthropic' ? 'anthropic-messages' : 'openai-completions',
-          "maxTokens": config.model.maxTokens || 4096,
-          "models": [
-            {
-              "id": config.model.model || 'gpt-4o',
-              "name": `${config.model.model} (Active)`,
-              "contextWindow": config.model.contextWindow || 128000,
-              "maxTokens": config.model.maxTokens || 4096
-            }
-          ]
-        }
-      }
-    },
-    "agents": {
-      "ownership": "explicit",
-      "defaults": {
-        "model": modelIdentifier,
-        "workspace": "/workspace",
-        "contextInjection": "always",
-        "sandbox": {
-          "mode": config.security.sandboxMode === 'docker_isolated' ? 'non-main' : config.security.sandboxMode === 'read_only' ? 'off' : 'main',
-          "docker": {
-            "image": "openclaw/openclaw:latest",
-            "workdir": "/workspace"
-          }
-        },
-        "tools": {
-          "profile": "coding",
-          "codeMode": {
-            "enabled": true
-          }
-        },
-        ...(base.agents?.defaults || {})
-      },
-      "entries": {
-        ...(base.agents?.entries || {}),
-        "openclaw": {
-          "name": config.system.agentName || "OpenClaw Gateway",
-          "description": config.system.systemPrompt || "Multi-channel cooperative assistant gateway and coordinator",
-          "workspace": "/workspace",
-          "model": modelIdentifier,
-          "runtime": {
-            "type": "embedded"
-          }
-        }
-      }
-    },
-    "channels": {
-      "defaults": {
-        "groupPolicy": "allowlist",
-        "contextVisibility": "all"
-      },
-      "telegram": {
-        "enabled": Boolean(config.channels.telegram?.enabled),
-        "botToken": config.channels.telegram?.botToken || "env:OPENCLAW_TELEGRAM_TOKEN",
-        "dmPolicy": "open",
-        "allowFrom": config.channels.telegram?.allowedUsers ? [config.channels.telegram.allowedUsers] : ["*"]
-      },
-      "discord": {
-        "enabled": Boolean(config.channels.discord?.enabled),
-        "token": config.channels.discord?.botToken || "env:OPENCLAW_DISCORD_TOKEN",
-        "applicationId": config.channels.discord?.clientId || "1234567890",
-        "dmPolicy": "allowlist",
-        "groupPolicy": "allowlist"
-      },
-      "slack": {
-        "enabled": Boolean(config.channels.slack?.enabled),
-        "mode": config.channels.slack?.socketMode ? "socket" : "http",
-        "botToken": config.channels.slack?.botToken || "",
-        "dmPolicy": "pairing",
-        "groupPolicy": "allowlist"
-      }
-    },
-    "tools": {
-      "profile": "coding",
-      "web": {
-        "search": {
-          "enabled": true,
-          "maxResults": 5
-        },
-        "fetch": {
-          "enabled": true,
-          "maxChars": 50000
-        }
-      },
-      "exec": {
-        "host": "auto",
-        "mode": "auto",
-        "safeBins": ["git", "npm", "cargo", "docker", "ls", "grep", "cat"]
-      },
-      "codeMode": {
-        "enabled": true,
-        "runtime": "quickjs-wasi"
-      },
-      ...(base.tools || {})
-    },
-    "memory": {
-      "citations": "auto",
-      "search": {
-        "enabled": config.storage.memoryBackend === 'everos',
-        "provider": "gemini",
-        "sources": ["memory", "sessions"]
-      },
-      ...(base.memory || {})
-    },
-    "logging": {
-      "level": "info",
-      "consoleStyle": "pretty"
-    }
-  };
-
-  return JSON.stringify(v2Config, null, 2);
-}
-
-/**
- * Serializes an AgentFullConfig object into the OpenClaw v1 Classic JSON format.
- */
-export function serializeSchemaToOpenClawV1(config: AgentFullConfig): string {
-  const v1Config = {
-    agentId: "openclaw",
-    version: "1.0.0",
-    name: config.system.agentName || "OpenClaw Gateway",
-    persona: config.system.personaName || "Claw Hub",
-    model: {
-      provider: config.model.provider,
-      model: config.model.model,
-      temperature: config.model.temperature ?? 0.5,
-      maxTokens: config.model.maxTokens ?? 4096,
-      contextWindow: config.model.contextWindow ?? 128000,
-      baseUrl: config.model.baseUrl,
-      apiKey: config.model.apiKey
-    },
-    channels: {
-      telegram: {
-        enabled: Boolean(config.channels.telegram?.enabled),
-        botToken: config.channels.telegram?.botToken || "env:OPENCLAW_TELEGRAM_TOKEN",
-        allowedUsers: config.channels.telegram?.allowedUsers ? [config.channels.telegram.allowedUsers] : ["*"],
-        mode: config.channels.telegram?.mode || "polling"
-      },
-      discord: {
-        enabled: Boolean(config.channels.discord?.enabled),
-        botToken: config.channels.discord?.botToken || "env:OPENCLAW_DISCORD_TOKEN",
-        clientId: config.channels.discord?.clientId || "1234567890",
-        guildIds: config.channels.discord?.guildIds || "9876543210"
-      },
-      webhook: {
-        enabled: Boolean(config.channels.webhook?.enabled),
-        port: config.channels.webhook?.port || 8082,
-        authToken: config.channels.webhook?.authToken || "openclaw_hub_token"
-      }
-    },
-    system: {
-      preset: config.system.preset || "researcher",
-      systemPrompt: config.system.systemPrompt || "You are OpenClaw, a multi-channel cooperative assistant gateway."
-    },
-    security: {
-      sandboxMode: config.security.sandboxMode || "docker_isolated",
-      allowedDirectories: config.security.allowedDirectories || ["/workspace"],
-      maxExecutionTimeSec: config.security.maxExecutionTimeSec || 90
-    },
-    storage: {
-      memoryBackend: config.storage.memoryBackend || "everos",
-      dbPath: config.storage.dbPath || "/data/everos/memories/openclaw",
-      autoSummarizeInterval: config.storage.autoSummarizeInterval || 30,
-      maxHistoryTurns: config.storage.maxHistoryTurns || 80,
-      vectorDbUrl: config.storage.vectorDbUrl || "http://everos:8080"
-    },
-    customEnv: {
-      NODE_ENV: "production",
-      OPENCLAW_ENABLE_PLUGINS: "true",
-      OPENCLAW_PLUGIN_EVEROS: "true",
-      EVEROS_ENDPOINT: "http://everos:8080",
-      ...(config.customEnv || {})
-    }
-  };
-
-  return JSON.stringify(v1Config, null, 2);
-}
-
-/**
- * Converts an OpenClaw raw config between v1 and v2 formats seamlessly.
- */
-export function convertOpenClawConfigFormat(
-  rawContent: string,
-  targetVersion: 'v1' | 'v2',
-  fallbackConfig?: AgentFullConfig
-): string {
   try {
-    const parsed = parseNativeConfigToSchema('openclaw', rawContent, 'json');
-    const base = mergeWithDefaultConfig('openclaw', fallbackConfig || parsed);
-    if (targetVersion === 'v2') {
-      let existingObj: any = null;
-      try { existingObj = JSON.parse(rawContent); } catch {}
-      return serializeSchemaToOpenClawV2(base, existingObj);
-    } else {
-      return serializeSchemaToOpenClawV1(base);
+    let parsed: any;
+    
+    if (format === 'json') {
+      parsed = JSON.parse(content);
+    } else if (format === 'yaml') {
+      parsed = YAML.load(content);
+    } else if (format === 'toml') {
+      parsed = TOML.parse(content);
     }
-  } catch {
-    return targetVersion === 'v2' 
-      ? DEFAULT_NATIVE_FILES['openclaw-v2']?.content || rawContent 
-      : DEFAULT_NATIVE_FILES['openclaw-v1']?.content || rawContent;
-  }
-}
 
-export interface OpenClawMigrationResult {
-  migratedContent: string;
-  migratedConfig: AgentFullConfig;
-  previousContent: string;
-  sourceVersion: 'v1';
-  targetVersion: 'v2';
-  timestamp: string;
-}
-
-/**
- * Migration utility that converts an existing OpenClaw v1 configuration to v2 Enterprise Gateway format.
- */
-export function migrateOpenClawV1ToV2(
-  rawContent: string,
-  existingConfig?: AgentFullConfig
-): OpenClawMigrationResult {
-  const previousContent = rawContent;
-  const migratedContent = convertOpenClawConfigFormat(rawContent, 'v2', existingConfig);
-  const parsed = parseNativeConfigToSchema('openclaw', migratedContent, 'json');
-  const merged = mergeWithDefaultConfig('openclaw', {
-    ...(existingConfig || {}),
-    ...parsed,
-    schemaVersion: 'v2',
-    openclawFormatVersion: 'v2'
-  });
-  merged.schemaVersion = 'v2';
-  merged.openclawFormatVersion = 'v2';
-
-  return {
-    migratedContent,
-    migratedConfig: merged,
-    previousContent,
-    sourceVersion: 'v1',
-    targetVersion: 'v2',
-    timestamp: new Date().toISOString()
-  };
-}
-
-/**
- * Sanitizes a configuration string or object by normalizing corrupted port/host
- * patterns such as '11434host:11434' or 'host:11434' to '11434' without altering valid configuration structures.
- */
-export function sanitizeConfigString(input: string): string;
-export function sanitizeConfigString<T>(input: T): T;
-export function sanitizeConfigString(input: any): any {
-  if (typeof input === 'string') {
-    return input
-      .replace(/11434host:11434/g, '11434')
-      .replace(/(?<!local)host:11434/g, '11434');
-  }
-  if (input !== null && typeof input === 'object') {
-    if (Array.isArray(input)) {
-      return input.map(item => sanitizeConfigString(item));
+    // Validate required fields
+    if (!parsed.agentId) {
+      errors.push('Missing agentId field');
     }
-    const result: Record<string, any> = {};
-    for (const [key, value] of Object.entries(input)) {
-      result[key] = sanitizeConfigString(value);
-    }
-    return result;
-  }
-  return input;
-}
 
-/**
- * Resolves a model name string or object into its respective provider and model identifier.
- */
-export function parseModelAndProvider(
-  rawInput: string,
-  providerMapping: Record<string, string> = {},
-  defaultFallbackModel = 'gemma4-soul:latest'
-): { provider: string; model: string } {
-  const KNOWN_PROVIDERS = new Set(['custom', 'ollama', 'openrouter', 'openai', 'anthropic', 'gemini', 'google', 'groq', 'mistral', 'together', 'deepseek']);
-  let raw = (!rawInput || rawInput === 'default') ? defaultFallbackModel : rawInput.trim();
-
-  // Repair known corrupted single-token model names
-  if (raw === 'latest') raw = 'gemma4-soul:latest';
-  if (raw === '16b') raw = 'deepseek-coder-v2:16b';
-
-  if (raw.startsWith('custom:ollama:')) {
-    return { provider: 'custom', model: raw.slice('custom:ollama:'.length) };
-  }
-  if (raw.startsWith('ollama:') || raw.startsWith('custom:')) {
-    const modelPart = raw.slice(raw.indexOf(':') + 1);
-    return { provider: 'custom', model: modelPart };
-  }
-
-  // Check if it starts with a recognized provider prefix (e.g. openrouter:anthropic/claude-3-7-sonnet)
-  const firstColonIndex = raw.indexOf(':');
-  if (firstColonIndex !== -1 && !raw.includes('://')) {
-    const candidatePrefix = raw.slice(0, firstColonIndex).toLowerCase();
-    if (KNOWN_PROVIDERS.has(candidatePrefix)) {
-      const modelPart = raw.slice(firstColonIndex + 1);
-      return { provider: candidatePrefix === 'ollama' ? 'custom' : candidatePrefix, model: modelPart };
-    }
-  }
-
-  // Check providerMapping
-  const alias = providerMapping[raw];
-  if (alias) {
-    if (alias === 'local-ollama' || alias === 'ollama' || alias === 'custom:ollama' || alias === 'custom') {
-      return { provider: 'custom', model: raw };
-    }
-    if (alias === 'remote-openrouter' || alias === 'openrouter') {
-      return { provider: 'openrouter', model: raw };
-    }
-    if (alias === 'remote-openai' || alias === 'openai') {
-      return { provider: 'openai', model: raw };
-    }
-    if (alias === 'remote-anthropic' || alias === 'anthropic') {
-      return { provider: 'anthropic', model: raw };
-    }
-    return { provider: alias, model: raw };
-  }
-
-  if (raw.includes('/')) {
-    return { provider: 'openrouter', model: raw };
-  }
-
-  return { provider: 'custom', model: raw };
-}
-
-/**
- * Generates a complete, standard config.yaml for Hermes Agent including the comprehensive moa configuration.
- */
-export function generateHermesYaml(cfg: any): string {
-  const m = cfg?.model || {};
-  const sys = cfg?.system || {};
-  const moa = cfg?.moa || {};
-  const sec = cfg?.security || {};
-  const sto = cfg?.storage || {};
-  const env = cfg?.customEnv || cfg?.env || {};
-  const fb = cfg?.fallback || {};
-  const web = cfg?.web || {};
-
-  const providerMapping: Record<string, string> = { ...(moa?.providerMapping || {}), ...(cfg?.providerMapping || {}) };
-  delete providerMapping['latest'];
-  delete providerMapping['16b'];
-
-  const rawModel = m?.default || m?.model || 'gemma4-soul:latest';
-  const model = (rawModel === 'default' || rawModel === 'latest') ? 'gemma4-soul:latest' : rawModel;
-  const rawProvider = m?.provider || 'custom';
-  const isOllamaLocal = rawProvider === 'ollama' || (rawProvider === 'custom' && (m?.baseUrl?.includes('192.168.1.49') || m?.baseUrl === 'http://192.168.1.49:11434'));
-  const finalProvider = isOllamaLocal ? 'custom' : (rawProvider || 'custom');
-  const finalApiKey = isOllamaLocal ? (m?.apiKey || 'ollama') : (m?.apiKey || '');
-  const rawBaseUrl = m?.baseUrl || (isOllamaLocal ? 'http://192.168.1.49:11434' : '');
-  const finalBaseUrl = rawBaseUrl || (isOllamaLocal ? 'http://192.168.1.49:11434' : '');
-  const finalBaseUrlV1 = rawBaseUrl 
-    ? (rawBaseUrl.endsWith('/v1') ? rawBaseUrl : rawBaseUrl + '/v1') 
-    : (isOllamaLocal ? 'http://192.168.1.49:11434/v1' : '');
-
-  // Proposer / Reference model resolution
-  const rawProposers = (moa?.proposerModels && moa.proposerModels.length > 0)
-    ? moa.proposerModels
-    : ['gemma4-soul:latest', 'deepseek-coder-v2:16b', 'qwen2-5-coder-7b-32k:latest'];
-
-  const referenceModelsList = rawProposers.map((rawModelName: any) => {
-    let resolved;
-    if (typeof rawModelName === 'string') {
-      const s = rawModelName === 'latest' ? 'gemma4-soul:latest' : rawModelName === '16b' ? 'deepseek-coder-v2:16b' : rawModelName;
-      resolved = parseModelAndProvider(s, providerMapping, 'gemma4-soul:latest');
-    } else {
-      const p = rawModelName.provider || '';
-      const mod = rawModelName.model || 'gemma4-soul:latest';
-      if (p && !['custom', 'ollama', 'openrouter', 'openai', 'anthropic', 'gemini'].includes(p)) {
-        resolved = {
-          provider: 'custom',
-          model: `${p}:${mod}`
-        };
-      } else {
-        resolved = {
-          provider: (p === 'custom:ollama' || p === 'ollama' || !p) ? 'custom' : p,
-          model: mod === 'latest' ? 'gemma4-soul:latest' : mod === '16b' ? 'deepseek-coder-v2:16b' : mod
-        };
+    // Validate model if present
+    if (parsed.model || parsed.defaults?.model) {
+      const modelRef = parsed.model || parsed.defaults?.model;
+      if (typeof modelRef === 'string' && modelRef.trim() === '') {
+        errors.push('Model reference is empty');
       }
     }
 
-    const itemProv = (resolved.provider === 'custom:ollama' || resolved.provider === 'ollama') ? 'custom' : resolved.provider;
-    const itemBaseUrl = itemProv === 'custom' 
-      ? finalBaseUrlV1 
-      : itemProv === 'openrouter' 
-        ? 'https://openrouter.ai/api/v1' 
-        : itemProv === 'openai' 
-          ? 'https://api.openai.com/v1' 
-          : itemProv === 'anthropic' 
-            ? 'https://api.anthropic.com/v1' 
-            : '';
-    const itemApiKey = itemProv === 'custom' 
-      ? (finalApiKey || 'ollama') 
-      : itemProv === 'openrouter' 
-        ? (moa?.apiKey || fb?.apiKey || m?.apiKey || 'env:OPENROUTER_API_KEY') 
-        : (moa?.apiKey || m?.apiKey || '');
-
-    return `        - provider: ${itemProv}
-          model: ${resolved.model}
-          base_url: ${itemBaseUrl || finalBaseUrlV1}
-          api_key: ${itemApiKey || finalApiKey}
-          enabled: true`;
-  }).join('\n');
-
-  // Aggregator model resolution
-  let rawAgg = moa?.aggregatorModel || model || 'gemma4-soul:latest';
-  if (rawAgg === 'latest') rawAgg = 'gemma4-soul:latest';
-  if (rawAgg === '16b') rawAgg = 'deepseek-coder-v2:16b';
-
-  let resolvedAgg;
-  if (typeof rawAgg === 'string') {
-    resolvedAgg = parseModelAndProvider(rawAgg, providerMapping, model || 'gemma4-soul:latest');
-  } else {
-    const p = rawAgg.provider || '';
-    const mod = rawAgg.model || model || 'gemma4-soul:latest';
-    if (p && !['custom', 'ollama', 'openrouter', 'openai', 'anthropic', 'gemini'].includes(p)) {
-      resolvedAgg = {
-        provider: 'custom',
-        model: `${p}:${mod}`
-      };
-    } else {
-      resolvedAgg = {
-        provider: (p === 'custom:ollama' || p === 'ollama' || !p) ? 'custom' : p,
-        model: mod === 'latest' ? 'gemma4-soul:latest' : mod === '16b' ? 'deepseek-coder-v2:16b' : mod
-      };
+    // Validate MCP servers if present
+    if (parsed.mcpServers) {
+      if (!Array.isArray(parsed.mcpServers)) {
+        errors.push('MCP servers must be an array');
+      }
     }
+
+    return { isValid: errors.length === 0, errors, warnings };
+  } catch (e) {
+    const errorMsg = e instanceof Error ? e.message : String(e);
+    errors.push(`Parsing error: ${errorMsg}`);
+    return { isValid: false, errors, warnings };
   }
-
-  let aggProv = resolvedAgg.provider;
-  if (aggProv === 'custom:ollama' || aggProv === 'ollama') {
-    aggProv = 'custom';
-  }
-  const aggModel = resolvedAgg.model;
-  const aggBaseUrl = aggProv === 'custom' 
-    ? finalBaseUrlV1 
-    : aggProv === 'openrouter' 
-      ? 'https://openrouter.ai/api/v1' 
-      : aggProv === 'openai' 
-        ? 'https://api.openai.com/v1' 
-        : '';
-  const aggApiKey = aggProv === 'custom' 
-    ? (finalApiKey || 'ollama') 
-    : aggProv === 'openrouter' 
-      ? (moa?.aggregatorApiKey || fb?.apiKey || m?.apiKey || 'env:OPENROUTER_API_KEY') 
-      : (moa?.apiKey || m?.apiKey || '');
-
-  const fbProvider = fb?.provider || fb?.fallbackProvider || 'openrouter';
-  const fbModel = fb?.model || fb?.fallbackModel || 'nex-agi/nex-n2.5-mini:free';
-  const fbApiKey = fb?.apiKey || '';
-  const fbBaseUrl = fb?.baseUrl || 'https://openrouter.ai/api/v1';
-
-  const uniqueMappings = new Map<string, string>();
-  if (aggModel) {
-    uniqueMappings.set(aggModel, aggProv);
-  }
-  rawProposers.forEach((p: any) => {
-    const pName = typeof p === 'string' ? (p === 'latest' ? 'gemma4-soul:latest' : p === '16b' ? 'deepseek-coder-v2:16b' : p) : p?.model || p?.name;
-    if (pName) {
-      const pProv = parseModelAndProvider(pName, providerMapping, 'gemma4-soul:latest').provider;
-      uniqueMappings.set(pName, pProv);
-    }
-  });
-  const providerMappingLines = Array.from(uniqueMappings.entries())
-    .map(([k, v]) => `    ${k}: "${v}"`)
-    .join('\n');
-
-  return `version: "1.0.0"
-agent_id: "${cfg?.agentId || 'hermes-agent'}"
-agent_name: "${sys?.agentName || 'Hermes Code Assistant'}"
-persona: "${sys?.personaName || 'Hermes Prime'}"
-system_preset: "${sys?.preset || 'engineer'}"
-system_prompt: "${(sys?.systemPrompt || 'You are hermes-agent, an autonomous AI assistant.').replace(/"/g, '\\"')}"
-
-model:
-  provider: ${finalProvider}
-  apiKey: "${(finalApiKey || '').replace(/"/g, '\\"')}"
-  temperature: ${m?.temperature ?? 0.3}
-  reasoningEffort: "${m?.reasoningEffort || 'high'}"
-  maxTokens: ${m?.maxTokens ?? 8192}
-  contextWindow: ${m?.contextWindow ?? 200000}
-  baseUrl: "${finalBaseUrl}"
-  topP: ${m?.topP ?? 0.95}
-  default: "${model}"
-  base_url: "${finalBaseUrlV1}"
-
-web:
-  backend: ${web?.backend || 'exa'}
-  provider_tier:
-    exa: ${web?.provider_tier?.exa || 'free'}
-
-fallback:
-  enabled: ${fb?.enabled ?? true}
-  strategy: "${fb?.strategy || 'on_offline'}"
-  target_agent_id: "${fb?.targetAgentId || 'zeroclaw'}"
-  latency_threshold_ms: ${fb?.latencyThresholdMs ?? 3000}
-  provider: "${fbProvider}"
-  model: "${fbModel}"
-  api_key: "${fbApiKey.replace(/"/g, '\\"')}"
-  base_url: "${fbBaseUrl}"
-  use_proxy: ${fb?.useProxy !== false}
-
-channels:
-  telegram:
-    enabled: true
-    bot_token: "env:TELEGRAM_BOT_TOKEN"
-    allowed_users: ["@developer", "@admin"]
-    mode: "polling"
-  discord:
-    enabled: false
-  webhook:
-    enabled: true
-    port: 8080
-    auth_token: "hermes_secret_token_99"
-
-security:
-  sandbox_mode: "${sec?.sandboxMode || 'docker_isolated'}"
-  allowed_directories:
-    - "/workspace"
-    - "/tmp/agent-scratch"
-    - "/var/log/hermes"
-  max_execution_time_sec: ${sec?.maxExecutionTimeSec ?? 120}
-  block_network_access: ${sec?.blockNetworkAccess ?? false}
-  require_approval_for_commands: ${sec?.requireApprovalForCommands ?? false}
-
-storage:
-  memory_backend: "${sto?.memoryBackend || 'everos'}"
-  db_path: "${sto?.dbPath || '/data/everos/memories'}"
-  auto_summarize_interval: ${sto?.autoSummarizeInterval ?? 25}
-  max_history_turns: ${sto?.maxHistoryTurns ?? 100}
-  vector_db_url: "${sto?.vectorDbUrl || 'http://everos:8080'}"
-
-moa:
-  enabled: ${moa?.enabled ?? true}
-  provider_endpoints:
-    custom: "${finalBaseUrl}"
-    ollama: "${finalBaseUrl}"
-    custom:ollama: "${finalBaseUrl}"
-    local-ollama: "${finalBaseUrl}"
-    openrouter: "https://openrouter.ai/api/v1"
-  provider_mapping:
-${providerMappingLines}
-  presets:
-    default:
-      reference_models:
-${referenceModelsList}
-      aggregator:
-        provider: ${aggProv}
-        model: ${aggModel}
-        base_url: ${aggBaseUrl || finalBaseUrlV1}
-        api_key: ${aggApiKey || finalApiKey}
-      degraded_reference_policy: loud
-      fanout: user_turn
-  reference_models:
-${referenceModelsList}
-  aggregator:
-    provider: ${aggProv}
-    model: ${aggModel}
-    base_url: ${aggBaseUrl || finalBaseUrlV1}
-    api_key: ${aggApiKey || finalApiKey}
-  degraded_reference_policy: loud
-  max_tokens: 4096
-  fanout: user_turn
-  rounds: ${moa?.rounds ?? 2}
-  temperature_spread: ${moa?.temperatureSpread ?? 0.3}
-  consensus_threshold: ${moa?.consensusThreshold ?? 0.85}
-
-env:
-${Object.entries(env).map(([k, v]) => `  ${k}: "${v}"`).join('\n')}
-`;
 }
 
 /**
- * Generates a complete, standard zeroclaw.toml for ZeroClaw Agent.
+ * Merges two config objects with defaults.
  */
-export function generateZeroClawToml(cfg: any): string {
-  const m = cfg?.model || {};
-  const sys = cfg?.system || {};
-  const sec = cfg?.security || {};
-  const sto = cfg?.storage || {};
-  const env = cfg?.customEnv || cfg?.env || {};
-  const ch = cfg?.channels || {};
-
-  const model = m.model || 'deepseek-r1';
-  const provider = m.provider || 'deepseek';
-  const apiKey = m.apiKey || '';
-  const baseUrl = m.baseUrl || '';
-  const temperature = m.temperature ?? 0.2;
-  const maxTokens = m.maxTokens ?? 4096;
-  const contextWindow = m.contextWindow ?? 64000;
-
-  let tomlStr = `[agent]
-id = "${cfg?.agentId || 'zeroclaw'}"
-version = "${cfg?.version || '1.0.0'}"
-name = "${sys?.agentName || 'ZeroClaw Edge'}"
-persona = "${sys?.personaName || 'Zero'}"
-
-[daemon]
-port = ${cfg?.port || 8081}
-rust_log = "${env?.RUST_LOG || 'info'}"
-max_ram_mb = ${env?.ZEROCLAW_MAX_RAM_MB || 16}
-unix_socket = "/var/run/zeroclaw.sock"
-
-[model]
-provider = "${provider}"
-model = "${model}"
-temperature = ${temperature}
-max_tokens = ${maxTokens}
-context_window = ${contextWindow}
-`;
-
-  if (apiKey) {
-    tomlStr += `api_key = "${apiKey}"\n`;
-  }
-  if (baseUrl) {
-    tomlStr += `base_url = "${baseUrl}"\n`;
+export function mergeWithDefaultConfig(config: Partial<AgentFullConfig>, defaults: Record<string, any>): Partial<AgentFullConfig> {
+  const result: Partial<AgentFullConfig> = { ...defaults };
+  
+  // Deep merge for nested objects
+  if (config.agentId && defaults.agentId) {
+    result.agentId = config.agentId;
   }
 
-  tomlStr += `
-[system]
-preset = "${sys?.preset || 'edge_assistant'}"
-system_prompt = ${JSON.stringify(sys?.systemPrompt || 'You are ZeroClaw, an ultra-fast, minimal AI assistant running natively in Rust.')}
+  if (config.model && typeof config.model === 'object') {
+    const modelDefaults = defaults.model || {};
+    result.model = { ...modelDefaults, ...config.model };
+  }
 
-[channels.telegram]
-enabled = ${ch?.telegram?.enabled ?? true}
-bot_token = "${ch?.telegram?.botToken || 'env:ZEROCLAW_TELEGRAM_TOKEN'}"
-allowed_users = ${JSON.stringify(ch?.telegram?.allowedUsers || ['@edge_admin'])}
-mode = "${ch?.telegram?.mode || 'polling'}"
+  if (config.agents && typeof config.agents === 'object') {
+    const agentDefaults = defaults.agents || {};
+    result.agents = { ...agentDefaults, ...config.agents };
+  }
 
-[channels.webhook]
-enabled = ${ch?.webhook?.enabled ?? true}
-port = ${ch?.webhook?.port ?? 8081}
-auth_token = "${ch?.webhook?.authToken || 'zeroclaw_auth_key'}"
-
-[security]
-sandbox_mode = "${sec?.sandboxMode || 'docker_isolated'}"
-allowed_directories = ${JSON.stringify(sec?.allowedDirectories || ['/var/zeroclaw/workspace'])}
-max_execution_time_sec = ${sec?.maxExecutionTimeSec ?? 60}
-require_approval_for_commands = ${sec?.requireApprovalForCommands ?? true}
-
-[storage]
-memory_backend = "${sto?.memoryBackend || 'everos'}"
-db_path = "${sto?.dbPath || '/data/everos/memories/zeroclaw'}"
-auto_summarize_interval = ${sto?.autoSummarizeInterval ?? 50}
-max_history_turns = ${sto?.maxHistoryTurns ?? 40}
-vector_db_url = "${sto?.vectorDbUrl || 'http://everos:8080'}"
-`;
-
-  return tomlStr;
+  return result;
 }
