@@ -238,3 +238,97 @@ export const INITIAL_PRESETS: ModelPresetSnapshot[] = [
     }
   }
 ];
+  },
+  {
+    id: 'preset-edge-slm-offline',
+    name: 'Local Edge SLM (Offline)',
+    description: 'Zero external network egress with quantized local models optimized for Sipeed, Raspberry Pi, and edge hardware.',
+    category: 'speed',
+    isBuiltIn: true,
+    createdAt: '2026-09-24T00:00:00.000Z',
+    targetAgentId: 'picoclaw',
+    tags: ['edge', 'offline', 'ollama', 'privacy'],
+    model: {
+      provider: 'ollama',
+      model: 'gemma4-soul:latest',
+      apiKey: '',
+      baseUrl: 'http://localhost:11434',
+      temperature: 0.25,
+      reasoningEffort: 'none',
+      maxTokens: 2048,
+      contextWindow: 16000,
+      topP: 0.85,
+      useProxy: true
+    },
+    moa: {
+      enabled: false,
+      proposerModels: ['gemma4-soul:latest'],
+      aggregatorModel: 'gemma4-soul:latest',
+      rounds: 1,
+      temperatureSpread: 0.1,
+      consensusThreshold: 0.75
+    },
+    fallback: {
+      enabled: false,
+      strategy: 'on_offline',
+      fallbackProvider: 'ollama',
+      fallbackModel: 'llama3.2:3b',
+      provider: 'ollama',
+      model: 'llama3.2:3b',
+      apiKey: '',
+      useProxy: true,
+      targetAgentId: 'openclaw'
+    },
+    system: {
+      preset: 'edge_assistant',
+      systemPrompt: 'You are an embedded edge AI assistant operating on restricted hardware. Keep memory usage low, avoid unnecessary iterations, and reply concisely.',
+      autoFormatCode: true
+    }
+  },
+  {
+    id: 'preset-autonomous-devops',
+    name: 'Autonomous DevOps & Infra',
+    description: 'Specialized for Docker orchestration, CI/CD pipelines, container monitoring, and shell tool execution.',
+    category: 'general',
+    isBuiltIn: true,
+    createdAt: '2026-09-24T00:00:00.000Z',
+    targetAgentId: 'all',
+    tags: ['devops', 'docker', 'infrastructure', 'automation'],
+    model: {
+      provider: 'openai',
+      model: 'gpt-4o',
+      apiKey: '',
+      baseUrl: 'https://api.openai.com/v1',
+      temperature: 0.2,
+      reasoningEffort: 'medium',
+      maxTokens: 4096,
+      contextWindow: 128000,
+      topP: 0.9,
+      useProxy: true
+    },
+    moa: {
+      enabled: false,
+      proposerModels: ['gpt-4o', 'claude-3-5-sonnet'],
+      aggregatorModel: 'gpt-4o',
+      rounds: 2,
+      temperatureSpread: 0.2,
+      consensusThreshold: 0.85
+    },
+    fallback: {
+      enabled: true,
+      strategy: 'on_error',
+      fallbackProvider: 'ollama',
+      fallbackModel: 'llama3.3:70b',
+      provider: 'ollama',
+      model: 'llama3.3:70b',
+      apiKey: '',
+      useProxy: true,
+      targetAgentId: 'openclaw'
+    },
+    system: {
+      preset: 'devops',
+      systemPrompt: 'You are an expert DevOps engineer and Site Reliability Engineer (SRE). Provide robust container manifests, shell commands with sanity checks, and root-cause analysis for infrastructure errors.',
+      autoFormatCode: true
+    }
+  }
+];

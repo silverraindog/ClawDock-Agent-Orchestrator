@@ -320,7 +320,7 @@ export const DEFAULT_CONFIGS: Record<AgentId, AgentFullConfig> = {
     },
     fallback: {
       enabled: false,
-      targetAgentId: 'picoclaw',
+      targetAgentId: 'openclaw',
       strategy: 'on_offline',
       fallbackProvider: 'mistral',
       fallbackModel: 'mistral-7b-instruct',
