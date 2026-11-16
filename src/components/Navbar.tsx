@@ -1,20 +1,4 @@
-  Check,
-  Code2,
-  Sliders,
-  Layers,
-  Sparkles,
-  Search,
-  ArrowUpCircle,
-  Activity,
-  Menu,
-  AlertTriangle,
-  PanelBottom,
-  PanelTop,
-  X,
-  Info,
-  Save,
-  FolderTree
-} from 'lucide-react';
+import { Check, Code2, Sliders, Layers, Sparkles, Search, ArrowUpCircle, Activity, Menu, AlertTriangle, PanelBottom, PanelTop, X, Info, Save, FolderTree } from 'lucide-react';
 import { AgentId, AgentInfo, DockerSystemInfo, SystemUpdateItem } from '../types';
 import { ApiHealthIndicator } from './ApiHealthIndicator';
 import { INITIAL_UPDATES } from './data/updatesData';
@@ -98,4 +82,3 @@ const Navbar: React.FC = () => {
 };
 
 export default Navbar;
-
