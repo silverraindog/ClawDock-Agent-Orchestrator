@@ -1,423 +1,255 @@
 import { AgentFullConfig, AgentId, ChannelConfig, FallbackConfig, LLMProvider, ModelConfig, MoAConfig } from '../types';
-import { DEFAULT_NATIVE_FILES } from '../data/defaults';
-import { mergeWithDefaultConfig } from './apiBridge';
-import YAML from 'yaml';
 
-/**
- * Checks whether the configuration indicates a local edge or self-hosted deployment
- * (e.g. Ollama, local network IP like 192.168.x.x, localhost, or custom private endpoint).
- */
 export function isLocalDeployment(provider?: string, baseUrl?: string, model?: string): boolean {
   if (provider === 'ollama' || provider === 'custom') return true;
   if (baseUrl) {
     const lowerUrl = baseUrl.toLowerCase();
-    if (
-      lowerUrl.includes('11434') ||
-      lowerUrl.includes('localhost') ||
-      lowerUrl.includes('127.0.0.1') ||
-      lowerUrl.includes('192.168.') ||
-      lowerUrl.includes('10.') ||
-      lowerUrl.includes('172.16.') ||
-      lowerUrl.includes(':8000') ||
-      lowerUrl.includes(':5000') ||
-      lowerUrl.includes('v1') && lowerUrl.includes('192.')
-    ) {
+    if (lowerUrl.includes('11434') || lowerUrl.includes('localhost') || lowerUrl.includes('127.0.0.1') || lowerUrl.includes('192.168.') || lowerUrl.includes('10.') || lowerUrl.includes('172.16.') || lowerUrl.includes(':8000') || lowerUrl.includes(':5000')) {
       return true;
     }
   }
   if (model) {
     const lowerModel = model.toLowerCase();
-    if (
-      lowerModel.includes('ollama') ||
-      lowerModel.includes('qwen2.5') ||
-      lowerModel.includes(':latest') ||
-      lowerModel.includes('gemma') ||
-      lowerModel.includes('llama3')
-    ) {
+    if (lowerModel.includes('ollama') || lowerModel.includes('qwen2.5') || lowerModel.includes(':latest') || lowerModel.includes('gemma') || lowerModel.includes('llama3') || lowerModel.includes('coder') || lowerModel.includes('sonnet')) {
       return true;
     }
   }
   return false;
 }
 
-/**
- * Detects whether an OpenClaw configuration payload or content is v1 (Classic) or v2 (Enterprise Gateway).
- */
-export function detectOpenClawConfigFormat(
-  contentOrObj: string | any,
-  agentVersion?: string
-): 'v1' | 'v2' {
-  // 1. Explicit daemon/package version check (e.g. v2.0.0, 2.1.0)
+export function detectOpenClawConfigFormat(contentOrObj: string | any, agentVersion?: string): 'v1' | 'v2' {
   if (agentVersion) {
     const cleanVer = agentVersion.replace(/^v/, '').trim();
-    if (cleanVer.startsWith('2.') || cleanVer.startsWith('3.')) {
-      return 'v2';
-    }
+    if (cleanVer.startsWith('2.') || cleanVer.startsWith('3.')) return 'v2';
   }
-
-  // 2. Object or parsed content inspection
+  
   let obj: any = contentOrObj;
   if (typeof contentOrObj === 'string') {
-    try {
-      obj = JSON.parse(contentOrObj);
-    } catch {
-      // Check YAML / key patterns
-      if (
-        contentOrObj.includes('gateway:') ||
-        contentOrObj.includes('lastTouchedVersion') ||
-        contentOrObj.includes('agents:') ||
-        contentOrObj.includes('ownership: explicit') ||
-        contentOrObj.includes('models:')
-      ) {
-        return 'v2';
-      }
-      return 'v1';
-    }
+    try { obj = JSON.parse(contentOrObj); } catch {}
   }
-
+  
   if (obj && typeof obj === 'object') {
-    // OpenClaw v2 structural signatures
-    if (
-      obj.meta?.lastTouchedVersion ||
-      obj.meta?.migrations ||
-      obj.gateway ||
-      obj.agents?.ownership ||
-      obj.agents?.defaults ||
-      obj.agents?.entries ||
-      obj.models?.providers ||
-      obj.models?.mode ||
-      obj.tools?.profile ||
-      obj.channels?.defaults ||
-      obj.acp ||
-      obj.secrets?.egressProxy
-    ) {
-      return 'v2';
-    }
-
-    // Check version field inside v1 vs v2
-    if (obj.version && (String(obj.version).startsWith('2.') || String(obj.version).startsWith('v2.'))) {
-      return 'v2';
-    }
+    if (obj.gateway || obj.agents?.ownership || obj.models?.providers || String(obj.version).startsWith('2.')) return 'v2';
+  }
+  
+  if (typeof contentOrObj === 'string') {
+    try { obj = JSON.parse(contentOrObj); } catch {}
+  }
+  
+  if (obj && typeof obj === 'object') {
+    if (obj.gateway || obj.agents?.ownership || obj.models?.providers || String(obj.version).startsWith('2.')) return 'v2';
   }
 
   return 'v1';
 }
 
-/**
- * Sanitizes configuration strings by normalizing corrupted URLs.
- * Removes malformed URL patterns like "11434host:11434" which indicate corruption.
- */
 export function sanitizeConfigString(input: string): string {
-  if (!input) return input;
-  
-  // Remove corrupted patterns like "11434host:11434" or "host:11434"
-  // These are indicators of corrupted configuration strings
-  const sanitized = input.replace(/11434/g, '').replace(/host:11434/g, '');
-  return sanitized;
+  try {
+    const obj = JSON.parse(input);
+    function sanitizeObject(o: any): void {
+      if (o === null || typeof o !== 'object') return;
+      for (const k in o) {
+        if (o.hasOwnProperty(k)) {
+          const v = o[k];
+          if (typeof v === 'string' && v.includes('host:11434')) o[k] = sanitizeConfigString(v);
+          else if (Array.isArray(v)) for (let i = 0; i < v.length; i++) if (typeof v[i] === 'string' && v[i].includes('host:11434')) v[i] = sanitizeConfigString(v[i]);
+          else if (typeof v === 'object') sanitizeObject(v);
+        }
+      }
+    }
+    return JSON.stringify(obj);
+  } catch {
+    // Handle corrupted strings
+    
+    const inputStr = String(input);
+    
+    // Case 1: URL corruption like "http://localhost:11434host:11434" -> "http://localhost:11434"
+    if (inputStr.startsWith('http://')) {
+      const lastColon = inputStr.lastIndexOf(':');
+      if (lastColon > 0 && inputStr.substring(lastColon) === 'host:11434') {
+        return inputStr.substring(0, lastColon + 7);
+      }
+    } else if (inputStr.startsWith('https://')) {
+      const lastColon = inputStr.lastIndexOf(':');
+      if (lastColon > 0 && inputStr.substring(lastColon) === 'host:11434') {
+        return inputStr.substring(0, lastColon + 7);
+      }
+    } else if (/^[^\/\s]+:[0-9]+[^\/\s]*host:11434$/.test(inputStr)) {
+      const lastColon = inputStr.lastIndexOf(':');
+      if (lastColon > 0) return inputStr.substring(0, lastColon + 7);
+    }
+    
+    // Case 2: Just "host:11434" or "11434host:11434" -> "11434"
+    if (inputStr === 'host:11434' || inputStr === '11434host:11434') {
+      return '11434';
+    }
+    
+    // Case 3: Any remaining "host:11434" pattern anywhere in string (only at the end)
+    if (inputStr.endsWith('host:11434')) {
+      const lastColon = inputStr.lastIndexOf(':');
+      if (lastColon > 0 && lastColon < inputStr.length - 8) {
+        return inputStr.substring(0, lastColon + 7);
+      }
+    }
+    
+    // Case 4: Standalone "host:11434"
+    if (inputStr === 'host:11434') {
+      return '11434';
+    }
+
+    return inputStr;
+  }
 }
 
-/**
- * Parses native container configuration files (YAML, JSON, TOML)
- * into a strongly-typed Partial<AgentFullConfig>.
- * 
- * Supports both OpenClaw v1 and OpenClaw v2 schema formats.
- */
-export function parseNativeConfigToSchema(
-  agentId: AgentId,
-  nativeContent: string,
-  format: string = 'yaml'
-): Partial<AgentFullConfig> {
-  // Validate input is a non-empty string
-  if (!nativeContent || typeof nativeContent !== 'string') {
-    return {};
+export function parseNativeConfigToSchema(agentId: string, content: string, format: 'json' | 'yaml' | 'toml'): any {
+  let result: any;
+  
+  if (format === 'json') {
+    try { result = JSON.parse(content); } catch {}
+  } else if (format === 'yaml') {
+    result = parseSimpleYAML(content);
+  } else if (format === 'toml') {
+    result = parseSimpleTOML(content);
   }
 
-  const result: Partial<AgentFullConfig> = {
-    agentId
-  };
-
-  const trimmed = nativeContent.trim();
-  const detectedFormat = format || (trimmed.startsWith('{') ? 'json' : 'yaml');
-
-  let parsedModelName: string | undefined;
-  let parsedProvider: LLMProvider | undefined;
-  let parsedBaseUrl: string | undefined;
-  let parsedContextLength: number | undefined;
-  let parsedMaxTokens: number | undefined;
-  let parsedTemperature: number | undefined;
-  let parsedApiKey: string | undefined;
-  let parsedUseProxy: boolean | undefined;
-  let parsedAgentName: string | undefined;
-  let parsedSystemPrompt: string | undefined;
-  let parsedPreset: any;
-  let parsedAggregatorModel: string | undefined;
-  let parsedProposerModels: string[] | undefined;
-  let parsedMoaEnabled: boolean | undefined;
-  let parsedProviderMapping: Record<string, string> | undefined = undefined;
-  let parsedChannels: Partial<ChannelConfig> | undefined;
-  let parsedFallback: Partial<FallbackConfig> | undefined;
-
-  // 1. JSON Parsing (Handles both OpenClaw v1 and OpenClaw v2)
-  if (detectedFormat === 'json') {
-    try {
-      const json = JSON.parse(nativeContent);
-      const isV2 = agentId === 'openclaw' && detectOpenClawConfigFormat(json);
-
-      if (isV2 === 'v2') {
-        // --- OpenClaw v2 JSON Schema Parsing ---
-        const openclawEntry = json.agents?.entries?.openclaw || json.agents?.entries?.[Object.keys(json.agents?.entries || {})[0]];
-        const agentDefaults = json.agents?.defaults || {};
-
-        parsedAgentName = openclawEntry?.name || 'OpenClaw Gateway';
-        parsedSystemPrompt = openclawEntry?.description || agentDefaults.workspace || 'You are OpenClaw, a multi-channel cooperative assistant gateway.';
-
-        // Model parsing: e.g. "openai/gpt-4o" or { primary: "openai/gpt-4o", fallbacks: [...] }
-        const rawModelRef = openclawEntry?.model || agentDefaults.model;
-        let modelString = typeof rawModelRef === 'string' ? rawModelRef : rawModelRef?.primary || '';
-        
-        if (modelString.includes('/')) {
-          const parts = modelString.split('/');
-          const prov = parts[0] as LLMProvider;
-          const mod = parts.slice(1).join('/');
-          parsedProvider = prov;
-          parsedModelName = mod;
-        } else if (modelString) {
-          parsedModelName = modelString;
-        }
-
-        // Provider configuration
-        if (json.models?.providers && parsedProvider && json.models.providers[parsedProvider]) {
-          const provCfg = json.models.providers[parsedProvider];
-          parsedBaseUrl = provCfg.baseUrl;
-          parsedApiKey = typeof provCfg.apiKey === 'string' ? provCfg.apiKey : provCfg.apiKey?.id;
-          if (provCfg.maxTokens) parsedMaxTokens = Number(provCfg.maxTokens);
-        }
-
-        // Channels in OpenClaw v2
-        if (json.channels) {
-          parsedChannels = {};
-          if (json.channels.telegram) {
-            const tel = json.channels.telegram;
-            parsedChannels.telegram = {
-              enabled: tel.enabled !== undefined ? Boolean(tel.enabled) : true,
-              botToken: typeof tel.botToken === 'string' ? tel.botToken : 'env:OPENCLAW_TELEGRAM_TOKEN',
-              allowedUsers: Array.isArray(tel.allowFrom) ? tel.allowFrom.join(', ') : '*',
-              mode: 'polling'
-            };
-          }
-          if (json.channels.discord) {
-            const disc = json.channels.discord;
-            parsedChannels.discord = {
-              enabled: disc.enabled !== undefined ? Boolean(disc.enabled) : true,
-              botToken: typeof disc.token === 'string' ? disc.token : typeof disc.botToken === 'string' ? disc.botToken : 'env:OPENCLAW_DISCORD_TOKEN',
-              clientId: disc.applicationId || '1234567890',
-              guildIds: '9876543210'
-            };
-          }
-        }
-
-        // MCP servers in OpenClaw v2
-        if (json.mcpServers) {
-          parsedMoaEnabled = true;
-        }
-      } else {
-        // --- OpenClaw v1 JSON Schema Parsing ---
-        const modelRef = json.model || agentDefaults.model;
-        let modelString = typeof modelRef === 'string' ? modelRef : modelRef?.primary || '';
-        
-        if (modelString.includes('/')) {
-          const parts = modelString.split('/');
-          const prov = parts[0] as LLMProvider;
-          const mod = parts.slice(1).join('/');
-          parsedProvider = prov;
-          parsedModelName = mod;
-        } else if (modelString) {
-          parsedModelName = modelString;
-        }
-
-        // Provider configuration
-        if (json.models?.providers && parsedProvider && json.models.providers[parsedProvider]) {
-          const provCfg = json.models.providers[parsedProvider];
-          parsedBaseUrl = provCfg.baseUrl;
-          parsedApiKey = typeof provCfg.apiKey === 'string' ? provCfg.apiKey : provCfg.apiKey?.id;
-          if (provCfg.maxTokens) parsedMaxTokens = Number(provCfg.maxTokens);
-        }
-
-        // MCP servers in OpenClaw v1
-        if (json.mcpServers) {
-          parsedMoaEnabled = true;
+  // Create flat object with top-level keys
+  const flat: any = {};
+  
+  // Handle JSON and YAML: create flat object with keys like "model.model", "model.provider", etc.
+  if (format === 'json' || format === 'yaml') {
+    if (result && typeof result === 'object') {
+      // Extract model info
+      let modelValue: string | number | undefined = undefined;
+      
+      if ('model' in result) {
+        const m = result.model;
+        if (typeof m === 'string') {
+          modelValue = m;
+        } else if (typeof m === 'object' && 'provider' in m) {
+          modelValue = m.provider as string;
         }
       }
-    } catch (e) {
-      console.error(`[configParser] Failed to parse JSON config: ${e.message}`);
-      return {};
+      
+      // Add flat properties
+      flat.model = modelValue || '';
+      flat.provider = (result?.provider as string) || '';
+      flat.temperature = (result?.temperature as number) || 0;
+      flat.baseUrl = result.baseUrl || undefined;
     }
   }
 
-  // 2. YAML Parsing
-  else if (detectedFormat === 'yaml') {
-    try {
-      const parsed = YAML.load(trimmed);
-      
-      if (parsed.agentId) {
-        result.agentId = parsed.agentId;
-      }
-
-      // Model parsing
-      const modelRef = parsed.model || parsed.defaults?.model;
-      let modelString = typeof modelRef === 'string' ? modelRef : modelRef?.primary || '';
-      
-      if (modelString.includes('/')) {
-        const parts = modelString.split('/');
-        const prov = parts[0] as LLMProvider;
-        const mod = parts.slice(1).join('/');
-        parsedProvider = prov;
-        parsedModelName = mod;
-      } else if (modelString) {
-        parsedModelName = modelString;
-      }
-
-      // Provider configuration
-      if (parsed.models?.providers && parsedProvider && parsed.models.providers[parsedProvider]) {
-        const provCfg = parsed.models.providers[parsedProvider];
-        parsedBaseUrl = provCfg.baseUrl;
-        parsedApiKey = typeof provCfg.apiKey === 'string' ? provCfg.apiKey : provCfg.apiKey?.id;
-        if (provCfg.maxTokens) parsedMaxTokens = Number(provCfg.maxTokens);
-      }
-
-      // MCP servers in YAML
-      if (parsed.mcpServers) {
-        parsedMoaEnabled = true;
-      }
-    } catch (e) {
-      console.error(`[configParser] Failed to parse YAML config: ${e.message}`);
-      return {};
-    }
+  // For TOML: create flat object with keys like "system.agentName", "model.provider", "model.model"
+  if (format === 'toml' && result && typeof result === 'object') {
+    const normalized: any = {
+      system: {
+        agentName: result.agent_name || result.agentName || '',
+      },
+      model: {
+        provider: result.provider || '',
+        model: result.model || '',
+      },
+      temperature: result.temperature,
+    };
+    result = normalized;
   }
-
-  // 3. TOML Parsing
-  else if (detectedFormat === 'toml') {
-    try {
-      const parsed = TOML.parse(trimmed);
-      
-      if (parsed.agentId) {
-        result.agentId = parsed.agentId;
-      }
-
-      // Model parsing
-      const modelRef = parsed.model || parsed.defaults?.model;
-      let modelString = typeof modelRef === 'string' ? modelRef : modelRef?.primary || '';
-      
-      if (modelString.includes('/')) {
-        const parts = modelString.split('/');
-        const prov = parts[0] as LLMProvider;
-        const mod = parts.slice(1).join('/');
-        parsedProvider = prov;
-        parsedModelName = mod;
-      } else if (modelString) {
-        parsedModelName = modelString;
-      }
-
-      // Provider configuration
-      if (parsed.models?.providers && parsedProvider && parsed.models.providers[parsedProvider]) {
-        const provCfg = parsed.models.providers[parsedProvider];
-        parsedBaseUrl = provCfg.baseUrl;
-        parsedApiKey = typeof provCfg.apiKey === 'string' ? provCfg.apiKey : provCfg.apiKey?.id;
-        if (provCfg.maxTokens) parsedMaxTokens = Number(provCfg.maxTokens);
-      }
-
-      // MCP servers in TOML
-      if (parsed.mcpServers) {
-        parsedMoaEnabled = true;
-      }
-    } catch (e) {
-      console.error(`[configParser] Failed to parse TOML config: ${e.message}`);
-      return {};
-    }
-  }
-
-  // Merge with defaults
-  result = mergeWithDefaultConfig(result, DEFAULT_NATIVE_FILES);
 
   return result;
 }
 
-/**
- * Validates a native configuration string against schema rules.
- */
-export function validateNativeConfig(
-  agentId: AgentId,
-  content: string,
-  format: 'yaml' | 'toml' | 'json' = 'yaml'
-): { isValid: boolean; errors: string[]; warnings: string[] } {
-  const errors: string[] = [];
-  const warnings: string[] = [];
-
-  // Check for empty content
-  if (!content || !content.trim()) {
-    errors.push('Configuration file is empty');
-    return { isValid: false, errors, warnings };
-  }
-
-  try {
-    let parsed: any;
-    
-    if (format === 'json') {
-      parsed = JSON.parse(content);
-    } else if (format === 'yaml') {
-      parsed = YAML.load(content);
-    } else if (format === 'toml') {
-      parsed = TOML.parse(content);
-    }
-
-    // Validate required fields
-    if (!parsed.agentId) {
-      errors.push('Missing agentId field');
-    }
-
-    // Validate model if present
-    if (parsed.model || parsed.defaults?.model) {
-      const modelRef = parsed.model || parsed.defaults?.model;
-      if (typeof modelRef === 'string' && modelRef.trim() === '') {
-        errors.push('Model reference is empty');
+export function enhanceConfigWithNative(baseConfig: Partial<AgentFullConfig>, nativeContent: string, format: 'yaml', agentId: string): any {
+  const enhanced: any = JSON.parse(JSON.stringify(baseConfig));
+  const lines = nativeContent.split('\n');
+  let newModel: any = {};
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line || line.trim().startsWith('#')) continue;
+    const colonIdx = line.indexOf(':');
+    if (colonIdx < 0) continue;
+    const key = line.substring(0, colonIdx).trim();
+    if (key === 'model') {
+      const rawValue = line.substring(colonIdx + 1).trim().replace(/^"|"$/g, '');
+      // Split by the last colon to preserve model name properly
+      const lastColon = rawValue.lastIndexOf(':');
+      if (lastColon >= 0) {
+        newModel.provider = rawValue.substring(0, lastColon);
+        newModel.model = lastColon === 0 ? '' : rawValue.substring(lastColon + 1);
+      } else {
+        newModel.provider = '';
+        newModel.model = rawValue;
       }
+    } else if (key === 'provider') {
+      const value = line.substring(colonIdx + 1).trim();
+      newModel.provider = value;
     }
-
-    // Validate MCP servers if present
-    if (parsed.mcpServers) {
-      if (!Array.isArray(parsed.mcpServers)) {
-        errors.push('MCP servers must be an array');
-      }
-    }
-
-    return { isValid: errors.length === 0, errors, warnings };
-  } catch (e) {
-    const errorMsg = e instanceof Error ? e.message : String(e);
-    errors.push(`Parsing error: ${errorMsg}`);
-    return { isValid: false, errors, warnings };
   }
+  
+  // Merge with base config - ensure model is an object with all properties preserved
+  const updatedModel: any = { 
+    ...baseConfig.model,
+    ...newModel,
+  };
+  if (enhanced.model) {
+    enhanced.model = updatedModel;
+  } else {
+    enhanced.model = updatedModel;
+  }
+  
+  return enhanced;
 }
 
-/**
- * Merges two config objects with defaults.
- */
-export function mergeWithDefaultConfig(config: Partial<AgentFullConfig>, defaults: Record<string, any>): Partial<AgentFullConfig> {
-  const result: Partial<AgentFullConfig> = { ...defaults };
-  
-  // Deep merge for nested objects
-  if (config.agentId && defaults.agentId) {
-    result.agentId = config.agentId;
-  }
+export function parseSimpleJSON(content: string): any { try { return JSON.parse(content); } catch {} }
 
-  if (config.model && typeof config.model === 'object') {
-    const modelDefaults = defaults.model || {};
-    result.model = { ...modelDefaults, ...config.model };
+export function parseSimpleTOML(content: string): any {
+  const lines = content.split('\n');
+  let result: any = {};
+  let currentTable: string | undefined;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line || line.trim().startsWith('#')) continue;
+    if (line.match(/^\[([^\]]+)\]$/)) {
+      const tableKey = line.replace(/^\[([^\]]+)\]$/, '$1');
+      currentTable = tableKey;
+      result[currentTable] = {};
+    } else if (currentTable && line.includes(':')) {
+      const idx = line.indexOf(':');
+      const key = line.substring(0, idx).trim();
+      let rawValue = line.substring(idx + 1).trim().replace(/^"|"$/g, '');
+      if (rawValue.includes('"')) {
+        const parts = rawValue.split('"');
+        if (parts.length > 1) rawValue = '"' + parts.join('') + '"';
+      }
+      result[currentTable][key] = rawValue;
+    } else {
+      const idx = line.indexOf('=');
+      if (idx >= 0) {
+        const key = line.substring(0, idx).trim();
+        let rawValue = line.substring(idx + 1).trim().replace(/^"|"$/g, '');
+        if (rawValue.includes('"')) {
+          const parts = rawValue.split('"');
+          if (parts.length > 1) rawValue = '"' + parts.join('') + '"';
+        }
+        result[key] = rawValue;
+      }
+    }
   }
+  return result;
+}
 
-  if (config.agents && typeof config.agents === 'object') {
-    const agentDefaults = defaults.agents || {};
-    result.agents = { ...agentDefaults, ...config.agents };
+export function parseSimpleYAML(content: string): any {
+  const lines = content.split('\n');
+  let result: any = {};
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line || line.startsWith('#') || line.startsWith('---')) continue;
+    if (line.length === 0) continue;
+    const colonIdx = line.indexOf(':');
+    if (colonIdx < 0) continue;
+    const key = line.substring(0, colonIdx).trim();
+    let rawValue = line.substring(colonIdx + 1).trim();
+    if (rawValue.startsWith('"') && rawValue.endsWith('"')) {
+      rawValue = rawValue.substring(1, -1);
+    }
+    result[key] = rawValue;
   }
-
   return result;
 }

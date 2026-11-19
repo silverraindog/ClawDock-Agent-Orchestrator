@@ -329,31 +329,7 @@ export const ModelSelectionPanel = ({ models }: { models: LLMProvider[] }) => {
   );
 };
 
-export const DEFAULT_CONFIGS: Record<string, any> = {
-  zeroclaw: {
-    agentId: 'zeroclaw',
-    name: 'Zero Claw',
-    tagline: 'Automated AI infrastructure',
-    framework: 'Agent Framework',
-    language: 'TypeScript',
-    defaultPort: 8080,
-    dockerImage: '',
-    status: 'stopped',
-    containerId: undefined,
-    containerName: undefined,
-    version: '1.0.0',
-    memoryUsageMb: 0,
-    cpuUsagePct: 0,
-    uptimeSeconds: 0,
-    uptimeHistory: [],
-    latencyHistory: [],
-    avgLatencyMs: 0,
-    description: '',
-    capabilities: [],
-    docsUrl: '',
-    repoUrl: ''
-  }
-};
+
 
 export const DEFAULT_NATIVE_FILES = {
   agentConfig: 'agent_config.yaml',

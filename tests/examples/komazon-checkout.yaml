@@ -1,0 +1,10 @@
+test-id: t_packer-staff-asha-lak-spill-usher-pele-allen-bid-done
+name: Komazon checkout journey
+target: komazon
+steps:
+  - Add Everyday Ceramic Mug to the bag, then open the shopping bag and verify it holds one Everyday Ceramic Mug.
+  - Continue to checkout. Sign in with email alex@example.com and password {{secret:KOMAZON_PASSWORD}}, then verify the shipping step is shown.
+  - Enter street address 24 Cedar Lane, city Portland and postal code 97205. Continue to delivery.
+  - Select Express delivery and continue with Review order. Verify the review shows one Everyday Ceramic Mug, the entered address, Express delivery and a total of $36.00.
+  - Place the order using Place order · $36.00. Verify Order confirmed and that the bag is empty.
+  - Open View orders. Verify Order FW-1001 contains one Everyday Ceramic Mug and the $36.00 total.

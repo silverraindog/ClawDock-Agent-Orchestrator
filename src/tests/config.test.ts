@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { AgentFullConfig, AgentId } from '../types';
-import { DEFAULT_CONFIGS } from '../data/defaults';
+export { DEFAULT_CONFIGS } from '../data/defaults';
+  
+
 
 describe('Config State Persistence and handleSaveConfig Unit Tests', () => {
   let mockConfigs: Record<AgentId, AgentFullConfig>;

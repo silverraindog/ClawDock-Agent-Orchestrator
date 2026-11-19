@@ -1,0 +1,92 @@
+# The project settings agent-qa reads for every command run in this folder.
+# Docs: https://vostride.com/docs/agent-qa/
+
+# File discovery and project settings
+workspace:
+  testMatch:
+    - tests/**/*.yaml
+  suiteMatch:
+    - suites/**/*.suite.yaml
+  hooksFile: hooks.yaml
+  envFile: .env
+  secretsFile: .env.secrets.local
+  # Its values are shown as [secret:<name>] and never restored; nothing else is masked.
+  # Optional: ignore archived or generated tests.
+  # testPathIgnore:
+  #   - tests/archive/**/*.yaml
+
+# Infrastructure services (dashboard, cache, auth state, logging)
+services:
+  dashboard:
+    port: 3470
+    artifactsDir: .agent-qa/artifacts
+    # Optional: persist dashboard state to a custom SQLite path.
+    # dbPath: .agent-qa/dashboard.sqlite
+  cache:
+    dir: .agent-qa/cache
+  authState:
+    dir: .agent-qa/auth-states
+  vision:
+    screenshotSize: 256k
+    effectiveResolution: 768
+  # Accessibility checks run once at the end of each test; results show in the dashboard's run detail.
+  accessibility:
+    enabled: true
+    standard: wcag2aa
+    runAfter: test-end
+    failOnViolation: false
+  recording:
+    enabled: true
+  logging:
+    level: warn
+
+# Committed knowledge root (optional block; these defaults apply when absent)
+# knowledge:
+#   dir: agent-qa-knowledge
+
+# Named resource definitions (LLM configs, app targets)
+registry:
+  # Optional: devices, described by what people call them. agent-qa finds them on this machine.
+  # devices:
+  #   android-emulator-pixel-8-15:
+  #     platform: android
+  #     model: Pixel 8
+  #     os: "15"
+  targets:
+    # Optional: add more web or mobile targets here.
+    # my-mobile:
+    #   platform: android
+    #   appPackage: com.example.app
+    #   appActivity: .MainActivity
+    #   app:
+    #     path: app-bundles/example.apk
+    #   device: android-emulator-pixel-8-15 # its tests run here unless a suite or test sets use.device
+    komazon:
+      platform: web
+      url: https://playground.vostride.dev/shop/
+    komazon-cart-total-bug:
+      platform: web
+      url: https://playground.vostride.dev/shop/?bug=cart-total
+
+# Execution settings (cascades: global -> suite -> test -> CLI flags)
+use:
+  browser:
+    name: chromium
+    headless: true
+    viewport:
+      width: 1280
+      height: 720
+  timeout:
+    step: 20m
+    test: 90m
+    navigation: 2m
+  # Per-step limits: maxActions (actions) and maxPlanningTurns (planner calls); a step that needs more stops with the limit reason
+  planner:
+    maxActions: 30
+    maxPlanningTurns: 30
+    previousStepCount: 5
+  logCapture:
+    console: true
+    network: true
+  parallel: false
+

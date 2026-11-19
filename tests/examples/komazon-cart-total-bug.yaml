@@ -1,0 +1,6 @@
+test-id: t_reduce-eva-elding-reset-lai-iban-rum-hin-parent-chang
+name: "[Bug] Komazon cart total is wrong for two mugs"
+target: komazon-cart-total-bug
+steps:
+  - Add Everyday Ceramic Mug to the bag, open the bag and increase its quantity to two.
+  - Verify the order total is $53.00.

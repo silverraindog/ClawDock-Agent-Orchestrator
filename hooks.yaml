@@ -1,0 +1,7 @@
+hooks:
+  - id: h_phi-arts-vis-band-aira-streng-twig-roi-mino-fold
+    name: Make a shipping address
+    runtime: node
+    file: scripts/examples/make-shipping-address.mjs
+    timeout: 30s
+    network: false

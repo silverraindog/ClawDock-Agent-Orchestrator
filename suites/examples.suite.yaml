@@ -1,0 +1,10 @@
+suite-id: s_dice-ego-veer-warp-ionic-trying-tur-cal-stride-battle
+name: Komazon examples
+target: komazon
+tests:
+  - test: tests/examples/komazon-bag.yaml
+    id: t_and-pond-adder-only-client-mico-vier-placer-buds-disk
+  - test: tests/examples/komazon-search.yaml
+    id: t_jump-tier-lop-urger-car-ido-fell-abele-basket-stress
+  - test: tests/examples/komazon-checkout.yaml
+    id: t_packer-staff-asha-lak-spill-usher-pele-allen-bid-done

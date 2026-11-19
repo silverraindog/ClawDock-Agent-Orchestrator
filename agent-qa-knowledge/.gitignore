@@ -1,0 +1,14 @@
+# agent-qa-knowledge/.gitignore
+memory/index/
+memory/queue/
+memory/*/bundles/.staging/
+.lease
+.epoch
+.writer-authority.sqlite*
+# binary blobs; artifact inventories are committed and live OUTSIDE artifacts/
+**/artifacts/
+skills/.staging/
+# INIT-TOOL OPERATIONAL — outside the committed/derived split above. agent-qa init publishes
+# every file through a temporary sibling that carries the destination's own content; this
+# keeps that temporary out of a commit even when this tree is its own repository.
+.*.agent-qa-init-*.tmp

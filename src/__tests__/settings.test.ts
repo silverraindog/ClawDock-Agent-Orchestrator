@@ -21,7 +21,8 @@ describe('Agent Settings & Persistence Unit Tests', () => {
     const result = validatePersistenceSchema(mockPersistence);
     expect(result.isValid).toBe(false);
     expect(result.mismatches.length).toBeGreaterThan(0);
-    expect(result.validatedConfigs.configs['zeroclaw'].model).toBeDefined();
+    // Verify that validated configs still has the structure even with mismatches
+    expect(result.validatedConfigs?.configs?.zeroclaw?.model).toBeDefined();
   });
 
   it('should validate valid persistence schema successfully', () => {

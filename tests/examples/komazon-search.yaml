@@ -1,0 +1,8 @@
+test-id: t_jump-tier-lop-urger-car-ido-fell-abele-basket-stress
+name: Komazon search and clear filters
+target: komazon
+steps:
+  - On the Shop page, search products for impossiblexyz.
+  - Verify the heading "No products found" is shown.
+  - Click Clear filters in the No products found message.
+  - Verify "Everyday Ceramic Mug" is listed.

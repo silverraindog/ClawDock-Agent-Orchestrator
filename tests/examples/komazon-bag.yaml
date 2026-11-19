@@ -1,0 +1,8 @@
+test-id: t_and-pond-adder-only-client-mico-vier-placer-buds-disk
+name: Komazon bag and free shipping
+target: komazon
+steps:
+  - On the Shop page, add Arc Table Lamp and Linen Hardcover Notebook to the bag, then open the bag.
+  - Verify shipping is Free and the order total is $107.00.
+  - Remove Arc Table Lamp and Linen Hardcover Notebook from the bag.
+  - Verify the heading "Your bag is empty" is shown.

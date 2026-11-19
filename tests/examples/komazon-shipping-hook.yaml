@@ -1,0 +1,12 @@
+test-id: t_ayin-dual-chunk-lou-tablet-ticket-brace-lak-kite-abu
+name: "[Hook] Komazon checkout with a shipping address from a hook"
+target: komazon
+setup:
+  - h_phi-arts-vis-band-aira-streng-twig-roi-mino-fold
+use:
+  cache: false
+steps:
+  - Add Everyday Ceramic Mug to the bag, then open the shopping bag and verify it holds one Everyday Ceramic Mug.
+  - Continue to checkout. Sign in with email alex@example.com and password {{secret:KOMAZON_PASSWORD}}, then verify the shipping step is shown.
+  - Type {{env:SHIPPING_ADDRESS}} into the Street address field, enter city Portland and postal code 97205, then continue to delivery.
+  - Select Express delivery and continue with Review order. Verify the review shows {{env:SHIPPING_ADDRESS}} as the street address.

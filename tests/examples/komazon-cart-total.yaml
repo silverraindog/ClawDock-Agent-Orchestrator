@@ -1,0 +1,6 @@
+test-id: t_coop-cling-upo-prest-nid-ghan-was-went-ife-imine
+name: Komazon cart total
+target: komazon
+steps:
+  - Add Everyday Ceramic Mug to the bag, open the bag and increase its quantity to two.
+  - Verify the order total is $53.00.

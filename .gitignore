@@ -18,3 +18,14 @@ ENV/
 env.bak/
 venv.bak/
 .pytest_cache/
+
+# agent-qa init:start
+# Runtime, credential, dependency, and local-only paths managed by agent-qa init.
+.agent-qa/
+.agent-qa/auth-states/
+tests/.agent-qa-drafts/
+node_modules/
+.env
+.env.secrets.local
+.*.agent-qa-init-*.tmp
+# agent-qa init:end
