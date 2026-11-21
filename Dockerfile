@@ -10,7 +10,7 @@
 FROM node:22-bookworm-slim AS frontend-builder
 
 # Install build dependencies: Python, compilers (build-essential), and utility tools (pkg-config)
-RUN apt-get update && apt-get install -y python3 build-essential libssl-dev libffi-dev procps pkg-config libtool autotools-dev && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y python3 build-essential libssl-dev libffi-dev procps pkg-config libtool autotools-dev zlib1g-dev && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
