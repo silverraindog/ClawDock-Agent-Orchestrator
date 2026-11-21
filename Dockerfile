@@ -9,8 +9,8 @@
 # ------------------------------------------------------------------------------
 FROM node:22-bookworm-slim AS frontend-builder
 
-# Install build dependencies required by node-gyp for native module compilation
-RUN apt-get update && apt-get install -y python3 build-essential libssl-dev libffi-dev procps && rm -rf /var/lib/apt/lists/*
+# Install build dependencies: Python, compilers (build-essential), and utility tools (pkg-config)
+RUN apt-get update && apt-get install -y python3 build-essential libssl-dev libffi-dev procps pkg-config libtool autotools-dev && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
@@ -24,7 +24,7 @@ RUN (which esbuild >/dev/null 2>&1 && rm -f "$(which esbuild)" || true) \
     && rm -f /app/node_modules/tsx/node_modules/esbuild/bin/esbuild \
     && rm -rf /app/node_modules/esbuild /app/node_modules/@esbuild /app/node_modules/tsx/node_modules/esbuild /tmp/* /root/.npm/_cacache 2>/dev/null || true
 
-# Install frontend dependencies (This step now has Python/build-essential available)
+# Install frontend dependencies (This step now has Python/build-essential/pkg-config available)
 RUN npm install --legacy-peer-deps
 
 # Copy source code and build Vite bundle
