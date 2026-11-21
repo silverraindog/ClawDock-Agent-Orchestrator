@@ -1,5 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-export { DEFAULT_CONFIGS } from '../data/defaults';
+import { describe, it, expect, beforeEach } from 'vitest';
+import { DEFAULT_CONFIGS } from '../data/defaults';
+import { AgentFullConfig, AgentId } from '../types';
   
 
 

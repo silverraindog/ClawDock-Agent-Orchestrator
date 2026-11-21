@@ -1,5 +1,5 @@
-import { Check, Code2, Sliders, Layers, Sparkles, Search, ArrowUpCircle, Activity } from 'lucide-react';
-import { useState } from 'react';
+import React from 'react';
+import { Code2, Search } from 'lucide-react';
 
 interface LoginFormHeaderProps {
   title: string;
