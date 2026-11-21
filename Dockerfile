@@ -1,13 +1,17 @@
-# ==============================================================================
+# =============================================================================
 # ClawDock Agent Orchestrator - Production Multi-Stage Dockerfile
 # Stage 1: Build the Modern Sleek React Web UI (Vite + Tailwind CSS)
 # Stage 2: Python 3.11 Runtime with Docker Engine CLI & Socket Bridge
-# ==============================================================================
+# =============================================================================
 
 # ------------------------------------------------------------------------------
 # Stage 1: Frontend Builder
 # ------------------------------------------------------------------------------
 FROM node:22-bookworm-slim AS frontend-builder
+
+# Install build dependencies required by node-gyp for native module compilation
+RUN apt-get update && apt-get install -y python3 build-essential libssl-dev libffi-dev procps && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 # Copy package manifests
@@ -20,7 +24,7 @@ RUN (which esbuild >/dev/null 2>&1 && rm -f "$(which esbuild)" || true) \
     && rm -f /app/node_modules/tsx/node_modules/esbuild/bin/esbuild \
     && rm -rf /app/node_modules/esbuild /app/node_modules/@esbuild /app/node_modules/tsx/node_modules/esbuild /tmp/* /root/.npm/_cacache 2>/dev/null || true
 
-# Install frontend dependencies
+# Install frontend dependencies (This step now has Python/build-essential available)
 RUN npm install --legacy-peer-deps
 
 # Copy source code and build Vite bundle
@@ -60,7 +64,7 @@ RUN install -m 0755 -d /etc/apt/keyrings && \
     curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg && \
     chmod a+r /etc/apt/keyrings/docker.gpg && \
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian \
-    $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null && \
+$(. /etc/os-release && echo "$VERSION_CODENAME") stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null && \
     apt-get update && apt-get install -y --no-install-recommends \
     docker-ce-cli \
     docker-compose-plugin \
