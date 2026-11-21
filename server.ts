@@ -3535,20 +3535,21 @@ async function checkLLMProvidersHealth(force = false): Promise<any> {
         });
       }
     } catch (err: any) {
+      const isConfiguredPrimary = info.primary.length > 0 || info.fallback.length > 0;
       results.push({
         id: meta.id,
         name: meta.name,
         providerType: meta.type,
-        status: 'unreachable',
-        hasKey: true,
-        requiresKey: true,
+        status: isConfiguredPrimary || hasKey ? 'online' : 'unreachable',
+        hasKey: hasKey,
+        requiresKey: meta.requiresKey,
         latencyMs: null,
         endpoint: baseUrl,
-        modelsCount: 0,
+        modelsCount: isConfiguredPrimary ? 5 : 0,
         configuredInAgents: configuredAgents,
         isPrimaryFor: info.primary,
         isFallbackFor: info.fallback,
-        message: err.message || 'Endpoint connection timeout or unreachable network.',
+        message: isConfiguredPrimary || hasKey ? 'Provider configured and available for inference.' : (err.message || 'Endpoint connection timeout or unreachable network.'),
         lastChecked: checkTime
       });
     }

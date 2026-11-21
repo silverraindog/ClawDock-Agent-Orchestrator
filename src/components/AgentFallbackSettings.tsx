@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Server, 
   Layers, 
@@ -15,9 +15,12 @@ import {
   ArrowRight, 
   ShieldCheck, 
   HelpCircle,
-  HardDrive
+  HardDrive,
+  Search,
+  Database
 } from 'lucide-react';
 import { AgentFullConfig, AgentId } from '../types';
+import { fetchProxyModels } from '../utils/apiBridge';
 
 export interface ProviderAliasOption {
   id: string;
@@ -138,6 +141,9 @@ export const AgentFallbackSettings: React.FC<AgentFallbackSettingsProps> = ({
   const [newProposerInput, setNewProposerInput] = useState('');
   const [selectedNewAlias, setSelectedNewAlias] = useState('local-ollama');
   const [showEndpointOverrides, setShowEndpointOverrides] = useState(false);
+  const [liveModelsMap, setLiveModelsMap] = useState<Record<string, Array<{ value: string; label: string; tag?: string }>>>({});
+  const [loadingAlias, setLoadingAlias] = useState<Record<string, boolean>>({});
+
   const [customEndpointUrls, setCustomEndpointUrls] = useState<Record<string, string>>({
     'local-ollama': config.model.baseUrl || 'http://192.168.1.49:11434',
     'local-vllm': 'http://127.0.0.1:8000/v1',
@@ -164,6 +170,32 @@ export const AgentFallbackSettings: React.FC<AgentFallbackSettingsProps> = ({
     ...(config.providerMapping || {})
   };
 
+  const getResolvedUrl = (aliasId: string): string => {
+    if (customEndpointUrls[aliasId]) return customEndpointUrls[aliasId];
+    const found = PROVIDER_ALIASES.find(a => a.id === aliasId);
+    return found?.defaultBaseUrl || 'http://localhost:8080';
+  };
+
+  const queryLiveModelsForAlias = async (aliasId: string) => {
+    setLoadingAlias(prev => ({ ...prev, [aliasId]: true }));
+    try {
+      const url = getResolvedUrl(aliasId);
+      const res = await fetchProxyModels(url, aliasId, config.model.apiKey, agentId);
+      if (res.success && res.models.length > 0) {
+        setLiveModelsMap(prev => ({ ...prev, [aliasId]: res.models }));
+      }
+    } catch (err) {
+      console.error('Failed to query live models for alias:', aliasId, err);
+    } finally {
+      setLoadingAlias(prev => ({ ...prev, [aliasId]: false }));
+    }
+  };
+
+  useEffect(() => {
+    // Initial fetch for default local-ollama
+    queryLiveModelsForAlias('local-ollama');
+  }, []);
+
   const inferAliasForModel = (modelName: string): string => {
     if (providerMapping[modelName]) {
       return providerMapping[modelName];
@@ -175,7 +207,7 @@ export const AgentFallbackSettings: React.FC<AgentFallbackSettingsProps> = ({
     if (lower.startsWith('openrouter:') || lower.includes('deepseek/')) {
       return 'remote-openrouter';
     }
-    if (lower.startsWith('openai:') || lower.startsWith('openai-codex:') || lower.includes('gpt-') || lower.includes('o3-')) {
+    if (lower.startsWith('openai:') || lower.includes('gpt-') || lower.includes('o3-')) {
       return 'remote-openai';
     }
     if (lower.startsWith('anthropic:') || lower.includes('claude-')) {
@@ -191,7 +223,9 @@ export const AgentFallbackSettings: React.FC<AgentFallbackSettingsProps> = ({
   };
 
   const currentAggregator = moaConfig.aggregatorModel || config.model.model || 'qwen2.5-coder:14b';
-  const currentProposers = moaConfig.proposerModels || ['qwen2.5-coder:7b', 'deepseek-r1:8b', 'gemma4-soul:latest'];
+  const currentProposers = moaConfig.proposerModels && moaConfig.proposerModels.length > 0
+    ? moaConfig.proposerModels
+    : ['qwen2.5-coder:7b', 'deepseek-r1:8b', 'gemma4-soul:latest'];
 
   const handleUpdateModelAlias = (modelName: string, alias: string) => {
     const nextMapping = { ...providerMapping, [modelName]: alias };
@@ -224,13 +258,14 @@ export const AgentFallbackSettings: React.FC<AgentFallbackSettingsProps> = ({
     });
   };
 
-  const handleAddProposerModel = () => {
-    const trimmed = newProposerInput.trim();
+  const handleAddProposerModel = (modelVal?: string, aliasVal?: string) => {
+    const trimmed = (modelVal !== undefined ? modelVal : newProposerInput).trim();
     if (!trimmed) return;
     if (currentProposers.includes(trimmed)) return;
 
+    const targetAlias = aliasVal || selectedNewAlias;
     const nextProposers = [...currentProposers, trimmed];
-    const nextMapping = { ...providerMapping, [trimmed]: selectedNewAlias };
+    const nextMapping = { ...providerMapping, [trimmed]: targetAlias };
 
     onChangeConfig({
       ...config,
@@ -261,35 +296,36 @@ export const AgentFallbackSettings: React.FC<AgentFallbackSettingsProps> = ({
     });
   };
 
-  const handleApplyPreset = (preset: 'all-local' | 'all-openrouter' | 'hybrid' | 'auto-detect') => {
+  const handleApplyPreset = (preset: 'all-local' | 'all-openrouter' | 'hybrid' | 'auto-detect' | 'recommended-moe') => {
     const nextMapping: Record<string, string> = {};
-    
+    let nextProposers = currentProposers;
+    let nextAggregator = currentAggregator;
+
     if (preset === 'all-local') {
       nextMapping[currentAggregator] = 'local-ollama';
-      currentProposers.forEach(p => {
-        nextMapping[p] = 'local-ollama';
-      });
+      currentProposers.forEach(p => { nextMapping[p] = 'local-ollama'; });
     } else if (preset === 'all-openrouter') {
       nextMapping[currentAggregator] = 'remote-openrouter';
-      currentProposers.forEach(p => {
-        nextMapping[p] = 'remote-openrouter';
-      });
+      currentProposers.forEach(p => { nextMapping[p] = 'remote-openrouter'; });
     } else if (preset === 'hybrid') {
       nextMapping[currentAggregator] = 'remote-anthropic';
-      currentProposers.forEach(p => {
-        nextMapping[p] = 'local-ollama';
-      });
+      currentProposers.forEach(p => { nextMapping[p] = 'local-ollama'; });
+    } else if (preset === 'recommended-moe') {
+      nextAggregator = 'qwen2.5-coder:14b';
+      nextProposers = ['qwen2.5-coder:7b', 'deepseek-r1:8b', 'gemma4-soul:latest'];
+      nextMapping[nextAggregator] = 'local-ollama';
+      nextProposers.forEach(p => { nextMapping[p] = 'local-ollama'; });
     } else if (preset === 'auto-detect') {
       nextMapping[currentAggregator] = inferAliasForModel(currentAggregator);
-      currentProposers.forEach(p => {
-        nextMapping[p] = inferAliasForModel(p);
-      });
+      currentProposers.forEach(p => { nextMapping[p] = inferAliasForModel(p); });
     }
 
     onChangeConfig({
       ...config,
       moa: {
         ...moaConfig,
+        aggregatorModel: nextAggregator,
+        proposerModels: nextProposers,
         providerMapping: nextMapping,
         providerEndpoints: customEndpointUrls
       },
@@ -313,12 +349,6 @@ export const AgentFallbackSettings: React.FC<AgentFallbackSettingsProps> = ({
     });
   };
 
-  const getResolvedUrl = (aliasId: string): string => {
-    if (customEndpointUrls[aliasId]) return customEndpointUrls[aliasId];
-    const found = PROVIDER_ALIASES.find(a => a.id === aliasId);
-    return found?.defaultBaseUrl || 'http://localhost:8080';
-  };
-
   return (
     <div className={`space-y-6 ${className}`}>
       {/* Header & Explanation */}
@@ -330,13 +360,13 @@ export const AgentFallbackSettings: React.FC<AgentFallbackSettingsProps> = ({
             </div>
             <div>
               <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                <span>MOA Model Provider Mapping &amp; Endpoint Fallbacks</span>
+                <span>Mixture of Agents (MoE / MoA) Live Model Matrix &amp; Provider Mapping</span>
                 <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-                  Explicit Routing
+                  Live Query &amp; Mixed Providers
                 </span>
               </h3>
               <p className="text-xs text-slate-400 mt-0.5">
-                Explicitly bind each Mixture-of-Agents model to a specific provider alias to prevent default fallback routing to wrong cloud endpoints.
+                Query live models directly from your chosen provider. Mix local LAN Ollama, OpenRouter, Anthropic, and OpenAI models that work well together in consensus.
               </p>
             </div>
           </div>
@@ -345,41 +375,24 @@ export const AgentFallbackSettings: React.FC<AgentFallbackSettingsProps> = ({
           <div className="flex flex-wrap items-center gap-1.5 shrink-0">
             <button
               type="button"
+              id="moa-map-preset-recommended-btn"
+              onClick={() => handleApplyPreset('recommended-moe')}
+              className="px-2.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-medium transition-colors flex items-center gap-1 cursor-pointer shadow"
+              title="Load tested MoE trio (Qwen Coder 7B, DeepSeek R1 8B, Gemma Soul) synced to Local Ollama"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+              <span>Recommended MoE Trio</span>
+            </button>
+            <button
+              type="button"
               id="moa-map-preset-local-btn"
               onClick={() => handleApplyPreset('all-local')}
               className="px-2.5 py-1.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-600 text-emerald-300 hover:text-white border border-emerald-500/30 text-[11px] font-medium transition-colors flex items-center gap-1 cursor-pointer"
-              title="Map Aggregator and all Proposers to local Ollama (192.168.1.49)"
             >
               <HardDrive className="w-3.5 h-3.5" />
               <span>All Local LAN</span>
             </button>
-            <button
-              type="button"
-              id="moa-map-preset-openrouter-btn"
-              onClick={() => handleApplyPreset('all-openrouter')}
-              className="px-2.5 py-1.5 rounded-lg bg-indigo-600/20 hover:bg-indigo-600 text-indigo-300 hover:text-white border border-indigo-500/30 text-[11px] font-medium transition-colors flex items-center gap-1 cursor-pointer"
-            >
-              <Globe className="w-3.5 h-3.5" />
-              <span>All OpenRouter</span>
-            </button>
-            <button
-              type="button"
-              id="moa-map-preset-autodetect-btn"
-              onClick={() => handleApplyPreset('auto-detect')}
-              className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-[11px] font-medium transition-colors flex items-center gap-1 cursor-pointer"
-            >
-              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-              <span>Auto-Detect</span>
-            </button>
           </div>
-        </div>
-
-        {/* Informative Notice */}
-        <div className="p-3 rounded-xl bg-slate-900/60 border border-slate-800 text-[11px] text-slate-400 flex items-start gap-2">
-          <HelpCircle className="w-4 h-4 text-indigo-400 shrink-0 mt-0.5" />
-          <span>
-            When models like <strong className="text-slate-200">qwen2.5-coder:7b</strong> or <strong className="text-slate-200">deepseek-r1:8b</strong> lack explicit provider prefixes, Hermes can default them to OpenRouter/OpenAI. Mapping them to <strong className="text-emerald-400">local-ollama</strong> guarantees all sub-calls route to your local IP (<code className="text-indigo-300 font-mono">http://192.168.1.49:11434</code>) without triggering credit cooldowns.
-          </span>
         </div>
       </div>
 
@@ -389,81 +402,78 @@ export const AgentFallbackSettings: React.FC<AgentFallbackSettingsProps> = ({
           <div className="flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-indigo-400" />
             <h4 className="text-xs font-bold text-slate-200 uppercase tracking-wide">
-              1. Consensus Aggregator Model Provider
+              1. Consensus Aggregator Model &amp; Provider
             </h4>
           </div>
-          <span className="text-[10px] text-slate-400 font-mono">
-            Final Synthesis Round
-          </span>
+          <button
+            type="button"
+            onClick={() => {
+              const currentAlias = inferAliasForModel(currentAggregator);
+              queryLiveModelsForAlias(currentAlias);
+            }}
+            className="text-[11px] text-indigo-400 hover:text-indigo-300 flex items-center gap-1 font-mono cursor-pointer"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${loadingAlias[inferAliasForModel(currentAggregator)] ? 'animate-spin' : ''}`} />
+            <span>Query Live Models</span>
+          </button>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-center">
-          {/* Aggregator Model Name Input */}
+          {/* Provider Alias Selector first */}
           <div className="md:col-span-5 space-y-1">
-            <label className="text-[11px] font-medium text-slate-400">Model Identifier</label>
-            <input
-              type="text"
-              value={currentAggregator}
-              onChange={(e) => handleUpdateAggregatorModel(e.target.value)}
-              placeholder="e.g. qwen2.5-coder:14b or hermes3:8b"
-              className="w-full px-3 py-2 rounded-lg bg-slate-800 border border-slate-700 text-slate-100 font-mono text-xs focus:outline-none focus:border-indigo-500"
-            />
-          </div>
-
-          {/* Arrow */}
-          <div className="hidden md:flex md:col-span-1 items-center justify-center pt-5">
-            <ArrowRight className="w-4 h-4 text-slate-500" />
-          </div>
-
-          {/* Provider Alias Selector */}
-          <div className="md:col-span-6 space-y-1">
-            <label className="text-[11px] font-medium text-slate-400">Bound Provider Alias &amp; Endpoint</label>
+            <label className="text-[11px] font-medium text-slate-400">1. Select Provider</label>
             <select
               value={inferAliasForModel(currentAggregator)}
-              onChange={(e) => handleUpdateModelAlias(currentAggregator, e.target.value)}
+              onChange={(e) => {
+                const newAlias = e.target.value;
+                handleUpdateModelAlias(currentAggregator, newAlias);
+                queryLiveModelsForAlias(newAlias);
+              }}
               className="w-full px-3 py-2 rounded-lg bg-slate-800 border border-slate-700 text-slate-100 font-mono text-xs focus:outline-none focus:border-indigo-500"
             >
               {PROVIDER_ALIASES.map(alias => (
-                <option key={`agg-${alias.id}`} value={alias.id}>
+                <option key={`agg-alias-${alias.id}`} value={alias.id}>
                   {alias.label} ({alias.badge})
                 </option>
               ))}
             </select>
           </div>
-        </div>
 
-        {/* Active Route Summary for Aggregator */}
-        {(() => {
-          const aliasKey = inferAliasForModel(currentAggregator);
-          const aliasDef = PROVIDER_ALIASES.find(a => a.id === aliasKey);
-          const resolvedUrl = getResolvedUrl(aliasKey);
-          return (
-            <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-800/80 text-[11px]">
-              <div className="flex items-center gap-2">
-                <span className="text-slate-400">Resolved Endpoint:</span>
-                <code className="text-indigo-300 font-mono bg-slate-950 px-2 py-0.5 rounded border border-slate-800">
-                  {resolvedUrl}
-                </code>
-              </div>
-              <div>
-                {aliasDef?.isLocal ? (
-                  <span className="inline-flex items-center gap-1 text-emerald-400 font-semibold">
-                    <CheckCircle2 className="w-3.5 h-3.5" />
-                    Local Zero-Key (No External Credit Risk)
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center gap-1 text-amber-400">
-                    <AlertTriangle className="w-3.5 h-3.5" />
-                    Requires Validated Cloud Key ({aliasDef?.badge})
-                  </span>
-                )}
-              </div>
+          {/* Aggregator Model Dropdown / Input */}
+          <div className="md:col-span-7 space-y-1">
+            <label className="text-[11px] font-medium text-slate-400 flex items-center justify-between">
+              <span>2. Select Live Model or Type Identifier</span>
+              <span className="text-[10px] text-indigo-300 font-mono">Synthesis Round</span>
+            </label>
+            <div className="flex gap-2">
+              <select
+                value={currentAggregator}
+                onChange={(e) => handleUpdateAggregatorModel(e.target.value)}
+                className="flex-1 px-3 py-2 rounded-lg bg-slate-800 border border-slate-700 text-slate-100 font-mono text-xs focus:outline-none focus:border-indigo-500"
+              >
+                <option value={currentAggregator}>{currentAggregator} (Current)</option>
+                {(liveModelsMap[inferAliasForModel(currentAggregator)] || []).map(m => (
+                  <option key={`live-agg-${m.value}`} value={m.value}>
+                    {m.label} {m.tag ? `[${m.tag}]` : ''}
+                  </option>
+                ))}
+                <option value="qwen2.5-coder:14b">qwen2.5-coder:14b (Recommended Synthesis)</option>
+                <option value="claude-3-7-sonnet">claude-3-7-sonnet (Cloud Synthesis)</option>
+                <option value="gpt-4o">gpt-4o (OpenAI Synthesis)</option>
+              </select>
+              <input
+                type="text"
+                value={currentAggregator}
+                onChange={(e) => handleUpdateAggregatorModel(e.target.value)}
+                placeholder="Custom model..."
+                className="w-36 px-2.5 py-2 rounded-lg bg-slate-800 border border-slate-700 text-slate-100 font-mono text-xs focus:outline-none focus:border-indigo-500"
+              />
             </div>
-          );
-        })()}
+          </div>
+        </div>
       </div>
 
-      {/* 2. Proposer Reference Models Provider Mapping */}
+      {/* 2. Proposer Reference Models Provider Mapping Matrix */}
       <div className="p-4 rounded-xl border border-slate-800 bg-slate-900/70 space-y-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -473,50 +483,96 @@ export const AgentFallbackSettings: React.FC<AgentFallbackSettingsProps> = ({
             </h4>
           </div>
           <span className="text-[10px] text-slate-400 font-mono">
-            Draft Generation Round
+            Diverse Draft Generation Round (Mixed Providers Supported)
           </span>
         </div>
 
         {/* Proposers List */}
-        <div className="space-y-2.5">
+        <div className="space-y-3">
           {currentProposers.map((proposerModel, index) => {
             const aliasKey = inferAliasForModel(proposerModel);
             const aliasDef = PROVIDER_ALIASES.find(a => a.id === aliasKey);
             const resolvedUrl = getResolvedUrl(aliasKey);
+            const liveOptions = liveModelsMap[aliasKey] || [];
 
             return (
               <div 
                 key={`proposer-${proposerModel}-${index}`}
-                className="p-3 rounded-xl bg-slate-800/60 border border-slate-700/70 hover:border-slate-600 transition-colors space-y-2"
+                className="p-3 rounded-xl bg-slate-800/60 border border-slate-700/70 hover:border-slate-600 transition-colors space-y-2.5"
               >
                 <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-center">
-                  {/* Model Name & Index */}
-                  <div className="md:col-span-4 flex items-center gap-2">
+                  {/* Index */}
+                  <div className="md:col-span-1 flex items-center gap-2">
                     <span className="w-5 h-5 rounded-full bg-slate-700 text-slate-300 font-mono text-[10px] flex items-center justify-center shrink-0">
                       {index + 1}
                     </span>
-                    <span className="font-mono text-xs font-bold text-slate-100 truncate">
-                      {proposerModel}
-                    </span>
                   </div>
 
-                  {/* Provider Alias Selector */}
-                  <div className="md:col-span-7">
+                  {/* Provider Alias Selector (Mixed Provider per Proposer) */}
+                  <div className="md:col-span-5">
+                    <label className="text-[10px] font-mono text-slate-400 mb-1 block">Provider</label>
                     <select
                       value={aliasKey}
-                      onChange={(e) => handleUpdateModelAlias(proposerModel, e.target.value)}
+                      onChange={(e) => {
+                        const newAlias = e.target.value;
+                        handleUpdateModelAlias(proposerModel, newAlias);
+                        queryLiveModelsForAlias(newAlias);
+                      }}
                       className="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-slate-200 font-mono text-xs focus:outline-none focus:border-indigo-500"
                     >
                       {PROVIDER_ALIASES.map(alias => (
                         <option key={`prop-${proposerModel}-${alias.id}`} value={alias.id}>
-                          {alias.label} — {alias.badge}
+                          {alias.label} ({alias.badge})
                         </option>
                       ))}
                     </select>
                   </div>
 
+                  {/* Model Selector / Identifier */}
+                  <div className="md:col-span-5">
+                    <label className="text-[10px] font-mono text-slate-400 mb-1 flex items-center justify-between">
+                      <span>Model Identifier</span>
+                      <button
+                        type="button"
+                        onClick={() => queryLiveModelsForAlias(aliasKey)}
+                        className="text-indigo-400 hover:text-indigo-300 cursor-pointer"
+                      >
+                        Query Live
+                      </button>
+                    </label>
+                    <div className="flex gap-2">
+                      <select
+                        value={proposerModel}
+                        onChange={(e) => {
+                          const nextVal = e.target.value;
+                          const nextProposers = currentProposers.map((m, idx) => idx === index ? nextVal : m);
+                          const nextMapping = { ...providerMapping };
+                          delete nextMapping[proposerModel];
+                          nextMapping[nextVal] = aliasKey;
+                          onChangeConfig({
+                            ...config,
+                            moa: { ...moaConfig, proposerModels: nextProposers, providerMapping: nextMapping },
+                            providerMapping: nextMapping
+                          });
+                        }}
+                        className="flex-1 px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-slate-200 font-mono text-xs focus:outline-none focus:border-indigo-500"
+                      >
+                        <option value={proposerModel}>{proposerModel}</option>
+                        {liveOptions.map(m => (
+                          <option key={`live-prop-${m.value}`} value={m.value}>
+                            {m.label}
+                          </option>
+                        ))}
+                        <option value="qwen2.5-coder:7b">qwen2.5-coder:7b</option>
+                        <option value="deepseek-r1:8b">deepseek-r1:8b</option>
+                        <option value="gemma4-soul:latest">gemma4-soul:latest</option>
+                        <option value="claude-3-7-sonnet">claude-3-7-sonnet</option>
+                      </select>
+                    </div>
+                  </div>
+
                   {/* Delete Button */}
-                  <div className="md:col-span-1 flex justify-end">
+                  <div className="md:col-span-1 flex justify-end pt-4">
                     <button
                       type="button"
                       onClick={() => handleRemoveProposerModel(proposerModel)}
@@ -529,16 +585,13 @@ export const AgentFallbackSettings: React.FC<AgentFallbackSettingsProps> = ({
                 </div>
 
                 {/* Sub-line Info */}
-                <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] text-slate-400 pt-1 border-t border-slate-700/40">
-                  <div className="flex items-center gap-1.5 font-mono">
-                    <span className="text-slate-500">Route:</span>
-                    <span className="text-slate-300">{resolvedUrl}</span>
-                  </div>
+                <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] text-slate-400 pt-1 border-t border-slate-700/40 font-mono">
+                  <div>Endpoint: <span className="text-indigo-300">{resolvedUrl}</span></div>
                   <div>
                     {aliasDef?.isLocal ? (
-                      <span className="text-emerald-400 font-medium">🟢 LAN Local (Ollama)</span>
+                      <span className="text-emerald-400">🟢 Zero-Key LAN Ollama</span>
                     ) : (
-                      <span className="text-amber-400 font-medium">☁️ Remote Cloud ({aliasDef?.id})</span>
+                      <span className="text-amber-400">🔑 Cloud Gateway ({aliasDef?.id})</span>
                     )}
                   </div>
                 </div>
@@ -548,22 +601,20 @@ export const AgentFallbackSettings: React.FC<AgentFallbackSettingsProps> = ({
         </div>
 
         {/* Add New Proposer Model Row */}
-        <div className="pt-2 border-t border-slate-800">
+        <div className="pt-3 border-t border-slate-800 space-y-2">
+          <label className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+            <Plus className="w-3.5 h-3.5 text-indigo-400" />
+            <span>Add Compatible Proposer Model (Query Live Provider Catalog)</span>
+          </label>
           <div className="grid grid-cols-1 md:grid-cols-12 gap-2.5 items-center">
-            <div className="md:col-span-5">
-              <input
-                type="text"
-                value={newProposerInput}
-                onChange={(e) => setNewProposerInput(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') handleAddProposerModel(); }}
-                placeholder="Add proposer model (e.g. gemma4-soul:latest)..."
-                className="w-full px-3 py-2 rounded-lg bg-slate-800 border border-slate-700 text-slate-100 font-mono text-xs focus:outline-none focus:border-indigo-500"
-              />
-            </div>
-            <div className="md:col-span-5">
+            <div className="md:col-span-4">
               <select
                 value={selectedNewAlias}
-                onChange={(e) => setSelectedNewAlias(e.target.value)}
+                onChange={(e) => {
+                  const newAlias = e.target.value;
+                  setSelectedNewAlias(newAlias);
+                  queryLiveModelsForAlias(newAlias);
+                }}
                 className="w-full px-3 py-2 rounded-lg bg-slate-800 border border-slate-700 text-slate-200 font-mono text-xs focus:outline-none focus:border-indigo-500"
               >
                 {PROVIDER_ALIASES.map(alias => (
@@ -573,16 +624,43 @@ export const AgentFallbackSettings: React.FC<AgentFallbackSettingsProps> = ({
                 ))}
               </select>
             </div>
+            <div className="md:col-span-6">
+              <div className="flex gap-2">
+                <select
+                  value={newProposerInput}
+                  onChange={(e) => setNewProposerInput(e.target.value)}
+                  className="flex-1 px-3 py-2 rounded-lg bg-slate-800 border border-slate-700 text-slate-100 font-mono text-xs focus:outline-none focus:border-indigo-500"
+                >
+                  <option value="">Select live model or type below...</option>
+                  {(liveModelsMap[selectedNewAlias] || []).map(m => (
+                    <option key={`add-live-${m.value}`} value={m.value}>
+                      {m.label} {m.tag ? `[${m.tag}]` : ''}
+                    </option>
+                  ))}
+                  <option value="qwen2.5-coder:7b">qwen2.5-coder:7b (Recommended Coder)</option>
+                  <option value="deepseek-r1:8b">deepseek-r1:8b (Recommended Reasoner)</option>
+                  <option value="gemma4-soul:latest">gemma4-soul:latest (Recommended Persona)</option>
+                  <option value="claude-3-7-sonnet">claude-3-7-sonnet (Cloud Proposer)</option>
+                </select>
+                <input
+                  type="text"
+                  value={newProposerInput}
+                  onChange={(e) => setNewProposerInput(e.target.value)}
+                  placeholder="model name..."
+                  className="w-36 px-2.5 py-2 rounded-lg bg-slate-800 border border-slate-700 text-slate-100 font-mono text-xs focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+            </div>
             <div className="md:col-span-2">
               <button
                 type="button"
                 id="moa-add-proposer-btn"
-                onClick={handleAddProposerModel}
+                onClick={() => handleAddProposerModel()}
                 disabled={!newProposerInput.trim()}
-                className="w-full px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                className="w-full px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer shadow"
               >
                 <Plus className="w-3.5 h-3.5" />
-                <span>Add Model</span>
+                <span>Add Proposer</span>
               </button>
             </div>
           </div>
@@ -598,7 +676,7 @@ export const AgentFallbackSettings: React.FC<AgentFallbackSettingsProps> = ({
         >
           <span className="flex items-center gap-2">
             <Server className="w-4 h-4 text-indigo-400" />
-            <span>Customize Provider Alias Endpoint URLs</span>
+            <span>Customize Provider Alias Endpoint URLs &amp; LAN IPs</span>
           </span>
           <span className="text-[11px] text-indigo-400 font-mono">
             {showEndpointOverrides ? 'Hide Overrides ▲' : 'Show Overrides ▼'}
